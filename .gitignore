@@ -1,0 +1,10 @@
+node_modules/
+src/frontend/node_modules/
+backend/node_modules/
+src/frontend/dist/
+backend/dist/
+backend/.env
+.env
+.DS_Store
+Thumbs.db
+DQA_project_memory/

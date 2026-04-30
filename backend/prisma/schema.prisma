@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum UserLevel {
+  NATIONAL
+  STATE
+  DISTRICT
+  BLOCK
+}
+
+model User {
+  id          String     @id @default(uuid())
+  email       String     @unique
+  password    String
+  role        Role       @default(USER)
+  level       UserLevel  @default(NATIONAL)
+  geoState    String?
+  geoDistrict String?
+  geoBlock    String?
+  createdAt   DateTime   @default(now())
+  snapshots   DqaSnapshot[]
+}
+
+model DqaSnapshot {
+  id             String   @id @default(uuid())
+  state          String
+  district       String
+  reportingMonth String
+  overallScore   Float
+  kpiData        Json
+  portal         String   @default("HMIS")
+  createdAt      DateTime @default(now())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+}
+
+model GeoEntry {
+  id       String @id @default(uuid())
+  state    String
+  district String
+  block    String
+  @@unique([state, district, block])
+}

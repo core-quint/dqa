@@ -1,0 +1,87 @@
+Folder PATH listing
+Volume serial number is 4A15-0F8F
+C:\DQA\DQA-DESK-REVIEW\SRC\FRONTEND\SRC
+|   api.ts
+|   App.tsx
+|   config.ts
+|   main.tsx
+|   ui-summary.json
+|   
++---components
+|   +---dqa
+|   |       AdminPage.tsx
+|   |       DataTables.tsx
+|   |       FilterPanel.tsx
+|   |       KpiCard.tsx
+|   |       KpiChart.tsx
+|   |       KpiPanel.tsx
+|   |       LandingPage.tsx
+|   |       LoginPage.tsx
+|   |       OverallScore.tsx
+|   |       ResultsPage.tsx
+|   |       TrendPage.tsx
+|   |       
+|   \---ui
+|           accordion.tsx
+|           alert-dialog.tsx
+|           alert.tsx
+|           aspect-ratio.tsx
+|           avatar.tsx
+|           badge.tsx
+|           breadcrumb.tsx
+|           button.tsx
+|           calendar.tsx
+|           card.tsx
+|           carousel.tsx
+|           chart.tsx
+|           checkbox.tsx
+|           collapsible.tsx
+|           command.tsx
+|           context-menu.tsx
+|           dialog.tsx
+|           drawer.tsx
+|           dropdown-menu.tsx
+|           form.tsx
+|           hover-card.tsx
+|           input-otp.tsx
+|           input.tsx
+|           label.tsx
+|           menubar.tsx
+|           navigation-menu.tsx
+|           pagination.tsx
+|           popover.tsx
+|           progress.tsx
+|           radio-group.tsx
+|           resizable.tsx
+|           scroll-area.tsx
+|           select.tsx
+|           separator.tsx
+|           sheet.tsx
+|           sidebar.tsx
+|           skeleton.tsx
+|           slider.tsx
+|           sonner.tsx
+|           switch.tsx
+|           table.tsx
+|           tabs.tsx
+|           textarea.tsx
+|           toggle-group.tsx
+|           toggle.tsx
+|           tooltip.tsx
+|           
++---hooks
+|       use-mobile.tsx
+|       
++---lib
+|   |   utils.ts
+|   |   
+|   \---dqa
+|           computeKpis.ts
+|           constants.ts
+|           csvParser.ts
+|           exportUtils.ts
+|           parseUtils.ts
+|           scoreUtils.ts
+|           types.ts
+|           
+\---utils
