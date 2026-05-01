@@ -350,10 +350,10 @@ export function ResultsPage({
                 </span>
                 {([
                   { label: "Overall", score: lastSnapshot.overallScore, style: scoreBadgeStyle(lastSnapshot.overallScore) },
-                  { label: "Avail", score: lastSnapshot.availabilityScore, style: { bg: "#fff1f2", text: "#b91c1c" } },
-                  { label: "Compl", score: lastSnapshot.completenessScore, style: { bg: "#eef2ff", text: "#4338ca" } },
-                  { label: "Accur", score: lastSnapshot.accuracyScore, style: { bg: "#fffbeb", text: "#92400e" } },
-                  { label: "Consis", score: lastSnapshot.consistencyScore, style: { bg: "#f0fdf4", text: "#15803d" } },
+                  { label: "Availability", score: lastSnapshot.availabilityScore, style: { bg: "#fff1f2", text: "#b91c1c" } },
+                  { label: "Completeness", score: lastSnapshot.completenessScore, style: { bg: "#eef2ff", text: "#4338ca" } },
+                  { label: "Accuracy", score: lastSnapshot.accuracyScore, style: { bg: "#fffbeb", text: "#92400e" } },
+                  { label: "Consistency", score: lastSnapshot.consistencyScore, style: { bg: "#f0fdf4", text: "#15803d" } },
                 ] as const).map(({ label, score, style }) => (
                   <span
                     key={label}
