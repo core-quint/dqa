@@ -144,13 +144,15 @@ export function ResultsPage({
     })
       .then((response) => response.json())
       .then((snapshots: any[]) => {
-        const match = snapshots.find(
+        const matches = snapshots.filter(
           (snapshot) =>
             (snapshot.portal?.toUpperCase() ?? "HMIS") === "HMIS" &&
             snapshot.state === csv.stateName &&
-            snapshot.district === csv.distName &&
-            snapshot.reportingMonth === durationStr,
+            snapshot.district === csv.distName,
         );
+        const match = matches.sort((a: any, b: any) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        )[0];
         if (match) {
           setLastSnapshot({
             createdAt: match.createdAt,
@@ -163,7 +165,7 @@ export function ResultsPage({
         }
       })
       .catch(() => {});
-  }, [csv.stateName, csv.distName, durationStr]);
+  }, [csv.stateName, csv.distName]);
 
   useEffect(() => {
     if (!activeGroup) {
