@@ -123,6 +123,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
   const svgRef = useRef<SVGSVGElement>(null);
   const boundsRef = useRef<Bounds | null>(null);
+  const blocksLoadingRef = useRef(false);
   const dragRef = useRef<{
     startX: number;
     startY: number;
@@ -173,7 +174,8 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   }, []);
 
   useEffect(() => {
-    if (level !== "BLOCK" || blocksTopology || loadingBlocks) return;
+    if (level !== "BLOCK" || blocksTopology || blocksLoadingRef.current) return;
+    blocksLoadingRef.current = true;
     let mounted = true;
     setLoadingBlocks(true);
 
@@ -182,14 +184,22 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
         if (!r.ok) throw new Error("Failed to load block map.");
         return r.json() as Promise<Topology<BlockShapeProps>>;
       })
-      .then((data) => { if (mounted) setBlocksTopology(data); })
-      .catch((err) => {
-        if (mounted) setSnapshotError(err instanceof Error ? err.message : "Failed to load block map.");
+      .then((data) => {
+        if (mounted) {
+          setBlocksTopology(data);
+          setLoadingBlocks(false);
+        }
       })
-      .finally(() => { if (mounted) setLoadingBlocks(false); });
+      .catch((err) => {
+        if (mounted) {
+          setSnapshotError(err instanceof Error ? err.message : "Failed to load block map.");
+          setLoadingBlocks(false);
+        }
+        blocksLoadingRef.current = false;
+      });
 
     return () => { mounted = false; };
-  }, [blocksTopology, level, loadingBlocks]);
+  }, [blocksTopology, level]);
 
   // Reset zoom when geography scope changes
   useEffect(() => {

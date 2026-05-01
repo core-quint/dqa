@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Download } from "lucide-react";
 import {
   combineBounds,
   padBounds,
@@ -118,21 +119,89 @@ function flagColor(featureId: string, featureToCount: Map<string, number>, featu
   return "#b91c1c";
 }
 
-const LEGEND_ITEMS = [
-  { color: "#bbf7d0", label: "No flagged facilities" },
-  { color: "#fef9c3", label: "Very low" },
-  { color: "#fde68a", label: "Low" },
-  { color: "#f97316", label: "Medium" },
-  { color: "#ef4444", label: "High" },
-  { color: "#b91c1c", label: "Very high" },
-  { color: "#e2e8f0", label: "Not in this analysis" },
-];
+const FLAG_THRESHOLDS = [0, 0.2, 0.4, 0.6, 0.8, 1];
+const FLAG_LABELS = ["Very low", "Low", "Medium", "High", "Very high"];
+const FLAG_COLORS = ["#fef9c3", "#fde68a", "#f97316", "#ef4444", "#b91c1c"];
+
+function buildLegendItems(maxCount: number) {
+  const base = [{ color: "#bbf7d0", label: "No flagged facilities" }];
+  const tail = [{ color: "#e2e8f0", label: "Not in this analysis" }];
+  if (maxCount <= 0) return [...base, ...tail];
+
+  const bands = FLAG_LABELS.map((label, i) => {
+    const lo = i === 0 ? 1 : Math.ceil(FLAG_THRESHOLDS[i] * maxCount);
+    const hi = i === FLAG_LABELS.length - 1
+      ? maxCount
+      : Math.ceil(FLAG_THRESHOLDS[i + 1] * maxCount) - 1;
+    return { color: FLAG_COLORS[i], label, lo, hi };
+  }).filter(({ lo, hi }) => lo <= hi);
+
+  return [
+    ...base,
+    ...bands.map(({ color, label, lo, hi }) => ({
+      color,
+      label: lo === hi
+        ? `${label} — ${lo} ${lo === 1 ? "facility" : "facilities"}`
+        : `${label} — ${lo}–${hi} facilities`,
+    })),
+    ...tail,
+  ];
+}
 
 export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlocks, maxCount }: Props) {
   const [topology, setTopology] = useState<Topology<BlockShapeProps> | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [hovered, setHovered] = useState<HoverInfo | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  function buildFilename(ext: string) {
+    const parts = ["dqa-block-map", stateName, districtName]
+      .filter(Boolean)
+      .map((s) => s.toLowerCase().replace(/\s+/g, "-"));
+    return `${parts.join("-")}.${ext}`;
+  }
+
+  function downloadSVG() {
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+    const source = new XMLSerializer().serializeToString(svgEl);
+    const blob = new Blob(['<?xml version="1.0" encoding="utf-8"?>\n', source], { type: "image/svg+xml" });
+    triggerDownload(URL.createObjectURL(blob), buildFilename("svg"));
+  }
+
+  function downloadPNG() {
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+    const source = new XMLSerializer().serializeToString(svgEl);
+    const scale = 2;
+    const w = svgEl.clientWidth * scale;
+    const h = svgEl.clientHeight * scale;
+    const blob = new Blob(['<?xml version="1.0" encoding="utf-8"?>\n', source], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = "#dce8f0";
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      triggerDownload(canvas.toDataURL("image/png"), buildFilename("png"));
+    };
+    img.src = url;
+  }
+
+  function triggerDownload(href: string, filename: string) {
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -260,6 +329,7 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
       {/* SVG choropleth */}
       <div className="overflow-hidden rounded-[20px] border border-slate-200 bg-[#dce8f0] shadow-sm">
         <svg
+          ref={svgRef}
           viewBox={viewBox}
           className="h-[380px] w-full"
           preserveAspectRatio="xMidYMid meet"
@@ -357,17 +427,47 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
         </div>
       )}
 
-      {/* Legend */}
-      <div className="flex flex-wrap gap-x-4 gap-y-2 rounded-xl bg-slate-50/80 px-3 py-2.5">
-        {LEGEND_ITEMS.map(({ color, label }) => (
-          <div key={label} className="flex items-center gap-1.5">
-            <div
-              className="h-3 w-3 flex-none rounded-full border border-black/10"
-              style={{ backgroundColor: color }}
-            />
-            <span className="text-[11px] text-slate-500">{label}</span>
+      {/* Legend + download */}
+      <div className="space-y-2 rounded-xl bg-slate-50/80 px-3 py-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+            Flagged facilities per block
+            {maxCount > 0 && (
+              <span className="ml-1 font-normal text-slate-400">(max in dataset: {maxCount})</span>
+            )}
           </div>
-        ))}
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={downloadSVG}
+              title="Download map as SVG"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              <Download className="h-3 w-3" />
+              SVG
+            </button>
+            <button
+              type="button"
+              onClick={downloadPNG}
+              title="Download map as PNG"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              <Download className="h-3 w-3" />
+              PNG
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+          {buildLegendItems(maxCount).map(({ color, label }) => (
+            <div key={label} className="flex items-center gap-1.5">
+              <div
+                className="h-3 w-3 flex-none rounded-full border border-black/10"
+                style={{ backgroundColor: color }}
+              />
+              <span className="text-[11px] text-slate-500">{label}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Coverage note */}
