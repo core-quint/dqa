@@ -11,7 +11,7 @@ import { KpiCard as KpiCardCmp } from "../dqa/KpiCard";
 import { UwinKpiPanel } from "./UwinKpiPanel";
 import { OverallScore } from "../dqa/OverallScore";
 import { API_BASE } from "../../config";
-import { computeOverallScore } from "../../lib/dqa/scoreUtils";
+import { computeOverallScore, scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
 import { buildSnapshotSaveMeta } from "../../lib/snapshots";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { GlassPanel } from "../branding/GlassPanel";
@@ -342,9 +342,17 @@ export function UwinResultsPage({
               Rural/Urban: <strong className="font-semibold text-slate-700">{csv.ruralCount}/{csv.urbanCount}</strong>
             </span>
             {lastSnapshot ? (
-              <span className="text-xs text-slate-500">
-                Last saved: <strong className="font-semibold text-slate-700">{new Date(lastSnapshot.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</strong>
-              </span>
+              <>
+                <span className="text-xs text-slate-500">
+                  Last saved: <strong className="font-semibold text-slate-700">{new Date(lastSnapshot.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</strong>
+                </span>
+                <span
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold"
+                  style={(() => { const s = scoreBadgeStyle(lastSnapshot.overallScore); return { background: s.bg, color: s.text }; })()}
+                >
+                  Prev score: {Math.round(lastSnapshot.overallScore)}
+                </span>
+              </>
             ) : null}
           </div>
         </div>
