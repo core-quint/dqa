@@ -170,15 +170,14 @@ function processRawRows(rawRows: string[][], fileName: string): ParsedCSV {
     }
   }
 
-  // Global facility count (case-insensitive dedup)
+  // Global facility count — uses block+facility key to match KPI computation
   const globalFacilitySet = new Map<string, { ownership: string; ru: string }>();
   const globalBlockSet = new Set<string>();
 
-  for (const fd of Object.values(facilityData)) {
-    const fk = normalizeFacilityKey(fd.facility);
-    if (fk) {
-      if (!globalFacilitySet.has(fk)) {
-        globalFacilitySet.set(fk, { ownership: fd.ownership, ru: fd.ru });
+  for (const [facKey, fd] of Object.entries(facilityData)) {
+    if (facKey) {
+      if (!globalFacilitySet.has(facKey)) {
+        globalFacilitySet.set(facKey, { ownership: fd.ownership, ru: fd.ru });
       }
     }
     if (fd.block.trim()) globalBlockSet.add(fd.block.trim());
