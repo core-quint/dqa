@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { Award, Save, TrendingUp, RefreshCw } from "lucide-react";
+import { Award, Save, TrendingUp, RefreshCw, FileDown } from "lucide-react";
+import { downloadHmisDqaReport } from "../../lib/dqa/pdfReport";
 import type {
   ParsedCSV,
   FilterState,
@@ -116,6 +117,7 @@ export function ResultsPage({
   const [showOverall, setShowOverall] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [generatingReport, setGeneratingReport] = useState(false);
   const [drawerCard, setDrawerCard] = useState<KpiCard | null>(null);
   const [lastSnapshot, setLastSnapshot] = useState<{
     createdAt: string;
@@ -311,6 +313,20 @@ export function ResultsPage({
                 <button onClick={() => setShowOverall(true)} className={primaryActionClass}>
                   <Award className="h-3.5 w-3.5" />
                   Overall score
+                </button>
+              ) : null}
+              {kpis ? (
+                <button
+                  disabled={generatingReport}
+                  onClick={async () => {
+                    setGeneratingReport(true);
+                    try { await downloadHmisDqaReport(csv, kpis); }
+                    finally { setGeneratingReport(false); }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  {generatingReport ? "Generating…" : "Download Report"}
                 </button>
               ) : null}
               {kpis ? (

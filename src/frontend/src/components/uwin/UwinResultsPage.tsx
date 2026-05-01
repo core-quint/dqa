@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { RefreshCw, Award, Save, TrendingUp } from "lucide-react";
+import { RefreshCw, Award, Save, TrendingUp, FileDown } from "lucide-react";
+import { downloadUwinDqaReport } from "../../lib/uwin/pdfReport";
 import type { FilterState, ActiveGroup, ComputedKpis } from "../../lib/dqa/types";
 import type { UwinParsedCSV, UwinComputedKpis } from "../../lib/uwin/types";
 import { computeUwinKpis } from "../../lib/uwin/computeKpis";
@@ -107,6 +108,7 @@ export function UwinResultsPage({
   const [showOverall, setShowOverall] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [generatingReport, setGeneratingReport] = useState(false);
   const [drawerCard, setDrawerCard] = useState<
     UwinComputedKpis["cards"][number] | null
   >(null);
@@ -309,6 +311,20 @@ export function UwinResultsPage({
                 <button onClick={() => setShowOverall(true)} className={primaryActionClass}>
                   <Award className="h-3.5 w-3.5" />
                   Overall score
+                </button>
+              ) : null}
+              {kpis ? (
+                <button
+                  disabled={generatingReport}
+                  onClick={async () => {
+                    setGeneratingReport(true);
+                    try { await downloadUwinDqaReport(csv, kpis); }
+                    finally { setGeneratingReport(false); }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  {generatingReport ? "Generating…" : "Download Report"}
                 </button>
               ) : null}
               {kpis ? (

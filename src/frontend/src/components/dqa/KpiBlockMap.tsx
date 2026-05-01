@@ -9,15 +9,15 @@ import {
   type MapFeature,
   type Topology,
 } from "../../lib/maps/topology";
-
-interface BlockShapeProps {
-  block_name: string;
-  block_shape_id: string;
-  state_name: string;
-  state_lgd: string;
-  district_name: string;
-  district_lgd: string;
-}
+import {
+  loadBlocksTopology,
+  normalizeBlock,
+  levenshteinDist,
+  matchBlock,
+  flagColor,
+  buildLegendItems,
+  type BlockShapeProps,
+} from "../../lib/maps/blockMapUtils";
 
 interface HoverInfo {
   x: number;
@@ -35,117 +35,6 @@ interface Props {
   /** All block names present in the filtered CSV (regardless of flag status) */
   allDataBlocks: string[];
   maxCount: number;
-}
-
-// Module-level cache — 5.7 MB JSON, only fetched once per app session
-let _blocksPromise: Promise<Topology<BlockShapeProps>> | null = null;
-
-function loadBlocksTopology(): Promise<Topology<BlockShapeProps>> {
-  if (!_blocksPromise) {
-    _blocksPromise = fetch(new URL("../../../assets/blocks.json", import.meta.url).href)
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed to load block boundaries");
-        return r.json() as Promise<Topology<BlockShapeProps>>;
-      })
-      .catch((err) => {
-        _blocksPromise = null; // allow retry on next mount
-        throw err;
-      });
-  }
-  return _blocksPromise;
-}
-
-function normalizeBlock(name: string): string {
-  return (name ?? "")
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function levenshteinDist(a: string, b: string): number {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  const curr = new Array<number>(b.length + 1).fill(0);
-  for (let i = 1; i <= a.length; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      curr[j] = Math.min(
-        curr[j - 1] + 1,
-        prev[j] + 1,
-        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
-    }
-    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
-  }
-  return prev[b.length];
-}
-
-function matchBlock(
-  label: string,
-  features: MapFeature<BlockShapeProps>[],
-): MapFeature<BlockShapeProps> | null {
-  const norm = normalizeBlock(label);
-  if (!norm) return null;
-
-  const exact = features.find((f) => normalizeBlock(f.properties.block_name) === norm);
-  if (exact) return exact;
-
-  let best: MapFeature<BlockShapeProps> | null = null;
-  let bestDist = Number.POSITIVE_INFINITY;
-  for (const f of features) {
-    const d = levenshteinDist(norm, normalizeBlock(f.properties.block_name));
-    if (d < bestDist) {
-      bestDist = d;
-      best = f;
-    }
-  }
-  const threshold = Math.max(1, Math.floor(norm.length * 0.28));
-  return bestDist <= threshold ? best : null;
-}
-
-function flagColor(featureId: string, featureToCount: Map<string, number>, featureInData: Map<string, boolean>, maxCount: number): string {
-  const inData = featureInData.get(featureId) ?? false;
-  if (!inData) return "#e2e8f0"; // unknown — not in CSV
-  const count = featureToCount.get(featureId) ?? 0;
-  if (count === 0) return "#bbf7d0"; // in CSV, no issues — light green
-  const ratio = count / Math.max(maxCount, 1);
-  if (ratio < 0.2) return "#fef9c3";
-  if (ratio < 0.4) return "#fde68a";
-  if (ratio < 0.6) return "#f97316";
-  if (ratio < 0.8) return "#ef4444";
-  return "#b91c1c";
-}
-
-const FLAG_THRESHOLDS = [0, 0.2, 0.4, 0.6, 0.8, 1];
-const FLAG_LABELS = ["Very low", "Low", "Medium", "High", "Very high"];
-const FLAG_COLORS = ["#fef9c3", "#fde68a", "#f97316", "#ef4444", "#b91c1c"];
-
-function buildLegendItems(maxCount: number) {
-  const base = [{ color: "#bbf7d0", label: "No flagged facilities" }];
-  const tail = [{ color: "#e2e8f0", label: "Not in this analysis" }];
-  if (maxCount <= 0) return [...base, ...tail];
-
-  const bands = FLAG_LABELS.map((label, i) => {
-    const lo = i === 0 ? 1 : Math.ceil(FLAG_THRESHOLDS[i] * maxCount);
-    const hi = i === FLAG_LABELS.length - 1
-      ? maxCount
-      : Math.ceil(FLAG_THRESHOLDS[i + 1] * maxCount) - 1;
-    return { color: FLAG_COLORS[i], label, lo, hi };
-  }).filter(({ lo, hi }) => lo <= hi);
-
-  return [
-    ...base,
-    ...bands.map(({ color, label, lo, hi }) => ({
-      color,
-      label: lo === hi
-        ? `${label} — ${lo} ${lo === 1 ? "facility" : "facilities"}`
-        : `${label} — ${lo}–${hi} facilities`,
-    })),
-    ...tail,
-  ];
 }
 
 export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlocks, maxCount }: Props) {
@@ -228,7 +117,6 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
     [topology],
   );
 
-  // Filter topology features to this district
   const districtFeatures = useMemo(() => {
     const normState = normalizeBlock(stateName);
     const normDist = normalizeBlock(districtName);
@@ -239,14 +127,12 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
     );
   }, [allFeatures, stateName, districtName]);
 
-  // Build: featureId → count, featureId → inCsvData, and unmapped block list
   const { featureToCount, featureInData, unmappedBlocks } = useMemo(() => {
     const featureToCount = new Map<string, number>();
     const featureInData = new Map<string, boolean>();
     const matchedIds = new Set<string>();
     const unmapped: Array<{ block: string; count: number }> = [];
 
-    // Match flagged blocks to topology features
     for (const [blockLabel, count] of Object.entries(blockCounts)) {
       const feature = matchBlock(blockLabel, districtFeatures);
       if (feature) {
@@ -258,7 +144,6 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
       }
     }
 
-    // Mark features whose blocks are in the CSV but have 0 flags
     for (const feature of districtFeatures) {
       if (matchedIds.has(feature.id)) continue;
       const normName = normalizeBlock(feature.properties.block_name);
@@ -293,7 +178,6 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
   const mappedFlagged = Object.keys(blockCounts).length - unmappedBlocks.length;
   const totalFlagged = Object.keys(blockCounts).length;
 
-  // ── Loading ──
   if (loading) {
     return (
       <div className="flex h-[380px] items-center justify-center text-sm text-slate-400">
@@ -302,7 +186,6 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
     );
   }
 
-  // ── Error ──
   if (loadError) {
     return (
       <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -311,7 +194,6 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
     );
   }
 
-  // ── No district features ──
   if (districtFeatures.length === 0) {
     return (
       <div className="space-y-4">
@@ -334,10 +216,8 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
           className="h-[380px] w-full"
           preserveAspectRatio="xMidYMid meet"
         >
-          {/* Background ocean */}
           <rect x={bMinX - 2} y={bMinY - 2} width={viewW + 4} height={viewH + 4} fill="#dce8f0" />
 
-          {/* Block fills */}
           {districtFeatures.map((feature) => {
             const isHovered = hovered?.blockName === feature.properties.block_name;
             const count = featureToCount.get(feature.id) ?? 0;
@@ -368,7 +248,6 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
             );
           })}
 
-          {/* Labels — shown when district has ≤40 blocks and feature is large enough */}
           {districtFeatures.length <= 40 &&
             districtFeatures.map((feature) => {
               const cx = (feature.bounds[0] + feature.bounds[2]) / 2;
@@ -403,7 +282,6 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
         </svg>
       </div>
 
-      {/* Hover tooltip */}
       {hovered && (
         <div
           className="pointer-events-none fixed z-50 min-w-[160px] rounded-xl border border-white/80 bg-slate-950/95 px-3 py-2.5 shadow-xl backdrop-blur-sm"
@@ -470,7 +348,6 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
         </div>
       </div>
 
-      {/* Coverage note */}
       {totalFlagged > 0 && (
         <p className="text-[11px] text-slate-400">
           {mappedFlagged} of {totalFlagged} blocks with flagged facilities matched to map
@@ -479,7 +356,6 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
         </p>
       )}
 
-      {/* Unmapped blocks */}
       {unmappedBlocks.length > 0 && <UnmappedList blocks={unmappedBlocks} />}
     </div>
   );
