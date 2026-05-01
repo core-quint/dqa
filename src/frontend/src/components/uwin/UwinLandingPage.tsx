@@ -74,6 +74,16 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
     setIsPrechecking(true);
     try {
       const checks = await preCheckUwinFiles(csvFiles);
+
+      const hmisFiles = checks.filter((c) => c.isHmisFile);
+      if (hmisFiles.length > 0) {
+        const names = hmisFiles.map((c) => c.file.name).join(", ");
+        setError(
+          `The following file(s) appear to be HMIS files, not U-WIN files: ${names}. Please upload U-WIN session-site CSV files in the HMIS section.`,
+        );
+        return;
+      }
+
       const needsInput = checks.some(
         (check) => !check.hasMonthColumn && !check.detectedMonth,
       );

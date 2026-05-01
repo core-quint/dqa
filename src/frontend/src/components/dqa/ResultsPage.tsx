@@ -348,12 +348,21 @@ export function ResultsPage({
                 <span className="text-xs text-slate-500">
                   Last saved: <strong className="font-semibold text-slate-700">{new Date(lastSnapshot.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</strong>
                 </span>
-                <span
-                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold"
-                  style={(() => { const s = scoreBadgeStyle(lastSnapshot.overallScore); return { background: s.bg, color: s.text }; })()}
-                >
-                  Prev score: {Math.round(lastSnapshot.overallScore)}
-                </span>
+                {([
+                  { label: "Overall", score: lastSnapshot.overallScore, style: scoreBadgeStyle(lastSnapshot.overallScore) },
+                  { label: "Avail", score: lastSnapshot.availabilityScore, style: { bg: "#fff1f2", text: "#b91c1c" } },
+                  { label: "Compl", score: lastSnapshot.completenessScore, style: { bg: "#eef2ff", text: "#4338ca" } },
+                  { label: "Accur", score: lastSnapshot.accuracyScore, style: { bg: "#fffbeb", text: "#92400e" } },
+                  { label: "Consis", score: lastSnapshot.consistencyScore, style: { bg: "#f0fdf4", text: "#15803d" } },
+                ] as const).map(({ label, score, style }) => (
+                  <span
+                    key={label}
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold"
+                    style={{ background: style.bg, color: style.text }}
+                  >
+                    {label}: {Math.round(score)}
+                  </span>
+                ))}
               </>
             ) : null}
           </div>

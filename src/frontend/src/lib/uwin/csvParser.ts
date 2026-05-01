@@ -211,6 +211,7 @@ export interface UwinFilePrecheck {
   file: File;
   hasMonthColumn: boolean;
   detectedMonth: string | null; // YYYY-MM if auto-detected from filename, else null
+  isHmisFile: boolean;
 }
 
 export function preCheckUwinFiles(files: File[]): Promise<UwinFilePrecheck[]> {
@@ -230,7 +231,8 @@ export function preCheckUwinFiles(files: File[]): Promise<UwinFilePrecheck[]> {
       const { header } = extractHeader(rows);
       const hasMonthColumn = findMonthColIndex(header) !== null;
       const detectedMonth = hasMonthColumn ? null : extractMonthFromFilename(file.name);
-      return { file, hasMonthColumn, detectedMonth };
+      const isHmisFile = !header.some((h) => UWIN_VAX_CODES.has(headerCompactKey(h)));
+      return { file, hasMonthColumn, detectedMonth, isHmisFile };
     })
   );
 }
