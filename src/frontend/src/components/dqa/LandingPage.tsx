@@ -50,8 +50,8 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
   const hmisFileRef = useRef<HTMLInputElement>(null);
 
   const handleHmisFile = async (file: File) => {
-    if (!file.name.endsWith(".csv")) {
-      setError("Please upload a .csv file.");
+    if (!/\.(csv|xlsx|xls)$/i.test(file.name)) {
+      setError("Please upload an HMIS file in .csv, .xlsx, or .xls format.");
       return;
     }
     setIsLoading(true);
@@ -68,7 +68,7 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
       setError(
         parseError instanceof Error
           ? parseError.message
-          : "Failed to parse CSV file.",
+          : "Failed to parse the HMIS file.",
       );
     } finally {
       setIsLoading(false);
@@ -89,10 +89,10 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
               Upload dataset
             </div>
             <div className="mt-2 text-2xl font-extrabold text-slate-950">
-              Upload HMIS CSV
+              Upload HMIS file
             </div>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-              Upload the facility-wise CSV for the review period.
+              Upload the original HMIS Excel export or a cleaned CSV for the review period.
             </p>
           </div>
 
@@ -108,10 +108,10 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
                 <Upload className="h-7 w-7" />
               </div>
               <div className="mt-4 text-base font-bold text-slate-950">
-                Drop the CSV here or browse from your machine
+                Drop the HMIS file here or browse from your machine
               </div>
               <div className="mt-2 text-sm text-slate-500">
-                Facility-wise monthly HMIS export, CSV format only
+                Facility-wise monthly HMIS export in `.xlsx`, `.xls`, or `.csv`
               </div>
             </button>
 
@@ -157,7 +157,7 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
           <input
             ref={hmisFileRef}
             type="file"
-            accept=".csv"
+            accept=".csv,.xlsx,.xls"
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) handleHmisFile(file);

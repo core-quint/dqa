@@ -1,12 +1,12 @@
 // ============================================================
-// CSV Parser - converts raw papaparse output to ParsedCSV
+// HMIS file parser - converts raw CSV/XLSX input to ParsedCSV
 // ============================================================
 
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import {
   stripBOM,
   normalizeHeader,
-  normalizeFacilityKey,
   normalizeOwnership,
   normalizeRU,
   monthKey,
@@ -20,28 +20,122 @@ import {
 } from './parseUtils';
 import type { ParsedCSV, FacilityRecord } from './types';
 
-export function parseCSVFile(file: File): Promise<ParsedCSV> {
+const LEGACY_HMIS_GEO_COL_COUNT = 36; // A:AJ
+
+export async function parseCSVFile(file: File): Promise<ParsedCSV> {
+  if (isExcelFile(file.name)) {
+    const rawRows = await parseExcelRows(file);
+    return processRawRows(rawRows, file.name);
+  }
+
+  const rawRows = await parseCsvRows(file);
+  return processRawRows(rawRows, file.name);
+}
+
+function parseCsvRows(file: File): Promise<string[][]> {
   return new Promise((resolve, reject) => {
     Papa.parse<string[]>(file, {
       skipEmptyLines: true,
-      complete: (results) => {
-        try {
-          const parsed = processRawRows(results.data, file.name);
-          resolve(parsed);
-        } catch (e) {
-          reject(e);
-        }
-      },
+      complete: (results) => resolve(results.data),
       error: (err) => reject(err),
     });
   });
 }
 
+async function parseExcelRows(file: File): Promise<string[][]> {
+  const workbook = XLSX.read(await file.arrayBuffer(), {
+    type: 'array',
+    raw: false,
+    cellText: false,
+  });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) {
+    throw new Error('The Excel workbook has no readable sheets.');
+  }
+
+  const sheet = cloneSheetWithExpandedMerges(workbook.Sheets[firstSheetName]);
+  const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, {
+    header: 1,
+    raw: false,
+    defval: '',
+    blankrows: false,
+  });
+
+  return rows
+    .map((row) => row.map((cell) => String(cell ?? '')))
+    .filter((row) => row.some((cell) => stripBOM(String(cell ?? '')).trim() !== ''));
+}
+
+function cloneSheetWithExpandedMerges(sheet: XLSX.WorkSheet): XLSX.WorkSheet {
+  const clone: XLSX.WorkSheet = { ...sheet };
+  const mergeRanges = sheet['!merges'] ?? [];
+
+  for (const range of mergeRanges) {
+    const startRef = XLSX.utils.encode_cell(range.s);
+    const startCell = sheet[startRef];
+    if (!startCell) continue;
+
+    for (let row = range.s.r; row <= range.e.r; row++) {
+      for (let col = range.s.c; col <= range.e.c; col++) {
+        const ref = XLSX.utils.encode_cell({ r: row, c: col });
+        clone[ref] = { ...startCell };
+      }
+    }
+  }
+
+  return clone;
+}
+
+function isExcelFile(fileName: string): boolean {
+  return /\.(xlsx|xls)$/i.test(fileName);
+}
+
+function tryNormalizeLegacyHmisRows(rawRows: string[][]): string[][] | null {
+  if (rawRows.length < 6) return null;
+
+  const rows = rawRows.map((row) => [...row]);
+  const withoutTitle = rows.slice(1);
+  if (withoutTitle.length < 5) return null;
+
+  const headerBase = [...withoutTitle[2]];
+  const geoSource = withoutTitle[1] ?? [];
+  const geoCols = Math.min(LEGACY_HMIS_GEO_COL_COUNT, Math.max(headerBase.length, geoSource.length));
+
+  for (let col = 0; col < geoCols; col++) {
+    const geoValue = geoSource[col]?.trim();
+    if (geoValue) {
+      headerBase[col] = geoSource[col];
+    }
+  }
+
+  return [headerBase, ...withoutTitle.slice(4)];
+}
+
+function hasRequiredHeaders(rawHeader: string[]): boolean {
+  const header = rawHeader.map((h) => stripBOM(h.trim()));
+  const norm = header.map(normalizeHeader);
+
+  const idxBlock = arraySearchFirst(norm, [
+    'block name', 'health block name', 'lgd block name', 'block', 'block_name',
+  ]);
+  const idxFac = arraySearchFirst(norm, [
+    'facility name', 'health facility name', 'facility', 'facility_name',
+    'session site name', 'session site', 'session_site_name',
+  ]);
+  const idxMonth = arraySearchFirst(norm, ['month', 'reporting month', 'month name']);
+
+  return idxBlock !== null && idxFac !== null && idxMonth !== null;
+}
+
 function processRawRows(rawRows: string[][], fileName: string): ParsedCSV {
   if (rawRows.length === 0) throw new Error('Empty file or unreadable header.');
 
+  const normalizedRows =
+    hasRequiredHeaders(rawRows[0] ?? []) ? rawRows : (tryNormalizeLegacyHmisRows(rawRows) ?? rawRows);
+  if (normalizedRows.length === 0) throw new Error('Empty file or unreadable header.');
+
   // Clean header
-  const rawHeader = rawRows[0];
+  const rawHeader = normalizedRows[0];
   const header: string[] = rawHeader.map((h) => stripBOM(h.trim()));
   const norm: string[] = header.map(normalizeHeader);
 
@@ -63,7 +157,7 @@ function processRawRows(rawRows: string[][], fileName: string): ParsedCSV {
 
   if (idxBlock === null || idxFac === null || idxMonth === null) {
     throw new Error(
-      'Please upload CSV with required headers: Block Name, Facility Name (or Session Site Name), Month.'
+      'Please upload a readable HMIS CSV or Excel file with Block Name, Facility Name (or Session Site Name), and Month headers.'
     );
   }
 
@@ -97,7 +191,7 @@ function processRawRows(rawRows: string[][], fileName: string): ParsedCSV {
   Object.assign(indicatorMap, targetIndicatorIdxMap);
 
   // Parse data rows
-  const rows = rawRows.slice(1).map((r) => {
+  const rows = normalizedRows.slice(1).map((r) => {
     if (r.length < header.length) {
       const padded = [...r];
       while (padded.length < header.length) padded.push('');
