@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
+import { adminAuth } from "../lib/firebase";
 
 export interface JwtUser {
   id: string;
@@ -15,7 +15,7 @@ export interface AuthRequest extends Request {
   user?: JwtUser;
 }
 
-export function authenticate(
+export async function authenticate(
   req: AuthRequest,
   res: Response,
   next: NextFunction
@@ -30,8 +30,16 @@ export function authenticate(
   const token = authHeader.split(" ")[1];
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as JwtUser;
-    req.user = decoded;
+    const decoded = await adminAuth.verifyIdToken(token);
+    req.user = {
+      id: decoded.uid,
+      email: decoded.email!,
+      role: decoded.role === "ADMIN" ? "ADMIN" : "USER",
+      level: (decoded.level as JwtUser["level"]) ?? "NATIONAL",
+      geoState: (decoded.geoState as string) ?? null,
+      geoDistrict: (decoded.geoDistrict as string) ?? null,
+      geoBlock: (decoded.geoBlock as string) ?? null,
+    };
     next();
   } catch {
     res.status(401).json({ message: "Invalid token" });

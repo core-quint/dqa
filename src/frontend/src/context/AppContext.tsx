@@ -1,4 +1,6 @@
 import { createContext, useContext, useState, useCallback } from "react";
+import { signOut } from "firebase/auth";
+import { auth } from "../lib/firebase";
 import type { ParsedCSV } from "../lib/dqa/types";
 import type { UwinParsedCSV } from "../lib/uwin/types";
 import type { AuthState } from "../components/dqa/LoginPage";
@@ -38,7 +40,7 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [auth, setAuth] = useState<AuthState | null>(null);
+  const [authState, setAuthState] = useState<AuthState | null>(null);
   const [appState, setAppState] = useState<AppState>("login");
   const [csvData, setCsvData] = useState<ParsedCSV | null>(null);
   const [uwinData, setUwinData] = useState<UwinParsedCSV | null>(null);
@@ -51,8 +53,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem("token");
-    setAuth(null);
+    signOut(auth).catch(() => {});
+    setAuthState(null);
     setAppState("login");
     setCsvData(null);
     setUwinData(null);
@@ -64,8 +66,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   return (
     <AppContext.Provider
       value={{
-        auth,
-        setAuth,
+        auth: authState,
+        setAuth: setAuthState,
         appState,
         setAppState,
         csvData,

@@ -5,6 +5,13 @@ src/frontend/dist/
 backend/dist/
 backend/.env
 .env
+src/frontend/.env
+src/frontend/.env.production
+backend/*-firebase-adminsdk-*.json
+backend/serviceAccountKey.json
+functions/serviceAccountKey.json
+functions/*-firebase-adminsdk-*.json
+functions/lib/
 .DS_Store
 Thumbs.db
 DQA_project_memory/

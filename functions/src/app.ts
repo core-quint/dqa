@@ -1,4 +1,3 @@
-import "dotenv/config";
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import authRoutes from "./routes/auth.routes";
@@ -9,11 +8,12 @@ const app = express();
 
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
-  : ["http://localhost:5173"];
+  : ["http://localhost:5173", "http://localhost:5000"];
 
 app.use(
   cors({
     origin: (origin, callback) => {
+      // Allow requests with no Origin (same-origin via hosting rewrites)
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {

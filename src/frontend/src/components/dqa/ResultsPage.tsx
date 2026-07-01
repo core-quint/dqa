@@ -16,7 +16,7 @@ import { KpiCard as KpiCardCmp } from "./KpiCard";
 import { KpiPanel } from "./KpiPanel";
 import { CollapsibleFilterRail } from "./CollapsibleFilterRail";
 import { OverallScore } from "./OverallScore";
-import { API_BASE } from "../../config";
+import { apiFetch } from "../../api";
 import { computeOverallScore, scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
 import { buildSnapshotSaveMeta } from "../../lib/snapshots";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
@@ -139,12 +139,7 @@ export function ResultsPage({
   }, [csv]);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
-    fetch(`${API_BASE}/api/snapshots`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((response) => response.json())
+    apiFetch("/api/snapshots")
       .then((snapshots: any[]) => {
         const matches = snapshots.filter(
           (snapshot) =>
@@ -191,15 +186,10 @@ export function ResultsPage({
     if (!kpis) return;
     try {
       setSaving(true);
-      const token = localStorage.getItem("token");
       const { overall, components } = computeOverallScore(kpis);
       const snapshotMeta = buildSnapshotSaveMeta(auth, filters, csv.allMonths);
-      const response = await fetch(`${API_BASE}/api/snapshots`, {
+      const savedSnapshot = await apiFetch("/api/snapshots", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({
           portal: "HMIS",
           state: csv.stateName,
@@ -216,11 +206,6 @@ export function ResultsPage({
           periodEnd: snapshotMeta.periodEnd,
         }),
       });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || "Save failed");
-      }
-      const savedSnapshot = await response.json();
       setLastSnapshot({
         createdAt: savedSnapshot.createdAt,
         overallScore: savedSnapshot.overallScore,

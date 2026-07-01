@@ -11,7 +11,7 @@ import {
   type ChartOptions,
 } from "chart.js";
 import { ArrowLeft, Download, Trash2, TrendingUp } from "lucide-react";
-import { API_BASE } from "../../config";
+import { apiFetch } from "../../api";
 import { GlassPanel } from "../branding/GlassPanel";
 
 ChartJS.register(
@@ -114,10 +114,7 @@ export function TrendPage({
   async function fetchSnapshots() {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE}/api/snapshots`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      const data: Snapshot[] = await response.json();
+      const data: Snapshot[] = await apiFetch("/api/snapshots");
       setSnapshots(
         data.sort(
           (a, b) =>
@@ -135,11 +132,7 @@ export function TrendPage({
     if (!confirm("Delete this snapshot? This cannot be undone.")) return;
     setDeletingId(id);
     try {
-      const response = await fetch(`${API_BASE}/api/snapshots/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!response.ok) throw new Error();
+      await apiFetch(`/api/snapshots/${id}`, { method: "DELETE" });
       setSnapshots((prev) => prev.filter((snapshot) => snapshot.id !== id));
     } catch {
       alert("Failed to delete snapshot.");

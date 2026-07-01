@@ -8,7 +8,8 @@ import {
   BarChart3,
   Layers3,
 } from "lucide-react";
-import { API_BASE } from "../../config";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "../../lib/firebase";
 import { BrandMark } from "../branding/BrandMark";
 import { GlassPanel } from "../branding/GlassPanel";
 import { PageBackdrop } from "../branding/PageBackdrop";
@@ -48,6 +49,19 @@ const VALUE_PROPS = [
   },
 ];
 
+function mapFirebaseError(code: string): string {
+  if (code === "auth/user-not-found" || code === "auth/wrong-password" || code === "auth/invalid-credential") {
+    return "Invalid email or password.";
+  }
+  if (code === "auth/too-many-requests") {
+    return "Too many failed attempts. Please try again later.";
+  }
+  if (code === "auth/user-disabled") {
+    return "This account has been disabled.";
+  }
+  return "Login failed. Please try again.";
+}
+
 export function LoginPage({ onLogin }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -66,46 +80,22 @@ export function LoginPage({ onLogin }: Props) {
     setError("");
 
     try {
-      const res = await fetch(`${API_BASE}/api/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email: email.trim(),
-          password,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.message || "Invalid email or password.");
-      }
-
-      if (!data.token) {
-        throw new Error("Authentication failed.");
-      }
-
-      localStorage.setItem("token", data.token);
-
-      const payload = JSON.parse(atob(data.token.split(".")[1]));
+      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const tokenResult = await credential.user.getIdTokenResult();
+      const claims = tokenResult.claims;
 
       onLogin({
-        token: data.token,
-        email: payload.email,
-        role: payload.role?.toLowerCase() === "admin" ? "admin" : "user",
-        level: payload.level ?? "NATIONAL",
-        geoState: payload.geoState ?? null,
-        geoDistrict: payload.geoDistrict ?? null,
-        geoBlock: payload.geoBlock ?? null,
+        token: tokenResult.token,
+        email: credential.user.email!,
+        role: claims.role?.toString().toLowerCase() === "admin" ? "admin" : "user",
+        level: (claims.level as AuthState["level"]) ?? "NATIONAL",
+        geoState: (claims.geoState as string) ?? null,
+        geoDistrict: (claims.geoDistrict as string) ?? null,
+        geoBlock: (claims.geoBlock as string) ?? null,
       });
-    } catch (fetchError) {
-      setError(
-        fetchError instanceof Error
-          ? fetchError.message
-          : "Login failed. Please try again.",
-      );
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code ?? "";
+      setError(mapFirebaseError(code));
     } finally {
       setLoading(false);
     }

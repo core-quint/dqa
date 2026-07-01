@@ -10,7 +10,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { API_BASE } from "../../config";
+import { apiFetch } from "../../api";
 import type { AuthState } from "./LoginPage";
 import { GlassPanel } from "../branding/GlassPanel";
 import {
@@ -137,21 +137,16 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
     async function loadBaseData() {
       try {
-        const [snapshotResponse, statesResponse, districtsResponse] = await Promise.all([
-          fetch(`${API_BASE}/api/snapshots`, {
-            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-          }),
-          fetch(new URL("../../../assets/states.json", import.meta.url).href),
-          fetch(new URL("../../../assets/districts.json", import.meta.url).href),
-        ]);
-
-        if (!snapshotResponse.ok) throw new Error("Failed to load saved DQA snapshots.");
-        if (!statesResponse.ok || !districtsResponse.ok) throw new Error("Failed to load map files.");
-
         const [snapshotData, statesData, districtsData] = await Promise.all([
-          snapshotResponse.json() as Promise<SnapshotRecord[]>,
-          statesResponse.json() as Promise<Topology<StateShapeProps>>,
-          districtsResponse.json() as Promise<Topology<DistrictShapeProps>>,
+          apiFetch("/api/snapshots") as Promise<SnapshotRecord[]>,
+          fetch(new URL("../../../assets/states.json", import.meta.url).href).then((r) => {
+            if (!r.ok) throw new Error("Failed to load map files.");
+            return r.json() as Promise<Topology<StateShapeProps>>;
+          }),
+          fetch(new URL("../../../assets/districts.json", import.meta.url).href).then((r) => {
+            if (!r.ok) throw new Error("Failed to load map files.");
+            return r.json() as Promise<Topology<DistrictShapeProps>>;
+          }),
         ]);
 
         if (!mounted) return;

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import Papa from "papaparse";
 import type { AuthState } from "./LoginPage";
-import { API_BASE } from "../../config";
+import { apiFetch } from "../../api";
 import { GlassPanel } from "../branding/GlassPanel";
 
 interface GeoEntry {
@@ -63,8 +63,6 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
   const [geoUploading, setGeoUploading] = useState(false);
   const [geoFeedback, setGeoFeedback] = useState<Feedback>(null);
 
-  const headers = { Authorization: `Bearer ${authState.token}` };
-
   const showFeedback = (nextFeedback: Feedback) => {
     setFeedback(nextFeedback);
     setTimeout(() => setFeedback(null), 5000);
@@ -97,27 +95,24 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
   const loadUsers = useCallback(async () => {
     setUsersLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/admin/users`, { headers });
-      if (!response.ok) throw new Error();
-      setUsers(await response.json());
+      setUsers(await apiFetch("/api/admin/users"));
     } catch {
       showFeedback({ type: "error", message: "Failed to load users" });
     } finally {
       setUsersLoading(false);
     }
-  }, [authState.token]);
+  }, []);
 
   const loadGeo = useCallback(async () => {
     setGeoLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/admin/geo`, { headers });
-      if (response.ok) setGeoEntries(await response.json());
+      setGeoEntries(await apiFetch("/api/admin/geo"));
     } catch {
       // Intentionally silent when no geodata is present yet.
     } finally {
       setGeoLoading(false);
     }
-  }, [authState.token]);
+  }, []);
 
   useEffect(() => {
     loadUsers();
@@ -143,13 +138,10 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
       }
       if (newLevel === "BLOCK") body.geoBlock = newBlock;
 
-      const response = await fetch(`${API_BASE}/api/admin/users`, {
+      await apiFetch("/api/admin/users", {
         method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message);
       showFeedback({ type: "success", message: `User "${newEmail}" created.` });
       setNewEmail("");
       setNewPassword("");
@@ -173,11 +165,7 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
     if (!confirm(`Delete user "${email}"?`)) return;
     setDeleting(id);
     try {
-      const response = await fetch(`${API_BASE}/api/admin/users/${id}`, {
-        method: "DELETE",
-        headers,
-      });
-      if (!response.ok) throw new Error();
+      await apiFetch(`/api/admin/users/${id}`, { method: "DELETE" });
       setUsers((prev) => prev.filter((user) => user.id !== id));
       showFeedback({ type: "success", message: `User "${email}" deleted.` });
     } catch {
@@ -246,13 +234,10 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
                 Boolean(entry.state && entry.district && entry.block),
             );
 
-          const response = await fetch(`${API_BASE}/api/admin/geo`, {
+          const data = await apiFetch("/api/admin/geo", {
             method: "POST",
-            headers: { ...headers, "Content-Type": "application/json" },
             body: JSON.stringify({ entries }),
           });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.message);
           showGeoFeedback({ type: "success", message: data.message });
           loadGeo();
         } catch (error) {
