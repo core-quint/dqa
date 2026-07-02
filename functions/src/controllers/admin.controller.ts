@@ -70,11 +70,13 @@ export const createUser = async (req: AuthRequest, res: Response) => {
       geoBlock: geoBlock ?? null,
     });
   } catch (error: unknown) {
+    console.error("createUser error:", error);
     if ((error as { code?: string }).code === "auth/email-already-exists") {
       res.status(409).json({ message: "User already exists" });
       return;
     }
-    res.status(500).json({ message: "Failed to create user" });
+    const detail = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ message: `Failed to create user: ${detail}` });
   }
 };
 

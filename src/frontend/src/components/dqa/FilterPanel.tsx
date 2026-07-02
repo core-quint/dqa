@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Filter, Plus, X } from "lucide-react";
 import type { FilterState, ParsedCSV } from "../../lib/dqa/types";
+import type { UwinParsedCSV } from "../../lib/uwin/types";
 import { BASE_VAX, ADD_VAX, PAIR_DEFAULTS } from "../../lib/dqa/constants";
 
 interface Props {
@@ -178,6 +179,46 @@ function PairRow({
   );
 }
 
+function AnalysisModeToggle({
+  value,
+  onChange,
+  fullWidth,
+}: {
+  value: FilterState["analysisMode"];
+  onChange: (value: FilterState["analysisMode"]) => void;
+  fullWidth?: boolean;
+}) {
+  const options: { value: FilterState["analysisMode"]; label: string }[] = [
+    { value: "facility", label: "Facility-wise" },
+    { value: "sessionsite", label: "Session Site-wise" },
+  ];
+  return (
+    <div
+      className={[
+        "inline-flex items-center gap-1 rounded-2xl border border-white/80 bg-white/78 p-1 shadow-[0_12px_28px_rgba(15,23,42,0.06)]",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          onClick={() => onChange(opt.value)}
+          className={[
+            "rounded-xl px-3 py-2 text-xs font-semibold transition",
+            fullWidth ? "flex-1" : "",
+            value === opt.value
+              ? "bg-slate-950 text-white"
+              : "text-slate-600 hover:bg-slate-100",
+          ].join(" ")}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function FilterPanel({
   csv,
   filters: initFilters,
@@ -188,6 +229,8 @@ export function FilterPanel({
   const [f, setF] = useState<FilterState>({ ...initFilters });
   const portal = (csv as unknown as { portal?: string }).portal ?? "HMIS";
   const isUwin = portal === "UWIN";
+  const uwinCsv = isUwin ? (csv as unknown as UwinParsedCSV) : null;
+  const showAnalysisModeToggle = isUwin && uwinCsv?.idxSessionSite !== null;
 
   useEffect(() => {
     setF({ ...initFilters });
@@ -235,6 +278,14 @@ export function FilterPanel({
             : "flex flex-wrap items-start gap-3"
         }
       >
+        {showAnalysisModeToggle ? (
+          <AnalysisModeToggle
+            value={f.analysisMode}
+            onChange={(value) => setF((prev) => ({ ...prev, analysisMode: value }))}
+            fullWidth={isRail}
+          />
+        ) : null}
+
         <Dropdown label="Block Name" fullWidth={isRail}>
           <CheckAll
             label="Select All"

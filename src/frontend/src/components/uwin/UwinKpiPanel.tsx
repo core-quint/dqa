@@ -185,11 +185,10 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
   };
 
   function getTableRows() {
-    if (id === "t1") return kpis.t1Rows;
     if (id === "t0") return kpis.t0Rows;
     if (id === "t7") return kpis.t7Rows;
+    if (id === "t9") return kpis.t9Rows;
     if (id === "t6") return kpis.t6Rows;
-    if (id === "tneg") return kpis.tnegRows;
     if (id === "i1") return kpis.i1Rows;
     if (id === "i2") return kpis.i2Rows;
     if (id.startsWith("iadd_")) return kpis.inconsTables[id] ?? null;
@@ -197,13 +196,12 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
   }
 
   const renderTable = () => {
-    if (id === "t1") return <FlatTable rows={kpis.t1Rows} highlightN />;
     if (id === "t0") return <FlatTable rows={kpis.t0Rows} highlightN />;
     if (id === "t7") return <FlatTable rows={kpis.t7Rows} highlightN />;
+    if (id === "t9") return <FlatTable rows={kpis.t9Rows} highlightN />;
     if (id === "t2") return <T2Table web={kpis.t2Web} />;
     if (id === "t6") return <FlatTable rows={kpis.t6Rows} />;
     if (id === "t8") return <T8Table web={kpis.t8Web} />;
-    if (id === "tneg") return <FlatTable rows={kpis.tnegRows} highlightN />;
     if (id === "t3") return <T3Table web={kpis.t3Web} />;
     if (id.startsWith("drop_") && kpis.dropTables[id]) {
       return <DropoutTable web={kpis.dropTables[id]} />;

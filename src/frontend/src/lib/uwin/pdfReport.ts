@@ -57,6 +57,17 @@ const P = {
 
 const UWIN_GROUPS = ["availability", "accuracy", "consistency"];
 
+// Report copy says "Session Site(s)" in session-site-wise mode, "Facility/Facilities"
+// in facility-wise mode (mirrors the on-screen results page).
+function unitLabels(kpis: UwinComputedKpis): { singular: string; plural: string; lower: string } {
+  const isSessionSiteWise = kpis.analysisMode === "sessionsite";
+  return {
+    singular: isSessionSiteWise ? "Session Site" : "Facility",
+    plural: isSessionSiteWise ? "Session Sites" : "Facilities",
+    lower: isSessionSiteWise ? "session sites" : "facilities",
+  };
+}
+
 const GROUP_COLOR: Record<string, RGB> = {
   availability: P.availMid,
   accuracy:     P.accurMid,
@@ -224,7 +235,7 @@ function buildCover(
 
   // Stats row
   const stats = [
-    { n: String(totalFac),               lbl: "Session Sites", color: P.blue },
+    { n: String(totalFac),               lbl: unitLabels(kpis).plural, color: P.blue },
     { n: String(csv.globalBlockCount),   lbl: "Blocks",        color: P.blue },
     { n: String(kpis.selMonths.length),  lbl: "Months",        color: P.blue },
     { n: `${scoreResult.overall.toFixed(1)}%`, lbl: "Overall Score", color: scoreRGB(scoreResult.overall) },
@@ -391,13 +402,14 @@ function buildSummary(
   hRule(doc, y);
   y += 10;
 
+  const unit = unitLabels(kpis);
   const statRows = [
     ["State",                         csv.stateName || "—"],
     ["District",                      csv.distName  || "—"],
     ["Analysis Period",                period],
     ["Months Analyzed",                String(kpis.selMonths.length)],
-    ["Total Session Sites (CSV)",      String(csv.globalFacilityCount)],
-    ["Session Sites in Analysis",      String(totalFac)],
+    [`Total ${unit.plural} (CSV)`,      String(kpis.analysisMode === "sessionsite" ? csv.globalSessionSiteCount : csv.globalFacilityCount)],
+    [`${unit.plural} in Analysis`,      String(totalFac)],
     ["Blocks",                         String(csv.globalBlockCount)],
     ["Public / Private",               `${csv.publicCount} / ${csv.privateCount}`],
     ["Rural / Urban",                  `${csv.ruralCount} / ${csv.urbanCount}`],
@@ -439,7 +451,7 @@ function buildSummary(
     textC(doc, P.ink700);
     font(doc, "normal", 8);
     doc.text(
-      `${worst.name} — ${worst.total} sites (${worst.pct.toFixed(1)}%) flagged`,
+      `${worst.name} — ${worst.total} ${unit.lower} (${worst.pct.toFixed(1)}%) flagged`,
       ML + 10 + 70, y + 2.5,
     );
     y += 14;
@@ -454,6 +466,7 @@ function drawBarChart(
   maxVal: number,
   color: RGB,
   totalFac: number,
+  unitLower: string,
 ): number {
   if (items.length === 0) return y;
   const BH = 13;
@@ -470,7 +483,7 @@ function drawBarChart(
 
   textC(doc, P.ink400);
   font(doc, "normal", 5.5);
-  doc.text("← Session sites flagged →", x + LABW + BARW / 2, y + 7, { align: "center" });
+  doc.text(`← ${unitLower[0].toUpperCase()}${unitLower.slice(1)} flagged →`, x + LABW + BARW / 2, y + 7, { align: "center" });
 
   for (let i = 0; i <= 4; i++) {
     const gx = x + LABW + (BARW * i) / 4;
@@ -625,14 +638,15 @@ function buildComponentSection(
   const cards = kpis.cards.filter(c => c.group === group);
   const maxVal = Math.max(1, ...cards.map(c => c.stat.total));
 
+  const unit = unitLabels(kpis);
   textC(doc, P.ink500);
   font(doc, "bold", 7.5);
-  doc.text("FLAGGED SESSION SITES BY INDICATOR", ML, y, { charSpace: 0.6 });
+  doc.text(`FLAGGED ${unit.plural.toUpperCase()} BY INDICATOR`, ML, y, { charSpace: 0.6 });
   y += 6;
   hRule(doc, y);
   y += 10;
 
-  y = drawBarChart(doc, ML, y, CW, cards.map(c => ({ label: sanitize(c.name), value: c.stat.total })), maxVal, color, totalFac);
+  y = drawBarChart(doc, ML, y, CW, cards.map(c => ({ label: sanitize(c.name), value: c.stat.total })), maxVal, color, totalFac, unit.lower);
   y += 4;
 
   textC(doc, P.ink500);
@@ -690,14 +704,15 @@ function buildComponentSection(
       if (!fd) continue;
       // One indicator per line — guarantees wrapping regardless of jspdf-autotable version
       const flaggedIndicators = cards.filter(c => c.stat.facilityKeys.has(fk)).map(c => sanitize(c.name));
-      facRows.push({ block: fd.block, facility: fd.facility, indicators: flaggedIndicators.join("\n"), count: flaggedIndicators.length });
+      const label = fd.sessionsite ? `${fd.facility} — ${fd.sessionsite}` : fd.facility;
+      facRows.push({ block: fd.block, facility: label, indicators: flaggedIndicators.join("\n"), count: flaggedIndicators.length });
     }
     facRows.sort((a, b) => b.count - a.count);
     const top = facRows.slice(0, 20);
 
     textC(doc, P.ink500);
     font(doc, "bold", 7.5);
-    doc.text(`TOP AFFECTED SESSION SITES (${top.length} of ${allFacKeys.size})`, ML, y, { charSpace: 0.6 });
+    doc.text(`TOP AFFECTED ${unit.plural.toUpperCase()} (${top.length} of ${allFacKeys.size})`, ML, y, { charSpace: 0.6 });
     y += 6;
     hRule(doc, y);
     y += 8;
@@ -706,7 +721,7 @@ function buildComponentSection(
       startY: y,
       margin: { left: ML, right: MR },
       tableWidth: CW,
-      head: [["#", "Block", "Session Site", "Flagged Indicators", "N"]],
+      head: [["#", "Block", unit.singular, "Flagged Indicators", "N"]],
       body: top.map((r, i) => [String(i + 1), r.block, r.facility, r.indicators, String(r.count)]),
       styles: { fontSize: 7, cellPadding: 3.5, font: "helvetica", overflow: "linebreak" },
       headStyles: { fillColor: xsoft, textColor: dark, fontStyle: "bold", fontSize: 6.5, lineColor: soft, lineWidth: 0.4 },
@@ -758,9 +773,10 @@ function buildBlockSummary(doc: jsPDF, kpis: UwinComputedKpis) {
   doc.text("Block-Level Summary", ML + 14, y + 23);
   y += 46;
 
+  const unit = unitLabels(kpis);
   textC(doc, P.ink500);
   font(doc, "normal", 7);
-  doc.text("Unique session sites flagged per block, across all DQA components.", ML, y);
+  doc.text(`Unique ${unit.lower} flagged per block, across all DQA components.`, ML, y);
   y += 14;
 
   const blockMap = new Map<string, Record<string, Set<string>>>();
@@ -804,7 +820,7 @@ function buildBlockSummary(doc: jsPDF, kpis: UwinComputedKpis) {
     startY: y,
     margin: { left: ML, right: MR },
     tableWidth: CW,
-    head: [["Block", "Total Sites", "Availability", "Accuracy", "Consistency", "Any Flagged", "Impact%"]],
+    head: [["Block", `Total ${unit.plural}`, "Availability", "Accuracy", "Consistency", "Any Flagged", "Impact%"]],
     body: blockRows,
     styles: { fontSize: 7, cellPadding: 3.5, font: "helvetica", overflow: "linebreak" },
     headStyles: { fillColor: P.bg100, textColor: P.ink700, fontStyle: "bold", fontSize: 7, lineColor: P.border, lineWidth: 0.4 },
@@ -836,7 +852,7 @@ function buildBlockSummary(doc: jsPDF, kpis: UwinComputedKpis) {
   doc.roundedRect(ML, lastY, CW, 28, 4, 4, "F");
   textC(doc, P.ink400);
   font(doc, "normal", 6.5);
-  doc.text("Note: A session site may appear under multiple components. 'Any Flagged' counts each site once.", ML + 10, lastY + 10, { maxWidth: CW - 20 });
+  doc.text(`Note: A ${unit.lower.replace(/s$/, "")} may appear under multiple components. 'Any Flagged' counts each once.`, ML + 10, lastY + 10, { maxWidth: CW - 20 });
 }
 
 // ─── Per-group block counts ───────────────────────────────────────────────────

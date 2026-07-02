@@ -15,6 +15,7 @@ export interface FacilityRecord {
   ownership: string; // "Public" | "Private" | "Mixed" | ""
   ru: string; // "Rural" | "Urban" | "Mixed" | ""
   months: Record<string, MonthData>; // YYYY-MM -> MonthData
+  sessionsite?: string; // U-WIN session-site-wise mode only
 }
 
 export interface ParsedCSV {
@@ -61,6 +62,7 @@ export interface FilterState {
   inconsFrom: string[]; // inconsistency pair builder from
   inconsTo: string[]; // inconsistency pair builder to
   activeGroup: string;
+  analysisMode: 'facility' | 'sessionsite'; // U-WIN only; HMIS always 'facility'
 }
 
 // KPI stat structure
@@ -81,6 +83,7 @@ export interface T2MatrixRow {
   block: string;
   facility: string;
   cells: Record<string, Record<string, string>>; // vax -> YYYY-MM -> "Y"|"N"
+  sessionsite?: string;
 }
 
 export interface T2Web {
@@ -102,6 +105,7 @@ export interface T3MatrixRow {
   block: string;
   facility: string;
   cells: Record<string, Record<string, T3Cell>>; // vax -> pairKey -> cell
+  sessionsite?: string;
 }
 
 export interface PairMeta {
@@ -130,6 +134,7 @@ export interface DropoutRow {
   facility: string;
   cells: Record<string, DropoutCell>; // YYYY-MM -> cell
   all: DropoutCell;
+  sessionsite?: string;
 }
 
 export interface DropoutWeb {
@@ -147,6 +152,7 @@ export interface CoAdminRow {
   facility: string;
   vals: Record<string, Record<string, number | null>>; // YYYY-MM -> vax -> val
   totals: Record<string, number | null>;
+  sessionsite?: string;
 }
 
 export interface CoAdminWeb {

@@ -1,6 +1,7 @@
 // ============================================================
 // UWIN Export Utilities
-// Extends HMIS exportUtils with t8 highlighting case
+// Extends HMIS exportUtils with t8/t9 highlighting and a corrected
+// co-admin highlight rule; rowKey granularity follows kpis.analysisMode.
 // ============================================================
 
 import type { UwinParsedCSV, UwinComputedKpis } from './types';
@@ -52,14 +53,16 @@ export function downloadHighlightedXLS(
 ): void {
   const {
     header, rows,
-    idxBlock, idxFac, idxMonth,
+    idxBlock, idxFac, idxMonth, idxSessionSite,
     idxSessPlanned, idxSessHeld,
     idxBenPW, idxBenInf, idxBenChild, idxBenAdol,
+    idxBenTd1, idxBenTd2, idxBenTdB, idxBenTd10, idxBenTd16,
     indicatorMap,
   } = csv;
 
   const pinkFacKeys = new Set(kpis.pinkFacSets[kpiKey] ?? []);
   const selMonthsSet = new Set(kpis.selMonths);
+  const sessionSiteWise = kpis.analysisMode === 'sessionsite';
 
   const fullRows: string[][] = [header, ...rows];
   const styleMap: Record<number, Record<number, string>> = {};
@@ -75,7 +78,12 @@ export function downloadHighlightedXLS(
     const fac = r[idxFac]?.trim() ?? '';
     const monRaw = r[idxMonth] ?? '';
     const mKey = monthKeyFn(monRaw);
-    const rowKey = `${block}||${fac}`;
+    // Must match the granularity kpis.pinkFacSets was built at: session-site-wise
+    // keys include the raw row's Session Site Name, facility-wise keys don't (so
+    // every raw row for that facility is highlighted together).
+    const rowKey = sessionSiteWise
+      ? `${block}||${fac}||${idxSessionSite !== null ? (r[idxSessionSite]?.trim() ?? '') : ''}`
+      : `${block}||${fac}`;
     const inSet = pinkFacKeys.has(rowKey);
 
     let monthOk = true;
@@ -87,13 +95,7 @@ export function downloadHighlightedXLS(
       for (let ci = 0; ci < header.length; ci++) styleMap[ri][ci] = color;
     };
 
-    if (kpiKey === 't1') {
-      let allBlank = true;
-      for (let ci = idxMonth + 1; ci < header.length; ci++) {
-        if ((r[ci] ?? '').trim() !== '') { allBlank = false; break; }
-      }
-      if (allBlank) highlightRow(PINK);
-    } else if (kpiKey === 't0') {
+    if (kpiKey === 't0') {
       let allZero = true; let hasAny = false;
       for (let ci = idxMonth + 1; ci < header.length; ci++) {
         const v = asNumOrNull(r[ci] ?? '');
@@ -133,7 +135,7 @@ export function downloadHighlightedXLS(
         }
       }
     } else if (kpiKey === 't8') {
-      // Highlight sessions held + all beneficiary columns when avg < 10
+      // Highlight sessions held + all beneficiary columns when avg < 5
       if (mKey && kpis.t8HitMap[rowKey]?.[mKey]) {
         if (!styleMap[ri]) styleMap[ri] = {};
         if (idxSessHeld !== null) styleMap[ri][idxSessHeld] = PINK;
@@ -141,12 +143,13 @@ export function downloadHighlightedXLS(
           if (idx !== null) styleMap[ri][idx] = PINK;
         }
       }
-    } else if (kpiKey === 'tneg') {
-      // Highlight specific columns that have negative values
-      const negCols = mKey ? kpis.tnegHitMap[rowKey]?.[mKey] : undefined;
-      if (negCols && negCols.length > 0) {
+    } else if (kpiKey === 't9') {
+      // Highlight beneficiary + Td columns when their total is 0 for this month
+      if (mKey && kpis.t9HitMap[rowKey]?.[mKey]) {
         if (!styleMap[ri]) styleMap[ri] = {};
-        for (const ci of negCols) styleMap[ri][ci] = PINK;
+        for (const idx of [idxBenPW, idxBenInf, idxBenChild, idxBenAdol, idxBenTd1, idxBenTd2, idxBenTdB, idxBenTd10, idxBenTd16]) {
+          if (idx !== null) styleMap[ri][idx] = PINK;
+        }
       }
     } else if (kpiKey === 't3') {
       if (mKey && kpis.t3HitMap[rowKey]?.[mKey]) {
@@ -168,24 +171,42 @@ export function downloadHighlightedXLS(
         if (toCi !== undefined) styleMap[ri][toCi] = PINK;
       }
     } else if (kpiKey.startsWith('co')) {
+      // Highlight rule mirrors UwinDataTables' coadminRedCells(): Penta's value (if
+      // present) is the reference — every other cell differing from it is colored,
+      // Penta itself never colored; otherwise cells differing from the majority
+      // value are colored (or all cells on a tie / no majority). Fixes the "3-2
+      // split" case where the old unique-value rule highlighted nothing at all.
       const vaxList = CO_SPECS[kpiKey] ?? [];
-      const vals: number[] = [];
-      const ciList: number[] = [];
+      const present: { vx: string; ci: number; v: number }[] = [];
       for (const vx of vaxList) {
         const ci = idxByShort[vx];
         if (ci !== undefined) {
           const v = asNumOrNull(r[ci] ?? '');
-          if (v !== null) { vals.push(v); ciList.push(ci); }
+          if (v !== null) present.push({ vx, ci, v });
         }
       }
-      if (vals.length >= 2) {
-        const counts: Record<string, number> = {};
-        for (const v of vals) counts[String(v)] = (counts[String(v)] ?? 0) + 1;
-        for (let idx = 0; idx < vals.length; idx++) {
-          if (counts[String(vals[idx])] === 1) {
-            if (!styleMap[ri]) styleMap[ri] = {};
-            styleMap[ri][ciList[idx]] = DARK_PINK;
+      const counts = new Map<number, number>();
+      for (const { v } of present) counts.set(v, (counts.get(v) ?? 0) + 1);
+      if (present.length >= 2 && counts.size > 1) {
+        const pentaEntry = present.find((p) => p.vx.toLowerCase().startsWith('penta'));
+        let redCis: number[];
+        if (pentaEntry) {
+          redCis = present
+            .filter((p) => !p.vx.toLowerCase().startsWith('penta') && p.v !== pentaEntry.v)
+            .map((p) => p.ci);
+        } else {
+          let modeVal: number | null = null; let modeCount = -1; let tie = false;
+          for (const [val, c] of counts) {
+            if (c > modeCount) { modeCount = c; modeVal = val; tie = false; }
+            else if (c === modeCount) { tie = true; }
           }
+          redCis = (tie || modeCount <= 1)
+            ? present.map((p) => p.ci)
+            : present.filter((p) => p.v !== modeVal).map((p) => p.ci);
+        }
+        if (redCis.length > 0) {
+          if (!styleMap[ri]) styleMap[ri] = {};
+          for (const ci of redCis) styleMap[ri][ci] = DARK_PINK;
         }
       }
     } else if (kpiKey === 't5_p3gtp1' || kpiKey === 't5_opv3gtopv1') {

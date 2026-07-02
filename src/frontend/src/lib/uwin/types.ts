@@ -55,11 +55,20 @@ export interface UwinParsedCSV {
   idxBenInf: number | null;
   idxBenChild: number | null;
   idxBenAdol: number | null;
+  // UWIN-specific Td columns (used by t9 "Zero coverage session")
+  idxBenTd1: number | null;
+  idxBenTd2: number | null;
+  idxBenTdB: number | null;
+  idxBenTd10: number | null;
+  idxBenTd16: number | null;
+  // Session Site Name column (drives session-site-wise analysis mode)
+  idxSessionSite: number | null;
   indicatorMap: Record<string, number>;
   allIndicatorShorts: string[];
   facilityData: Record<string, FacilityRecord>;
   allMonths: Record<string, string>;
   globalFacilityCount: number;
+  globalSessionSiteCount: number;
   globalBlockCount: number;
   publicCount: number;
   privateCount: number;
@@ -82,6 +91,7 @@ export interface T8MonthData {
 export interface T8Row {
   block: string;
   facility: string;
+  sessionsite?: string;
   months: Record<string, T8MonthData>;
   allMonths: T8MonthData;
 }
@@ -100,13 +110,17 @@ export interface UwinComputedKpis {
   selMonthLabels: Record<string, string>;
   selVaxList: string[];
 
+  // Analysis basis this result was computed with
+  analysisMode: 'facility' | 'sessionsite';
+
   // Availability
-  t1Rows: TableRows;
   t0Rows: TableRows;
   t7Rows: TableRows;
-  t1Stat: KpiStat;
+  t9Rows: TableRows;
   t0Stat: KpiStat;
   t7Stat: KpiStat;
+  t9Stat: KpiStat;
+  t9HitMap: Record<string, Record<string, boolean>>;
 
   // Completeness
   t2Web: T2Web;
@@ -118,15 +132,10 @@ export interface UwinComputedKpis {
   t6Rows: TableRows;
   t6Stat: KpiStat;
 
-  // t8: UWIN-specific (avg beneficiaries/session < 10)
+  // t8: UWIN-specific (avg beneficiaries/session < 5)
   t8Stat: KpiStat;
   t8Web: T8Web;
   t8HitMap: Record<string, Record<string, boolean>>;
-
-  // tneg: UWIN-specific (negative indicator values)
-  tnegStat: KpiStat;
-  tnegRows: TableRows;
-  tnegHitMap: Record<string, Record<string, number[]>>; // facKey → mk → negative col indices
 
   t3Web: T3Web;
   t3Stat: KpiStat;

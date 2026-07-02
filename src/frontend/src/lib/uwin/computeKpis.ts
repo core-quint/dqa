@@ -1,6 +1,8 @@
 // ============================================================
 // UWIN KPI Computation Engine
-// Identical to HMIS computeKpis + t8 (Avg Beneficiaries / Session < 10)
+// Extends HMIS computeKpis with: t8 (Avg Beneficiaries/Session < 5),
+// t9 (Zero coverage session), and a facility-wise vs session-site-wise
+// analysis mode (filters.analysisMode).
 // ============================================================
 
 import type {
@@ -75,14 +77,73 @@ function chartCountsByBlock(
   };
 }
 
+// Session-site-wise data (Block||Facility||Session Site, the parser's finest grain)
+// summed back up to Block||Facility for facility-wise analysis mode.
+function aggregateToFacilityLevel(
+  facilityData: Record<string, FacilityRecord>
+): Record<string, FacilityRecord> {
+  const out: Record<string, FacilityRecord> = {};
+  for (const fd of Object.values(facilityData)) {
+    const key = `${fd.block}||${fd.facility}`;
+    let agg = out[key];
+    if (!agg) {
+      agg = { block: fd.block, facility: fd.facility, ownership: '', ru: '', months: {} };
+      out[key] = agg;
+    }
+    if (fd.ownership) {
+      if (!agg.ownership) agg.ownership = fd.ownership;
+      else if (agg.ownership !== fd.ownership) agg.ownership = 'Mixed';
+    }
+    if (fd.ru) {
+      if (!agg.ru) agg.ru = fd.ru;
+      else if (agg.ru !== fd.ru) agg.ru = 'Mixed';
+    }
+    for (const [mk, md] of Object.entries(fd.months)) {
+      let am = agg.months[mk];
+      if (!am) {
+        am = { label: md.label, yearMonth: md.yearMonth, raw: md.raw, vals: {} };
+        agg.months[mk] = am;
+      }
+      for (const [ciStr, v] of Object.entries(md.vals)) {
+        if (v === null) {
+          if (!(ciStr in am.vals)) am.vals[Number(ciStr)] = null;
+          continue;
+        }
+        const ci = Number(ciStr);
+        am.vals[ci] = (am.vals[ci] ?? 0) + v;
+      }
+    }
+  }
+  return out;
+}
+
 // ---- main export ----
 
 export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinComputedKpis {
   const {
-    facilityData, allMonths, indicatorMap, idxMonth, header,
+    allMonths, indicatorMap, idxMonth, header,
     idxSessPlanned, idxSessHeld,
     idxBenPW, idxBenInf, idxBenChild, idxBenAdol,
+    idxBenTd1, idxBenTd2, idxBenTdB, idxBenTd10, idxBenTd16,
   } = csv;
+
+  const analysisMode = filters.analysisMode ?? 'facility';
+  const facilityData = analysisMode === 'sessionsite'
+    ? csv.facilityData
+    : aggregateToFacilityLevel(csv.facilityData);
+
+  // ---- row identity columns (adds Session Site Name in session-site-wise mode) ----
+  const idHeaderCols: string[] = analysisMode === 'sessionsite'
+    ? ['Block Name', 'Facility Name', 'Session Site Name']
+    : ['Block Name', 'Facility Name'];
+  const idRowCols = (fd: FacilityRecord): (string | number | null)[] =>
+    analysisMode === 'sessionsite'
+      ? [displayBlockLabel(fd.block), fd.facility, fd.sessionsite ?? '']
+      : [displayBlockLabel(fd.block), fd.facility];
+  const idObjCols = (fd: FacilityRecord): { block: string; facility: string; sessionsite?: string } =>
+    analysisMode === 'sessionsite'
+      ? { block: displayBlockLabel(fd.block), facility: fd.facility, sessionsite: fd.sessionsite ?? '' }
+      : { block: displayBlockLabel(fd.block), facility: fd.facility };
 
   // ---- resolve selected months ----
   let selMonths = filters.months.length > 0 ? filters.months : Object.keys(allMonths);
@@ -108,7 +169,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     : BASE_VAX.filter((v) => indicatorMap[v] !== undefined);
 
   // ---- global counts ----
-  const globalDen = csv.globalFacilityCount;
+  const globalDen = analysisMode === 'sessionsite' ? csv.globalSessionSiteCount : csv.globalFacilityCount;
   const globalBlockCount = csv.globalBlockCount;
 
   // ---- apply global filters ----
@@ -141,38 +202,11 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   // AVAILABILITY
   // ============================================================
 
-  const t1Stat = emptyKpiStat();
-  const t1Rows: TableRows = [['Block Name', 'Facility Name', ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
-
-  for (const [key, fd] of Object.entries(filteredFacilities)) {
-    const row: (string | number | null)[] = [displayBlockLabel(fd.block), fd.facility];
-    let hitCount = 0;
-    for (const mk of selMonths) {
-      const md = fd.months[mk];
-      let isBlank = false;
-      if (md) {
-        isBlank = true;
-        for (let ci = idxMonth + 1; ci < header.length; ci++) {
-          if (md.vals[ci] !== null) { isBlank = false; break; }
-        }
-      }
-      row.push(isBlank ? 'Y' : 'N');
-      if (isBlank) hitCount++;
-    }
-    if (hitCount > 0) {
-      t1Stat.facilityKeys.add(key);
-      if (hitCount === totalMonthsSel) t1Stat.allFacilityKeys.add(key);
-      else t1Stat.anyFacilityKeys.add(key);
-      t1Rows.push(row);
-    }
-  }
-  finalizeKpiStat(t1Stat);
-
   const t0Stat = emptyKpiStat();
-  const t0Rows: TableRows = [['Block Name', 'Facility Name', ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
+  const t0Rows: TableRows = [[...idHeaderCols, ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
-    const row: (string | number | null)[] = [displayBlockLabel(fd.block), fd.facility];
+    const row: (string | number | null)[] = idRowCols(fd);
     let hitCount = 0;
     for (const mk of selMonths) {
       const md = fd.months[mk];
@@ -200,10 +234,10 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   finalizeKpiStat(t0Stat);
 
   const t7Stat = emptyKpiStat();
-  const t7Rows: TableRows = [['Block Name', 'Facility Name', ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
+  const t7Rows: TableRows = [[...idHeaderCols, ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
-    const row: (string | number | null)[] = [displayBlockLabel(fd.block), fd.facility];
+    const row: (string | number | null)[] = idRowCols(fd);
     let anyY = false; let allY = true;
     for (const mk of selMonths) {
       const md = fd.months[mk];
@@ -230,6 +264,45 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     }
   }
   finalizeKpiStat(t7Stat);
+
+  // t9: Zero coverage session — PW + Infants + Children + Adolescents + Td1/Td2/Td-Booster/Td10/Td16 = 0
+  const t9Stat = emptyKpiStat();
+  const t9Rows: TableRows = [[...idHeaderCols, ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
+  const t9HitMap: Record<string, Record<string, boolean>> = {};
+  const t9BenIdxList = [idxBenPW, idxBenInf, idxBenChild, idxBenAdol, idxBenTd1, idxBenTd2, idxBenTdB, idxBenTd10, idxBenTd16]
+    .filter((idx): idx is number => idx !== null);
+
+  if (t9BenIdxList.length > 0) {
+    for (const [key, fd] of Object.entries(filteredFacilities)) {
+      const row: (string | number | null)[] = idRowCols(fd);
+      let hitCount = 0;
+      for (const mk of selMonths) {
+        const md = fd.months[mk];
+        let isZero = false;
+        if (md) {
+          let sum = 0; let hasAny = false;
+          for (const idx of t9BenIdxList) {
+            const v = md.vals[idx];
+            if (v !== null) { sum += v; hasAny = true; }
+          }
+          isZero = hasAny && sum === 0;
+        }
+        row.push(isZero ? 'Y' : 'N');
+        if (isZero) {
+          hitCount++;
+          if (!t9HitMap[key]) t9HitMap[key] = {};
+          t9HitMap[key][mk] = true;
+        }
+      }
+      if (hitCount > 0) {
+        t9Stat.facilityKeys.add(key);
+        if (hitCount === totalMonthsSel) t9Stat.allFacilityKeys.add(key);
+        else t9Stat.anyFacilityKeys.add(key);
+        t9Rows.push(row);
+      }
+    }
+  }
+  finalizeKpiStat(t9Stat);
 
   // ============================================================
   // COMPLETENESS
@@ -276,8 +349,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       if (allMonthsHaveBlank) t2Stat.allFacilityKeys.add(key);
       else t2Stat.anyFacilityKeys.add(key);
       t2MatrixRows[key] = {
-        block: displayBlockLabel(fd.block),
-        facility: fd.facility,
+        ...idObjCols(fd),
         cells: cellMap,
       };
     }
@@ -297,7 +369,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
 
   // t6: Sessions Held > Planned
   const t6Stat = emptyKpiStat();
-  const t6Rows: TableRows = [['Block Name', 'Facility Name', 'Details (months with Held>Planned)', 'Totals']];
+  const t6Rows: TableRows = [[...idHeaderCols, 'Details (months with Held>Planned)', 'Totals']];
 
   if (idxSessPlanned !== null && idxSessHeld !== null) {
     const iSP = idxSessPlanned;
@@ -328,13 +400,13 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
         t6Stat.facilityKeys.add(key);
         if (hitCount === totalMonthsSel) t6Stat.allFacilityKeys.add(key);
         else t6Stat.anyFacilityKeys.add(key);
-        t6Rows.push([displayBlockLabel(fd.block), fd.facility, parts.join('; '), tot]);
+        t6Rows.push([...idRowCols(fd), parts.join('; '), tot]);
       }
     }
   }
   finalizeKpiStat(t6Stat);
 
-  // t8: Avg Beneficiaries per Session < 10
+  // t8: Avg Beneficiaries per Session < 5
   const t8Stat = emptyKpiStat();
   const t8HitMap: Record<string, Record<string, boolean>> = {};
   const t8WebRows: Record<string, T8Row> = {};
@@ -370,7 +442,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
           avg = ben / sessHeld;
         }
 
-        const flag = avg !== null && avg < 10;
+        const flag = avg !== null && avg < 5;
         monthData[mk] = { sessHeld, beneficiaries: ben, avg, flag };
         if (flag) anyFlag = true;
         else allFlag = false;
@@ -380,7 +452,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       }
 
       const allAvg = totalSess > 0 ? totalBen / totalSess : null;
-      const allFlag2 = allAvg !== null && allAvg < 10;
+      const allFlag2 = allAvg !== null && allAvg < 5;
 
       if (anyFlag) {
         t8Stat.facilityKeys.add(key);
@@ -393,8 +465,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
         }
 
         t8WebRows[key] = {
-          block: displayBlockLabel(fd.block),
-          facility: fd.facility,
+          ...idObjCols(fd),
           months: monthData,
           allMonths: {
             sessHeld: totalSess || null,
@@ -413,41 +484,6 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     monthLabels: selMonthLabels,
     rows: t8WebRows,
   };
-
-  // tneg: Negative indicator values
-  const tnegStat = emptyKpiStat();
-  const tnegRows: TableRows = [['Block Name', 'Facility Name', ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
-  const tnegHitMap: Record<string, Record<string, number[]>> = {};
-
-  for (const [key, fd] of Object.entries(filteredFacilities)) {
-    const row: (string | number | null)[] = [displayBlockLabel(fd.block), fd.facility];
-    let hitCount = 0;
-
-    for (const mk of selMonths) {
-      const md = fd.months[mk];
-      let hasNeg = false;
-      const negCols: number[] = [];
-      if (md) {
-        for (let ci = idxMonth + 1; ci < header.length; ci++) {
-          const v = md.vals[ci];
-          if (v !== null && v < 0) { hasNeg = true; negCols.push(ci); }
-        }
-      }
-      row.push(hasNeg ? 'Y' : 'N');
-      if (hasNeg) {
-        hitCount++;
-        if (!tnegHitMap[key]) tnegHitMap[key] = {};
-        tnegHitMap[key][mk] = negCols;
-      }
-    }
-    if (hitCount > 0) {
-      tnegStat.facilityKeys.add(key);
-      if (hitCount === totalMonthsSel) tnegStat.allFacilityKeys.add(key);
-      else tnegStat.anyFacilityKeys.add(key);
-      tnegRows.push(row);
-    }
-  }
-  finalizeKpiStat(tnegStat);
 
   // t3: Outliers
   const incBucketsSel = new Set(filters.outliersInc);
@@ -519,7 +555,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       ).length;
       if (pairList.length > 0 && pairHits === pairList.length) t3Stat.allFacilityKeys.add(key);
       else t3Stat.anyFacilityKeys.add(key);
-      t3MatrixRows[key] = { block: displayBlockLabel(fd.block), facility: fd.facility, cells };
+      t3MatrixRows[key] = { ...idObjCols(fd), cells };
     }
   }
 
@@ -609,8 +645,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
         if (hitMonths === totalMonthsSel) dropStat.allFacilityKeys.add(fkey);
         else dropStat.anyFacilityKeys.add(fkey);
         dropRows[fkey] = {
-          block: displayBlockLabel(fd.block),
-          facility: fd.facility,
+          ...idObjCols(fd),
           cells,
           all,
         };
@@ -633,11 +668,11 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   // ============================================================
 
   const i1Stat = emptyKpiStat();
-  const i1Rows: TableRows = [['Block Name', 'Facility Name', 'Penta3 (total)', 'Penta1 (total)', '% change']];
+  const i1Rows: TableRows = [[...idHeaderCols, 'Penta3 (total)', 'Penta1 (total)', '% change']];
   const iP1 = indicatorMap['Penta1']; const iP3 = indicatorMap['Penta3'];
 
   const i2Stat = emptyKpiStat();
-  const i2Rows: TableRows = [['Block Name', 'Facility Name', 'OPV3 (total)', 'OPV1 (total)', '% change']];
+  const i2Rows: TableRows = [[...idHeaderCols, 'OPV3 (total)', 'OPV1 (total)', '% change']];
   const iO1 = indicatorMap['OPV1']; const iO3 = indicatorMap['OPV3'];
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
@@ -654,7 +689,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       i1Stat.anyFacilityKeys.add(key);
       const pct = sumP1 > 0 ? ((sumP3 - sumP1) / sumP1) * 100 : null;
       i1Rows.push([
-        displayBlockLabel(fd.block), fd.facility,
+        ...idRowCols(fd),
         Math.round(sumP3), Math.round(sumP1),
         pct !== null ? `+${pct.toFixed(1)}%` : '',
       ]);
@@ -665,7 +700,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       i2Stat.anyFacilityKeys.add(key);
       const pct = sumO1 > 0 ? ((sumO3 - sumO1) / sumO1) * 100 : null;
       i2Rows.push([
-        displayBlockLabel(fd.block), fd.facility,
+        ...idRowCols(fd),
         Math.round(sumO3), Math.round(sumO1),
         pct !== null ? `+${pct.toFixed(1)}%` : '',
       ]);
@@ -696,7 +731,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     const downloadKey = `t5_${safeKey(`${t}_gt_${f}`)}`;
     const labelName = `Inconsistencies — ${t}>${f}`;
 
-    const tbl: TableRows = [['Block Name', 'Facility Name', `${t} (total)`, `${f} (total)`, '% change']];
+    const tbl: TableRows = [[...idHeaderCols, `${t} (total)`, `${f} (total)`, '% change']];
     const facSet = new Set<string>();
 
     for (const [fkey, fd] of Object.entries(filteredFacilities)) {
@@ -709,7 +744,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
         facSet.add(fkey);
         const pct = sumFrom > 0 ? ((sumTo - sumFrom) / sumFrom) * 100 : null;
         tbl.push([
-          displayBlockLabel(fd.block), fd.facility,
+          ...idRowCols(fd),
           Math.round(sumTo), Math.round(sumFrom),
           pct !== null ? `+${pct.toFixed(1)}%` : '',
         ]);
@@ -765,8 +800,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
         if (totalMonthsSel > 0 && monthViolCount === totalMonthsSel) coStat.allFacilityKeys.add(fkey);
         else coStat.anyFacilityKeys.add(fkey);
         coRows[fkey] = {
-          block: displayBlockLabel(fd.block),
-          facility: fd.facility,
+          ...idObjCols(fd),
           vals: rowVals,
           totals,
         };
@@ -794,13 +828,12 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   }
 
   const charts: Record<string, ChartPayload> = {
-    t1: mkChart(t1Stat.facilityKeys, GROUP_COLORS.availability),
     t0: mkChart(t0Stat.facilityKeys, GROUP_COLORS.availability),
     t7: mkChart(t7Stat.facilityKeys, GROUP_COLORS.availability),
+    t9: mkChart(t9Stat.facilityKeys, GROUP_COLORS.availability),
     t2: mkChart(t2Stat.facilityKeys, GROUP_COLORS.completeness),
     t6: mkChart(t6Stat.facilityKeys, GROUP_COLORS.accuracy),
     t8: mkChart(t8Stat.facilityKeys, GROUP_COLORS.accuracy),
-    tneg: mkChart(tnegStat.facilityKeys, GROUP_COLORS.accuracy),
     t3: mkChart(t3Stat.facilityKeys, GROUP_COLORS.accuracy),
     i1: mkChart(i1Stat.facilityKeys, INCONS_LIGHT),
     i2: mkChart(i2Stat.facilityKeys, INCONS_LIGHT),
@@ -823,13 +856,12 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   // KPI Cards
   // ============================================================
   const cards: KpiCard[] = [
-    { id: 't1', name: 'All Indicators Blank', stat: t1Stat, group: 'availability', downloadKey: 't1' },
     { id: 't0', name: 'Indicators having 0 values but not blank', stat: t0Stat, group: 'availability', downloadKey: 't0' },
     { id: 't7', name: 'Indicators with same values', stat: t7Stat, group: 'availability', downloadKey: 't7' },
+    { id: 't9', name: 'Zero coverage session', stat: t9Stat, group: 'availability', downloadKey: 't9' },
     { id: 't2', name: 'Key Missing Indicators', stat: t2Stat, group: 'completeness', downloadKey: 't2' },
     { id: 't6', name: 'Sessions Held > Sessions Planned', stat: t6Stat, group: 'accuracy', downloadKey: 't6' },
-    { id: 't8', name: 'Avg Beneficiaries per Session < 10', stat: t8Stat, group: 'accuracy', downloadKey: 't8' },
-    { id: 'tneg', name: 'Negative Indicator Values', stat: tnegStat, group: 'accuracy', downloadKey: 'tneg' },
+    { id: 't8', name: 'Avg Beneficiaries per Session < 5', stat: t8Stat, group: 'accuracy', downloadKey: 't8' },
     { id: 't3', name: 'Outliers', stat: t3Stat, group: 'accuracy', downloadKey: 't3' },
   ];
 
@@ -867,13 +899,12 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   // Pink facility sets
   // ============================================================
   const pinkFacSets: Record<string, string[]> = {
-    t1: [...t1Stat.facilityKeys],
     t0: [...t0Stat.facilityKeys],
     t7: [...t7Stat.facilityKeys],
+    t9: [...t9Stat.facilityKeys],
     t2: [...t2Stat.facilityKeys],
     t6: [...t6Stat.facilityKeys],
     t8: [...t8Stat.facilityKeys],
-    tneg: [...tnegStat.facilityKeys],
     t3: [...t3Stat.facilityKeys],
     t5_p3gtp1: [...i1Stat.facilityKeys],
     t5_opv3gtopv1: [...i2Stat.facilityKeys],
@@ -899,9 +930,9 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     return { name, count, pct: den > 0 ? Math.round((count / den) * 10000) / 100 : 0 };
   }
 
-  summaryByPid.t1 = { any: [mkRow('All Indicators Blank', t1Stat.any)], all: [mkRow('All Indicators Blank', t1Stat.all)] };
   summaryByPid.t0 = { any: [mkRow('Indicators having 0 values', t0Stat.any)], all: [mkRow('Indicators having 0 values', t0Stat.all)] };
   summaryByPid.t7 = { any: [mkRow('Indicators with same values', t7Stat.any)], all: [mkRow('Indicators with same values', t7Stat.all)] };
+  summaryByPid.t9 = { any: [mkRow('Zero coverage session', t9Stat.any)], all: [mkRow('Zero coverage session', t9Stat.all)] };
 
   {
     const anyRows = effectiveCompletenessVaxList.map((vx) => {
@@ -923,15 +954,9 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   };
 
   summaryByPid.t8 = {
-    any: [mkRow('Avg Beneficiaries / Session < 10', t8Stat.any)],
-    all: [mkRow('Avg Beneficiaries / Session < 10', t8Stat.all)],
-    overall: [mkRow('Avg Beneficiaries / Session < 10', t8Stat.total)],
-  };
-
-  summaryByPid.tneg = {
-    any: [mkRow('Negative Indicator Values', tnegStat.any)],
-    all: [mkRow('Negative Indicator Values', tnegStat.all)],
-    overall: [mkRow('Negative Indicator Values', tnegStat.total)],
+    any: [mkRow('Avg Beneficiaries / Session < 5', t8Stat.any)],
+    all: [mkRow('Avg Beneficiaries / Session < 5', t8Stat.all)],
+    overall: [mkRow('Avg Beneficiaries / Session < 5', t8Stat.total)],
   };
 
   for (const [dk, ds] of Object.entries(dropStats)) {
@@ -951,16 +976,16 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     selMonths,
     selMonthLabels,
     selVaxList: effectiveCompletenessVaxList,
+    analysisMode,
 
-    t1Rows, t0Rows, t7Rows,
-    t1Stat, t0Stat, t7Stat,
+    t0Rows, t7Rows, t9Rows,
+    t0Stat, t7Stat, t9Stat, t9HitMap,
 
     t2Web, t2Stat,
     blankCountsByVax, blankAllCountsByVax,
 
     t6Rows, t6Stat,
     t8Stat, t8Web, t8HitMap,
-    tnegStat, tnegRows, tnegHitMap,
 
     t3Web, t3Stat, t3HitMap,
     outAnyCounts, outAllCounts,

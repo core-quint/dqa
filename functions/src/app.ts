@@ -6,23 +6,7 @@ import adminRoutes from "./routes/admin.routes";
 
 const app = express();
 
-const allowedOrigins = process.env.CORS_ORIGINS
-  ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
-  : ["http://localhost:5173", "http://localhost:5000"];
-
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no Origin (same-origin via hosting rewrites)
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-  })
-);
+app.use(cors({ origin: true, credentials: true }));
 
 app.use(express.json({ limit: "10mb" }));
 

@@ -211,8 +211,9 @@ export function UwinResultsPage({
         consistencyScore: savedSnapshot.kpiData?.consistencyScore ?? 0,
       });
       setSaved(true);
-    } catch {
-      alert("Failed to save snapshot");
+    } catch (err) {
+      console.error("U-WIN snapshot save failed:", err);
+      alert(err instanceof Error ? `Failed to save snapshot: ${err.message}` : "Failed to save snapshot");
     } finally {
       setSaving(false);
     }
@@ -227,6 +228,9 @@ export function UwinResultsPage({
   const totalFacilities = kpis
     ? Math.max(1, Object.keys(kpis.filteredFacilities).length)
     : 0;
+  const isSessionSiteWise = (kpis?.analysisMode ?? filters.analysisMode) === "sessionsite";
+  const unitPlural = isSessionSiteWise ? "Session sites" : "Facilities";
+  const unitPluralLower = isSessionSiteWise ? "session sites" : "facilities";
 
   function severityBadge(pct: number) {
     if (pct >= 50) {
@@ -244,7 +248,10 @@ export function UwinResultsPage({
     { label: "District", value: csv.distName || "-" },
     { label: "Duration", value: durationStr },
     { label: "Blocks", value: String(csv.globalBlockCount) },
-    { label: "Session sites", value: String(csv.globalFacilityCount) },
+    {
+      label: unitPlural,
+      value: String(isSessionSiteWise ? csv.globalSessionSiteCount : csv.globalFacilityCount),
+    },
   ];
 
   return (
@@ -440,7 +447,7 @@ export function UwinResultsPage({
                           <span className="text-sm font-bold">{meta.label}</span>
                           <span className="ml-auto text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">
                             {Object.keys(csv.allMonths).length} months /{" "}
-                            {totalFacilities} session sites
+                            {totalFacilities} {unitPluralLower}
                           </span>
                         </div>
 
@@ -449,12 +456,12 @@ export function UwinResultsPage({
                             {
                               label: "Worst impact",
                               value: `${worstPct}%`,
-                              sub: "session sites affected",
+                              sub: `${unitPluralLower} affected`,
                             },
                             {
                               label: "Unique affected",
                               value: String(affectedUnique),
-                              sub: `of ${totalFacilities} session sites`,
+                              sub: `of ${totalFacilities} ${unitPluralLower}`,
                             },
                             {
                               label: "Indicators",
@@ -519,7 +526,7 @@ export function UwinResultsPage({
 
                                   <div className="mt-4">
                                     <div className="mb-2 flex items-center justify-between text-xs font-medium text-slate-500">
-                                      <span>Affected session sites</span>
+                                      <span>Affected {unitPluralLower}</span>
                                       <span className="font-bold text-slate-800">
                                         {card.stat.total} / {pct}%
                                       </span>

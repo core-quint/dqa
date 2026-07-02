@@ -115,6 +115,19 @@ function findBeneficiaryColumnIndices(headers: string[]): {
   };
 }
 
+// Td columns feed the t9 "Zero coverage session" KPI (Total Beneficiaries vaccinated = 0)
+function findTdColumnIndices(headers: string[]): {
+  td1: number | null; td2: number | null; tdB: number | null; td10: number | null; td16: number | null;
+} {
+  return {
+    td1: findColIndexContainsAny(headers, ['number of women vaccinated with td 1']),
+    td2: findColIndexContainsAny(headers, ['number of women vaccinated with td 2']),
+    tdB: findColIndexContainsAny(headers, ['number of women vaccinated with td-booster', 'number of women vaccinated with td booster']),
+    td10: findColIndexContainsAny(headers, ['number of adolescents vaccinated with td10', 'adolescents vaccinated with td10']),
+    td16: findColIndexContainsAny(headers, ['number of adolescents vaccinated with td16', 'adolescents vaccinated with td16']),
+  };
+}
+
 // ============================================================
 // Header extraction helper (two-row aware)
 // ============================================================
@@ -357,6 +370,8 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
     findIndexByCode(header, 'sessions held') ??
     findColIndexContainsAny(header, ['session held', 'sessions held']);
   const benIdx = findBeneficiaryColumnIndices(header);
+  const tdIdx = findTdColumnIndices(header);
+  const idxSessionSite = findColIndexContainsAny(header, ['session site name', 'session site']);
 
   // Build indicator map
   const indicatorMap: Record<string, number> = {};
@@ -396,6 +411,7 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
   for (const r of rows) {
     const block = r[idxBlock]?.trim() ?? '';
     const fac = r[idxFac]?.trim() ?? '';
+    const sess = idxSessionSite !== null ? (r[idxSessionSite]?.trim() ?? '') : '';
     const monRaw = r[idxMonth] ?? '';
     if (!block && !fac) continue;
     if (!monRaw.trim()) continue;
@@ -411,9 +427,11 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
     if (idxDist !== null) { const dv = r[idxDist]?.trim(); if (dv) distsSet.add(dv); }
 
     allMonthsMap[mk] = mLabel;
-    const facKey = `${block}||${fac}`;
+    // Finest-grain key: Block || Facility || Session Site. computeUwinKpis aggregates
+    // this back up to Block||Facility for facility-wise analysis mode at query time.
+    const facKey = `${block}||${fac}||${sess}`;
     if (!facilityData[facKey]) {
-      facilityData[facKey] = { block, facility: fac, ownership: '', ru: '', months: {} };
+      facilityData[facKey] = { block, facility: fac, sessionsite: sess, ownership: '', ru: '', months: {} };
     }
     const fd = facilityData[facKey];
     if (own) { if (!fd.ownership) fd.ownership = own; else if (fd.ownership !== own) fd.ownership = 'Mixed'; }
@@ -424,7 +442,7 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
       for (let ci = idxMonth + 1; ci < header.length; ci++) vals[ci] = null;
       fd.months[mk] = { label: mLabel, yearMonth: mYearLabel, raw: monRaw, vals };
     }
-    // SUM values across multiple session-site rows for the same facility+month
+    // SUM values across multiple raw rows sharing the same facility+session-site+month
     const monthEntry = fd.months[mk];
     for (let ci = idxMonth + 1; ci < header.length; ci++) {
       const v = asNumOrNull(r[ci]);
@@ -434,10 +452,14 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
 
   const globalFacilitySet = new Map<string, { ownership: string; ru: string }>();
   const globalBlockSet = new Set<string>();
-  for (const fd of Object.values(facilityData)) {
+  const globalSessionSiteSet = new Set<string>();
+  for (const [facKey, fd] of Object.entries(facilityData)) {
     const fk = normalizeFacilityKey(fd.facility);
     if (fk && !globalFacilitySet.has(fk)) globalFacilitySet.set(fk, { ownership: fd.ownership, ru: fd.ru });
     if (fd.block.trim()) globalBlockSet.add(fd.block.trim());
+    // Session-site denominator excludes rows with a blank Session Site Name (matches
+    // a pivot distinct-count of the Session Site Name column).
+    if (fd.sessionsite?.trim()) globalSessionSiteSet.add(normalizeFacilityKey(facKey));
   }
 
   let publicCount = 0, privateCount = 0, ruralCount = 0, urbanCount = 0;
@@ -455,9 +477,13 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
     idxSessPlanned, idxSessHeld,
     idxBenPW: benIdx.pw, idxBenInf: benIdx.inf,
     idxBenChild: benIdx.child, idxBenAdol: benIdx.adol,
+    idxBenTd1: tdIdx.td1, idxBenTd2: tdIdx.td2, idxBenTdB: tdIdx.tdB,
+    idxBenTd10: tdIdx.td10, idxBenTd16: tdIdx.td16,
+    idxSessionSite,
     indicatorMap, allIndicatorShorts, facilityData,
     allMonths: allMonthsMap,
     globalFacilityCount: globalFacilitySet.size,
+    globalSessionSiteCount: globalSessionSiteSet.size,
     globalBlockCount: globalBlockSet.size,
     publicCount, privateCount, ruralCount, urbanCount,
     stateName: statesSet.size === 1 ? [...statesSet][0] : statesSet.size > 1 ? 'Multiple' : '—',

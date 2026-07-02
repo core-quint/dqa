@@ -29,17 +29,16 @@ export function FlatTable({ rows, highlightN }: FlatTableProps) {
         </tr>
       </thead>
       <tbody>
-        {rows.slice(1).map((row) => {
-          const rowId = String(row[0] ?? '') + '-' + String(row[1] ?? '');
+        {rows.slice(1).map((row, rowIdx) => {
           return (
-            <tr key={rowId} className="hover:bg-accent/20">
+            <tr key={rowIdx} className="hover:bg-accent/20">
               {head.map((h) => {
                 const ci = head.indexOf(h);
                 const v = String(row[ci] ?? '');
                 const isN = highlightN && v === 'N';
                 return (
                   <td
-                    key={`${rowId}-${String(h)}`}
+                    key={`${rowIdx}-${String(h)}`}
                     className={`border border-border px-2 py-1 whitespace-nowrap ${isN ? 'n-cell' : ''}`}
                   >
                     {v}
@@ -62,6 +61,7 @@ export function T2Table({ web }: { web: T2Web }) {
   const { vaccines, months, monthLabels, rows } = web;
   const rowList = Object.values(rows);
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
+  const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
   return (
     <table className="border-collapse text-xs" style={{ minWidth: 600 }}>
@@ -69,6 +69,9 @@ export function T2Table({ web }: { web: T2Web }) {
         <tr>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
+          {showSessionSite ? (
+            <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Session Site Name</th>
+          ) : null}
           {vaccines.map((vx) => (
             <th
               key={vx}
@@ -90,10 +93,11 @@ export function T2Table({ web }: { web: T2Web }) {
         </tr>
       </thead>
       <tbody>
-        {rowList.map((row) => (
-          <tr key={`${row.block}-${row.facility}`} className="hover:bg-accent/20">
+        {rowList.map((row, rowIdx) => (
+          <tr key={rowIdx} className="hover:bg-accent/20">
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
+            {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
             {vaccines.map((vx) =>
               months.map((mk) => {
                 const v = row.cells[vx]?.[mk] ?? '';
@@ -122,6 +126,7 @@ export function T3Table({ web }: { web: T3Web }) {
   const { vaccines, pairs, rows } = web;
   const rowList = Object.values(rows);
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
+  const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
   return (
     <table className="border-collapse text-xs" style={{ minWidth: 600 }}>
@@ -129,6 +134,9 @@ export function T3Table({ web }: { web: T3Web }) {
         <tr>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
+          {showSessionSite ? (
+            <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Session Site Name</th>
+          ) : null}
           {vaccines.map((vx) => (
             <th
               key={vx}
@@ -152,10 +160,11 @@ export function T3Table({ web }: { web: T3Web }) {
         </tr>
       </thead>
       <tbody>
-        {rowList.map((row) => (
-          <tr key={`${row.block}-${row.facility}`} className="hover:bg-accent/20">
+        {rowList.map((row, rowIdx) => (
+          <tr key={rowIdx} className="hover:bg-accent/20">
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
+            {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
             {vaccines.map((vx) =>
               pairs.map((p) => {
                 const cell = row.cells[vx]?.[p.k];
@@ -201,6 +210,7 @@ export function DropoutTable({ web }: { web: DropoutWeb }) {
   const { from, to, months, monthLabels, rows } = web;
   const rowList = Object.values(rows);
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
+  const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
   return (
     <table className="border-collapse text-xs" style={{ minWidth: 600 }}>
@@ -208,6 +218,9 @@ export function DropoutTable({ web }: { web: DropoutWeb }) {
         <tr>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
+          {showSessionSite ? (
+            <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Session Site Name</th>
+          ) : null}
           {months.map((mk) => (
             <th key={mk} colSpan={3} className="border border-border px-2 py-1.5 bg-orange-50 font-bold text-center">
               {monthLabels[mk] ?? mk}
@@ -229,10 +242,11 @@ export function DropoutTable({ web }: { web: DropoutWeb }) {
         </tr>
       </thead>
       <tbody>
-        {rowList.map((row) => (
-          <tr key={`${row.block}-${row.facility}`} className="hover:bg-accent/20">
+        {rowList.map((row, rowIdx) => (
+          <tr key={rowIdx} className="hover:bg-accent/20">
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
+            {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
             {months.map((mk) => {
               const c = row.cells[mk] ?? { from: null, to: null, pct: null };
               return (
@@ -261,6 +275,7 @@ export function CoAdminTable({ web }: { web: CoAdminWeb }) {
   const { vaccines, months, monthLabels, rows } = web;
   const rowList = Object.values(rows);
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
+  const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
   function isUniqueVal(vals: Record<string, number | null>, vx: string): boolean {
     const allVals = Object.values(vals).filter((v) => v !== null) as number[];
@@ -278,6 +293,9 @@ export function CoAdminTable({ web }: { web: CoAdminWeb }) {
         <tr>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
+          {showSessionSite ? (
+            <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Session Site Name</th>
+          ) : null}
           {months.map((mk) => (
             <th key={mk} colSpan={vaccines.length} className="border border-border px-2 py-1.5 bg-green-50 font-bold text-center">
               {monthLabels[mk] ?? mk}
@@ -297,10 +315,11 @@ export function CoAdminTable({ web }: { web: CoAdminWeb }) {
         </tr>
       </thead>
       <tbody>
-        {rowList.map((row) => (
-          <tr key={`${row.block}-${row.facility}`} className="hover:bg-accent/20">
+        {rowList.map((row, rowIdx) => (
+          <tr key={rowIdx} className="hover:bg-accent/20">
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
+            {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
             {months.map((mk) =>
               vaccines.map((vx) => {
                 const v = row.vals[mk]?.[vx] ?? null;
