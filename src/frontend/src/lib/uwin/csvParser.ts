@@ -387,9 +387,13 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
     allIndicatorShorts.push(short);
   }
   const targetMap: Record<string, number> = {};
+  const targetIndicatorIndices: number[] = [];
   for (let i = idxMonth + 1; i < header.length; i++) {
     const det = detectTargetIndicator(header[i]);
-    if (det) targetMap[det.short] = i;
+    if (det) {
+      targetMap[det.short] = i;
+      targetIndicatorIndices.push(i);
+    }
   }
   Object.assign(indicatorMap, targetMap);
 
@@ -480,6 +484,7 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
     idxBenTd1: tdIdx.td1, idxBenTd2: tdIdx.td2, idxBenTdB: tdIdx.tdB,
     idxBenTd10: tdIdx.td10, idxBenTd16: tdIdx.td16,
     idxSessionSite,
+    targetIndicatorIndices,
     indicatorMap, allIndicatorShorts, facilityData,
     allMonths: allMonthsMap,
     globalFacilityCount: globalFacilitySet.size,

@@ -125,6 +125,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     idxSessPlanned, idxSessHeld,
     idxBenPW, idxBenInf, idxBenChild, idxBenAdol,
     idxBenTd1, idxBenTd2, idxBenTdB, idxBenTd10, idxBenTd16,
+    targetIndicatorIndices,
   } = csv;
 
   const analysisMode = filters.analysisMode ?? 'facility';
@@ -212,8 +213,13 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       const md = fd.months[mk];
       let isZero = false;
       if (md) {
+        // Scoped to vaccine-dose "target" indicator columns only — Session
+        // Planned/Held and beneficiary/Td columns are excluded (matches PHP's
+        // $indicatorIdxTargets), otherwise a real session (which always has a
+        // nonzero Session Held) would never be flagged even if every vaccine
+        // dose column is explicitly 0.
         let allZero = true; let hasAny = false;
-        for (let ci = idxMonth + 1; ci < header.length; ci++) {
+        for (const ci of targetIndicatorIndices) {
           const v = md.vals[ci];
           if (v === null) { allZero = false; break; }
           hasAny = true;
@@ -367,9 +373,9 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   // ACCURACY
   // ============================================================
 
-  // t6: Sessions Held > Planned
+  // t6: Planned but not held (Sessions Held < Sessions Planned)
   const t6Stat = emptyKpiStat();
-  const t6Rows: TableRows = [[...idHeaderCols, 'Details (months with Held>Planned)', 'Totals']];
+  const t6Rows: TableRows = [[...idHeaderCols, 'Details (months with Planned>Held)', 'Totals']];
 
   if (idxSessPlanned !== null && idxSessHeld !== null) {
     const iSP = idxSessPlanned;
@@ -384,16 +390,16 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
         const H = md?.vals[iSH] ?? null;
         if (P !== null) sumP += P;
         if (H !== null) sumH += H;
-        if (P !== null && P > 0 && H !== null && H > P) {
+        if (P !== null && P > 0 && H !== null && H < P) {
           hitCount++;
-          const pct = ((H - P) / P) * 100;
-          parts.push(`${selMonthLabels[mk] ?? mk} +${pct.toFixed(1)}%`);
+          const pct = ((P - H) / P) * 100;
+          parts.push(`${selMonthLabels[mk] ?? mk} -${pct.toFixed(1)}%`);
         }
       }
       let tot = '';
       let hasTot = false;
-      if (sumP > 0 && sumH > sumP) {
-        tot = `All months +${(((sumH - sumP) / sumP) * 100).toFixed(1)}%`;
+      if (sumP > 0 && sumH < sumP) {
+        tot = `All months -${(((sumP - sumH) / sumP) * 100).toFixed(1)}%`;
         hasTot = true;
       }
       if (parts.length > 0 || hasTot) {
@@ -860,7 +866,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     { id: 't7', name: 'Indicators with same values', stat: t7Stat, group: 'availability', downloadKey: 't7' },
     { id: 't9', name: 'Zero coverage session', stat: t9Stat, group: 'availability', downloadKey: 't9' },
     { id: 't2', name: 'Key Missing Indicators', stat: t2Stat, group: 'completeness', downloadKey: 't2' },
-    { id: 't6', name: 'Sessions Held > Sessions Planned', stat: t6Stat, group: 'accuracy', downloadKey: 't6' },
+    { id: 't6', name: 'Planned but not held', stat: t6Stat, group: 'accuracy', downloadKey: 't6' },
     { id: 't8', name: 'Avg Beneficiaries per Session < 5', stat: t8Stat, group: 'accuracy', downloadKey: 't8' },
     { id: 't3', name: 'Outliers', stat: t3Stat, group: 'accuracy', downloadKey: 't3' },
   ];
@@ -894,6 +900,20 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       downloadKey: coKey,
     });
   }
+
+  // Requested display order for the 7 standard Consistency cards (co1, co3, co2,
+  // co4, i1, i2, co5), leaving any dynamically-added inconsistency-pair cards
+  // (iadd_*) in their original relative order at the end. Reorders only the
+  // consistency-group slots in `cards`, in place — every other group's order
+  // (and array indices) is untouched.
+  const CONSISTENCY_ORDER: Record<string, number> = { co1: 0, co3: 1, co2: 2, co4: 3, i1: 4, i2: 5, co5: 6 };
+  const consistencyIndices = cards
+    .map((c, i) => (c.group === 'consistency' ? i : -1))
+    .filter((i) => i >= 0);
+  const consistencyCardsSorted = consistencyIndices
+    .map((i) => cards[i])
+    .sort((a, b) => (CONSISTENCY_ORDER[a.id] ?? 99) - (CONSISTENCY_ORDER[b.id] ?? 99));
+  consistencyIndices.forEach((idx, j) => { cards[idx] = consistencyCardsSorted[j]; });
 
   // ============================================================
   // Pink facility sets
@@ -948,9 +968,9 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   { summaryByPid.t3 = { any: [], all: [], overall: effectiveAccuracyVaxList.map((vx) => mkRow(vx, outAnyCounts[vx] ?? 0)).sort((a, b) => b.pct - a.pct) }; }
 
   summaryByPid.t6 = {
-    any: [mkRow('Sessions Held > Sessions Planned', t6Stat.any)],
-    all: [mkRow('Sessions Held > Sessions Planned', t6Stat.all)],
-    overall: [mkRow('Sessions Held > Sessions Planned', t6Stat.total)],
+    any: [mkRow('Planned but not held', t6Stat.any)],
+    all: [mkRow('Planned but not held', t6Stat.all)],
+    overall: [mkRow('Planned but not held', t6Stat.total)],
   };
 
   summaryByPid.t8 = {

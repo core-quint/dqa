@@ -3,6 +3,7 @@ import cors from "cors";
 import authRoutes from "./routes/auth.routes";
 import snapshotRoutes from "./routes/snapshot.routes";
 import adminRoutes from "./routes/admin.routes";
+import uploadSessionRoutes from "./routes/uploadSession.routes";
 
 const app = express();
 
@@ -17,6 +18,7 @@ app.get("/health", (_req: Request, res: Response) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/snapshots", snapshotRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/upload-sessions", uploadSessionRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ message: "Not found" });

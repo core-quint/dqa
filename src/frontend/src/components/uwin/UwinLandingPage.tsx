@@ -15,6 +15,12 @@ import {
 } from "../../lib/uwin/csvParser";
 import type { AuthState } from "../dqa/LoginPage";
 import { GlassPanel } from "../branding/GlassPanel";
+import { PreUploadInfoForm } from "../dqa/PreUploadInfoForm";
+import {
+  EMPTY_PRE_UPLOAD_INFO,
+  isPreUploadInfoComplete,
+  logUploadSession,
+} from "../../lib/dqa/preUploadOptions";
 
 interface Props {
   onDataReady: (data: UwinParsedCSV) => void;
@@ -58,8 +64,11 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
   const [resolvedMonths, setResolvedMonths] = useState<Record<number, string>>(
     {},
   );
+  const [preInfo, setPreInfo] = useState(EMPTY_PRE_UPLOAD_INFO);
+  const infoComplete = isPreUploadInfoComplete(preInfo, auth.level);
 
   const handleFiles = async (files: File[]) => {
+    if (!infoComplete) return;
     const csvFiles = files.filter((file) => file.name.endsWith(".csv"));
     if (csvFiles.length === 0) {
       setError("Please upload .csv file(s).");
@@ -128,6 +137,7 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
         setError(geoErr);
         return;
       }
+      logUploadSession("UWIN", preInfo).catch(() => {});
       onDataReady(parsed);
     } catch (parseError) {
       setError(
@@ -272,11 +282,16 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
             </p>
           </div>
 
+          <div className="px-6 pt-6">
+            <PreUploadInfoForm auth={auth} value={preInfo} onChange={setPreInfo} />
+          </div>
+
           <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1fr_auto] lg:items-end">
             <button
               type="button"
-              className="group rounded-[28px] border-2 border-dashed border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(248,250,252,0.82))] p-10 text-center transition hover:border-amber-300 hover:bg-amber-50/40"
-              onClick={() => fileRef.current?.click()}
+              disabled={!infoComplete}
+              className="group rounded-[28px] border-2 border-dashed border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(248,250,252,0.82))] p-10 text-center transition hover:border-amber-300 hover:bg-amber-50/40 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:bg-transparent"
+              onClick={() => infoComplete && fileRef.current?.click()}
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
             >
@@ -289,13 +304,18 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
               <div className="mt-2 text-sm text-slate-500">
                 Up to twelve monthly files. CSV format only.
               </div>
+              {!infoComplete ? (
+                <div className="mt-3 text-xs font-semibold text-amber-600">
+                  Complete the review details above to enable upload.
+                </div>
+              ) : null}
             </button>
 
             <div className="flex flex-wrap items-center gap-3 lg:justify-end">
               <button
                 onClick={() => fileRef.current?.click()}
                 type="button"
-                disabled={isLoading || isPrechecking}
+                disabled={isLoading || isPrechecking || !infoComplete}
                 className="flex items-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] px-5 py-3 text-sm font-bold text-white shadow-[0_18px_38px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isPrechecking ? (

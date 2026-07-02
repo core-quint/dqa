@@ -10,6 +10,12 @@ import type { ParsedCSV } from "../../lib/dqa/types";
 import { parseCSVFile } from "../../lib/dqa/csvParser";
 import type { AuthState } from "./LoginPage";
 import { GlassPanel } from "../branding/GlassPanel";
+import { PreUploadInfoForm } from "./PreUploadInfoForm";
+import {
+  EMPTY_PRE_UPLOAD_INFO,
+  isPreUploadInfoComplete,
+  logUploadSession,
+} from "../../lib/dqa/preUploadOptions";
 
 interface Props {
   onDataReady: (data: ParsedCSV) => void;
@@ -48,8 +54,11 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hmisFileRef = useRef<HTMLInputElement>(null);
+  const [preInfo, setPreInfo] = useState(EMPTY_PRE_UPLOAD_INFO);
+  const infoComplete = isPreUploadInfoComplete(preInfo, auth.level);
 
   const handleHmisFile = async (file: File) => {
+    if (!infoComplete) return;
     if (!/\.(csv|xlsx|xls)$/i.test(file.name)) {
       setError("Please upload an HMIS file in .csv, .xlsx, or .xls format.");
       return;
@@ -63,6 +72,7 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
         setError(geoErr);
         return;
       }
+      logUploadSession("HMIS", preInfo).catch(() => {});
       onDataReady(parsed);
     } catch (parseError) {
       setError(
@@ -96,11 +106,16 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
             </p>
           </div>
 
+          <div className="px-6 pt-6">
+            <PreUploadInfoForm auth={auth} value={preInfo} onChange={setPreInfo} />
+          </div>
+
           <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1fr_auto] lg:items-end">
             <button
               type="button"
-              className="group rounded-[28px] border-2 border-dashed border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(248,250,252,0.82))] p-10 text-center transition hover:border-sky-300 hover:bg-sky-50/50"
-              onClick={() => hmisFileRef.current?.click()}
+              disabled={!infoComplete}
+              className="group rounded-[28px] border-2 border-dashed border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(248,250,252,0.82))] p-10 text-center transition hover:border-sky-300 hover:bg-sky-50/50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:bg-transparent"
+              onClick={() => infoComplete && hmisFileRef.current?.click()}
               onDrop={handleHmisDrop}
               onDragOver={(e) => e.preventDefault()}
             >
@@ -113,13 +128,18 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
               <div className="mt-2 text-sm text-slate-500">
                 Facility-wise monthly HMIS export in `.xlsx`, `.xls`, or `.csv`
               </div>
+              {!infoComplete ? (
+                <div className="mt-3 text-xs font-semibold text-amber-600">
+                  Complete the review details above to enable upload.
+                </div>
+              ) : null}
             </button>
 
             <div className="flex flex-wrap items-center gap-3 lg:justify-end">
               <button
                 onClick={() => hmisFileRef.current?.click()}
                 type="button"
-                disabled={isLoading}
+                disabled={isLoading || !infoComplete}
                 className="flex items-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] px-5 py-3 text-sm font-bold text-white shadow-[0_18px_38px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isLoading ? (

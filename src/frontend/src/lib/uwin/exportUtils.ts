@@ -57,6 +57,7 @@ export function downloadHighlightedXLS(
     idxSessPlanned, idxSessHeld,
     idxBenPW, idxBenInf, idxBenChild, idxBenAdol,
     idxBenTd1, idxBenTd2, idxBenTdB, idxBenTd10, idxBenTd16,
+    targetIndicatorIndices,
     indicatorMap,
   } = csv;
 
@@ -96,8 +97,10 @@ export function downloadHighlightedXLS(
     };
 
     if (kpiKey === 't0') {
+      // Scoped to vaccine-dose "target" columns only — matches the computeKpis
+      // scope so a row that's in pinkFacKeys always actually gets highlighted.
       let allZero = true; let hasAny = false;
-      for (let ci = idxMonth + 1; ci < header.length; ci++) {
+      for (const ci of targetIndicatorIndices) {
         const v = asNumOrNull(r[ci] ?? '');
         if (v === null) { allZero = false; break; }
         hasAny = true;
@@ -128,7 +131,7 @@ export function downloadHighlightedXLS(
       if (idxSessPlanned !== null && idxSessHeld !== null) {
         const P = asNumOrNull(r[idxSessPlanned] ?? '');
         const H = asNumOrNull(r[idxSessHeld] ?? '');
-        if (P !== null && H !== null && P > 0 && H > P) {
+        if (P !== null && H !== null && P > 0 && H < P) {
           if (!styleMap[ri]) styleMap[ri] = {};
           styleMap[ri][idxSessPlanned] = PINK;
           styleMap[ri][idxSessHeld] = PINK;

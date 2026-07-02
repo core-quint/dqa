@@ -63,6 +63,11 @@ export interface UwinParsedCSV {
   idxBenTd16: number | null;
   // Session Site Name column (drives session-site-wise analysis mode)
   idxSessionSite: number | null;
+  // Column indices matching a known vaccine-dose "target" indicator (BCG, Penta1-3,
+  // OPV1-3, MR1-2, RVV1-3, IPV1-3, PCV1-2, PCV Booster, HepB0, DPT boosters, etc.) —
+  // used by t0 ("Indicators having 0 values but not blank") to scope its zero-check
+  // to vaccine columns only, excluding Session Planned/Held/beneficiary/Td columns.
+  targetIndicatorIndices: number[];
   indicatorMap: Record<string, number>;
   allIndicatorShorts: string[];
   facilityData: Record<string, FacilityRecord>;
