@@ -200,6 +200,9 @@ export function UwinResultsPage({
           block: snapshotMeta.block,
           periodStart: snapshotMeta.periodStart,
           periodEnd: snapshotMeta.periodEnd,
+          blockCount: csv.globalBlockCount,
+          facilityCount: csv.globalFacilityCount,
+          sessionSiteCount: csv.globalSessionSiteCount,
         }),
       });
       setLastSnapshot({

@@ -72,7 +72,7 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
         setError(geoErr);
         return;
       }
-      logUploadSession("HMIS", preInfo).catch(() => {});
+      logUploadSession("HMIS", preInfo).catch((err) => console.error("Upload session log failed:", err));
       onDataReady(parsed);
     } catch (parseError) {
       setError(

@@ -137,7 +137,7 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
         setError(geoErr);
         return;
       }
-      logUploadSession("UWIN", preInfo).catch(() => {});
+      logUploadSession("UWIN", preInfo).catch((err) => console.error("Upload session log failed:", err));
       onDataReady(parsed);
     } catch (parseError) {
       setError(

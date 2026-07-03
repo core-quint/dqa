@@ -7,8 +7,12 @@ const uploadSessionSchema = z.object({
   portal: z.enum(["HMIS", "UWIN"]),
   designation: z.string().min(1),
   purpose: z.string().min(1),
-  purposeSubOption: z.string().trim().min(1).optional().nullable(),
-  purposeOtherText: z.string().trim().min(1).optional().nullable(),
+  // The frontend always sends these two as strings (defaulting to '' when not
+  // applicable to the chosen Purpose) rather than omitting them — so this must
+  // accept an empty string, not just "absent". A stray `.min(1)` here previously
+  // rejected every single request (one of the two is always '').
+  purposeSubOption: z.string().trim().optional().nullable(),
+  purposeOtherText: z.string().trim().optional().nullable(),
   gpsLat: z.number().optional().nullable(),
   gpsLng: z.number().optional().nullable(),
 });
@@ -30,8 +34,8 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
       portal,
       designation,
       purpose,
-      purposeSubOption: purposeSubOption ?? null,
-      purposeOtherText: purposeOtherText ?? null,
+      purposeSubOption: purposeSubOption?.trim() || null,
+      purposeOtherText: purposeOtherText?.trim() || null,
       gpsLat: gpsLat ?? null,
       gpsLng: gpsLng ?? null,
       userId: req.user!.id,

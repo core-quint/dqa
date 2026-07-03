@@ -18,6 +18,9 @@ const snapshotSchema = z.object({
   block: z.string().trim().min(1).optional().nullable(),
   periodStart: z.string().trim().min(1).optional().nullable(),
   periodEnd: z.string().trim().min(1).optional().nullable(),
+  blockCount: z.number().optional().nullable(),
+  facilityCount: z.number().optional().nullable(),
+  sessionSiteCount: z.number().optional().nullable(),
 });
 
 export const createSnapshot = async (req: AuthRequest, res: Response) => {
@@ -31,6 +34,7 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
     state, district, duration, overallScore,
     availabilityScore, completenessScore, accuracyScore, consistencyScore,
     portal, dqaLevel, block, periodStart, periodEnd,
+    blockCount, facilityCount, sessionSiteCount,
   } = parsed.data;
 
   try {
@@ -49,6 +53,9 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
         block: block ?? null,
         periodStart: periodStart ?? null,
         periodEnd: periodEnd ?? null,
+        blockCount: blockCount ?? null,
+        facilityCount: facilityCount ?? null,
+        sessionSiteCount: sessionSiteCount ?? null,
       },
       portal,
       userId: req.user!.id,

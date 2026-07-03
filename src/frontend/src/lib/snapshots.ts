@@ -13,6 +13,9 @@ export interface SnapshotKpiData {
   block?: string | null;
   periodStart?: string | null;
   periodEnd?: string | null;
+  blockCount?: number | null;
+  facilityCount?: number | null;
+  sessionSiteCount?: number | null;
 }
 
 export interface SnapshotRecord {
