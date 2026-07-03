@@ -25,6 +25,8 @@ interface Props {
   auth: AuthState;
   activeGroup: ActiveGroup | "";
   onGroupChange: (g: ActiveGroup) => void;
+  snapshotSaved: boolean;
+  onSnapshotSaved: () => void;
 }
 
 const TABS: Exclude<ActiveGroup, "">[] = [
@@ -96,6 +98,8 @@ export function UwinResultsPage({
   auth,
   activeGroup,
   onGroupChange,
+  snapshotSaved,
+  onSnapshotSaved,
 }: Props) {
   const [filters, setFilters] = useState<FilterState>({
     ...UWIN_DEFAULT_FILTERS,
@@ -107,7 +111,6 @@ export function UwinResultsPage({
   );
   const [showOverall, setShowOverall] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [drawerCard, setDrawerCard] = useState<
     UwinComputedKpis["cards"][number] | null
@@ -134,11 +137,12 @@ export function UwinResultsPage({
   useEffect(() => {
     apiFetch("/api/snapshots")
       .then((snapshots: any[]) => {
+        const norm = (s: string | undefined | null) => (s ?? "").trim().toLowerCase();
         const matches = snapshots.filter(
           (snapshot) =>
             (snapshot.portal?.toUpperCase() ?? "HMIS") === "UWIN" &&
-            snapshot.state === csv.stateName &&
-            snapshot.district === csv.distName,
+            norm(snapshot.state) === norm(csv.stateName) &&
+            norm(snapshot.district) === norm(csv.distName),
         );
         const match = matches.sort((a: any, b: any) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -165,7 +169,6 @@ export function UwinResultsPage({
 
     const result = computeUwinKpis(csv, { ...filters, activeGroup });
     setKpis(result);
-    setSaved(false);
   }, [activeGroup, csv, filters]);
 
   const handleApply = useCallback(
@@ -213,7 +216,7 @@ export function UwinResultsPage({
         accuracyScore: savedSnapshot.kpiData?.accuracyScore ?? 0,
         consistencyScore: savedSnapshot.kpiData?.consistencyScore ?? 0,
       });
-      setSaved(true);
+      onSnapshotSaved();
     } catch (err) {
       console.error("U-WIN snapshot save failed:", err);
       alert(err instanceof Error ? `Failed to save snapshot: ${err.message}` : "Failed to save snapshot");
@@ -325,11 +328,11 @@ export function UwinResultsPage({
               {kpis ? (
                 <button
                   onClick={handleSave}
-                  disabled={saving || saved}
+                  disabled={saving || snapshotSaved}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  {saving ? "Saving…" : saved ? "Saved" : "Save snapshot"}
+                  {saving ? "Saving…" : snapshotSaved ? "Saved" : "Save snapshot"}
                 </button>
               ) : null}
               <button onClick={onTrend} className={secondaryActionClass}>

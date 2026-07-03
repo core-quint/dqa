@@ -26,6 +26,10 @@ function AppContent() {
     setActiveGroup,
     uwinActiveGroup,
     setUwinActiveGroup,
+    hmisSnapshotSaved,
+    setHmisSnapshotSaved,
+    uwinSnapshotSaved,
+    setUwinSnapshotSaved,
     handleLogout,
   } = useAppContext();
 
@@ -88,9 +92,12 @@ function AppContent() {
           auth={auth}
           activeGroup={activeGroup}
           onGroupChange={setActiveGroup}
+          snapshotSaved={hmisSnapshotSaved}
+          onSnapshotSaved={() => setHmisSnapshotSaved(true)}
           onReset={() => {
             setCsvData(null);
             setActiveGroup("availability");
+            setHmisSnapshotSaved(false);
             setAppState("portal");
           }}
           onTrend={() => {
@@ -166,9 +173,12 @@ function AppContent() {
           auth={auth}
           activeGroup={uwinActiveGroup}
           onGroupChange={setUwinActiveGroup}
+          snapshotSaved={uwinSnapshotSaved}
+          onSnapshotSaved={() => setUwinSnapshotSaved(true)}
           onReset={() => {
             setUwinData(null);
             setUwinActiveGroup("availability");
+            setUwinSnapshotSaved(false);
             setAppState("portal");
           }}
           onTrend={() => {

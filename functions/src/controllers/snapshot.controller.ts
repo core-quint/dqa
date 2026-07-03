@@ -75,27 +75,35 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// State/district names come from whatever the source CSV export used (e.g. U-WIN
+// exports often use ALL CAPS state names, HMIS exports use Title Case) while a
+// user's geoState/geoDistrict claim is set once in Title Case by an admin. An exact
+// Firestore `.where("state", "==", ...)` match silently hides every snapshot whose
+// casing doesn't happen to line up — normalize before comparing instead.
+const normalizeGeo = (s: unknown): string =>
+  typeof s === "string" ? s.trim().toLowerCase() : "";
+
 export const getSnapshots = async (req: AuthRequest, res: Response) => {
   try {
     const col = db.collection("snapshots") as CollectionReference;
     let query: Query = col.orderBy("createdAt", "desc");
+    let geoFilter: ((data: FirebaseFirestore.DocumentData) => boolean) | null = null;
 
     if (req.user?.role !== "ADMIN") {
       if (req.user?.level === "NATIONAL") {
         // National users see all snapshots — no extra filter
       } else if (req.user?.level === "STATE" && req.user.geoState) {
-        query = col
-          .where("state", "==", req.user.geoState)
-          .orderBy("createdAt", "desc");
+        const targetState = normalizeGeo(req.user.geoState);
+        geoFilter = (data) => normalizeGeo(data.state) === targetState;
       } else if (
         (req.user?.level === "DISTRICT" || req.user?.level === "BLOCK") &&
         req.user.geoState &&
         req.user.geoDistrict
       ) {
-        query = col
-          .where("state", "==", req.user.geoState)
-          .where("district", "==", req.user.geoDistrict)
-          .orderBy("createdAt", "desc");
+        const targetState = normalizeGeo(req.user.geoState);
+        const targetDistrict = normalizeGeo(req.user.geoDistrict);
+        geoFilter = (data) =>
+          normalizeGeo(data.state) === targetState && normalizeGeo(data.district) === targetDistrict;
       } else {
         query = col
           .where("userId", "==", req.user!.id)
@@ -104,15 +112,17 @@ export const getSnapshots = async (req: AuthRequest, res: Response) => {
     }
 
     const snap = await query.get();
-    const snapshots = snap.docs.map((d) => {
-      const data = d.data();
-      return {
-        id: d.id,
-        ...data,
-        createdAt: data.createdAt?.toDate?.()?.toISOString() ?? null,
-        canDelete: data.userId === req.user!.id,
-      };
-    });
+    const snapshots = snap.docs
+      .filter((d) => !geoFilter || geoFilter(d.data()))
+      .map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          ...data,
+          createdAt: data.createdAt?.toDate?.()?.toISOString() ?? null,
+          canDelete: data.userId === req.user!.id,
+        };
+      });
 
     res.json(snapshots);
   } catch (error) {

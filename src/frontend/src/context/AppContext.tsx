@@ -34,6 +34,10 @@ interface AppContextValue {
   setActiveGroup: (g: ActiveGroup | "") => void;
   uwinActiveGroup: ActiveGroup | "";
   setUwinActiveGroup: (g: ActiveGroup | "") => void;
+  hmisSnapshotSaved: boolean;
+  setHmisSnapshotSaved: (v: boolean) => void;
+  uwinSnapshotSaved: boolean;
+  setUwinSnapshotSaved: (v: boolean) => void;
   handleLogout: () => void;
 }
 
@@ -51,6 +55,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [uwinActiveGroup, setUwinActiveGroup] = useState<ActiveGroup | "">(
     "availability",
   );
+  const [hmisSnapshotSaved, setHmisSnapshotSaved] = useState(false);
+  const [uwinSnapshotSaved, setUwinSnapshotSaved] = useState(false);
 
   const handleLogout = useCallback(() => {
     signOut(auth).catch(() => {});
@@ -61,6 +67,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setTrendSource("ALL");
     setActiveGroup("availability");
     setUwinActiveGroup("availability");
+    setHmisSnapshotSaved(false);
+    setUwinSnapshotSaved(false);
   }, []);
 
   return (
@@ -80,6 +88,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setActiveGroup,
         uwinActiveGroup,
         setUwinActiveGroup,
+        hmisSnapshotSaved,
+        setHmisSnapshotSaved,
+        uwinSnapshotSaved,
+        setUwinSnapshotSaved,
         handleLogout,
       }}
     >

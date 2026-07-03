@@ -30,6 +30,8 @@ interface Props {
   auth: AuthState;
   activeGroup: ActiveGroup | "";
   onGroupChange: (g: ActiveGroup) => void;
+  snapshotSaved: boolean;
+  onSnapshotSaved: () => void;
 }
 
 const GROUP_META: Record<
@@ -107,6 +109,8 @@ export function ResultsPage({
   auth,
   activeGroup,
   onGroupChange,
+  snapshotSaved,
+  onSnapshotSaved,
 }: Props) {
   const [filters, setFilters] = useState<FilterState>({ ...DEFAULT_FILTERS });
   const [kpis, setKpis] = useState<ComputedKpis | null>(() =>
@@ -116,7 +120,6 @@ export function ResultsPage({
   );
   const [showOverall, setShowOverall] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [drawerCard, setDrawerCard] = useState<KpiCard | null>(null);
   const [lastSnapshot, setLastSnapshot] = useState<{
@@ -141,11 +144,12 @@ export function ResultsPage({
   useEffect(() => {
     apiFetch("/api/snapshots")
       .then((snapshots: any[]) => {
+        const norm = (s: string | undefined | null) => (s ?? "").trim().toLowerCase();
         const matches = snapshots.filter(
           (snapshot) =>
             (snapshot.portal?.toUpperCase() ?? "HMIS") === "HMIS" &&
-            snapshot.state === csv.stateName &&
-            snapshot.district === csv.distName,
+            norm(snapshot.state) === norm(csv.stateName) &&
+            norm(snapshot.district) === norm(csv.distName),
         );
         const match = matches.sort((a: any, b: any) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -172,7 +176,6 @@ export function ResultsPage({
 
     const result = computeKpis(csv, { ...filters, activeGroup });
     setKpis(result);
-    setSaved(false);
   }, [activeGroup, csv, filters]);
 
   const handleApply = useCallback(
@@ -216,7 +219,7 @@ export function ResultsPage({
         accuracyScore: savedSnapshot.kpiData?.accuracyScore ?? 0,
         consistencyScore: savedSnapshot.kpiData?.consistencyScore ?? 0,
       });
-      setSaved(true);
+      onSnapshotSaved();
     } catch {
       alert("Failed to save snapshot");
     } finally {
@@ -319,11 +322,11 @@ export function ResultsPage({
               {kpis ? (
                 <button
                   onClick={handleSave}
-                  disabled={saving || saved}
+                  disabled={saving || snapshotSaved}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  {saving ? "Saving…" : saved ? "Saved" : "Save snapshot"}
+                  {saving ? "Saving…" : snapshotSaved ? "Saved" : "Save snapshot"}
                 </button>
               ) : null}
               <button onClick={onTrend} className={secondaryActionClass}>
