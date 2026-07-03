@@ -38,6 +38,10 @@ interface AppContextValue {
   setHmisSnapshotSaved: (v: boolean) => void;
   uwinSnapshotSaved: boolean;
   setUwinSnapshotSaved: (v: boolean) => void;
+  hmisReviewDesignation: string;
+  setHmisReviewDesignation: (v: string) => void;
+  uwinReviewDesignation: string;
+  setUwinReviewDesignation: (v: string) => void;
   handleLogout: () => void;
 }
 
@@ -57,6 +61,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
   const [hmisSnapshotSaved, setHmisSnapshotSaved] = useState(false);
   const [uwinSnapshotSaved, setUwinSnapshotSaved] = useState(false);
+  const [hmisReviewDesignation, setHmisReviewDesignation] = useState("");
+  const [uwinReviewDesignation, setUwinReviewDesignation] = useState("");
 
   const handleLogout = useCallback(() => {
     signOut(auth).catch(() => {});
@@ -69,6 +75,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUwinActiveGroup("availability");
     setHmisSnapshotSaved(false);
     setUwinSnapshotSaved(false);
+    setHmisReviewDesignation("");
+    setUwinReviewDesignation("");
   }, []);
 
   return (
@@ -92,6 +100,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setHmisSnapshotSaved,
         uwinSnapshotSaved,
         setUwinSnapshotSaved,
+        hmisReviewDesignation,
+        setHmisReviewDesignation,
+        uwinReviewDesignation,
+        setUwinReviewDesignation,
         handleLogout,
       }}
     >

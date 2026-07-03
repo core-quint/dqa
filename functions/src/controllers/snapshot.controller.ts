@@ -21,6 +21,7 @@ const snapshotSchema = z.object({
   blockCount: z.number().optional().nullable(),
   facilityCount: z.number().optional().nullable(),
   sessionSiteCount: z.number().optional().nullable(),
+  designation: z.string().trim().optional().nullable(),
 });
 
 export const createSnapshot = async (req: AuthRequest, res: Response) => {
@@ -34,7 +35,7 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
     state, district, duration, overallScore,
     availabilityScore, completenessScore, accuracyScore, consistencyScore,
     portal, dqaLevel, block, periodStart, periodEnd,
-    blockCount, facilityCount, sessionSiteCount,
+    blockCount, facilityCount, sessionSiteCount, designation,
   } = parsed.data;
 
   try {
@@ -56,9 +57,21 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
         blockCount: blockCount ?? null,
         facilityCount: facilityCount ?? null,
         sessionSiteCount: sessionSiteCount ?? null,
+        designation: designation ?? null,
       },
       portal,
       userId: req.user!.id,
+      // Denormalized at write time so the Trend History "Saved by" column doesn't
+      // need a per-row user lookup — previously never written at all, so every
+      // snapshot showed a blank "Saved by".
+      createdBy: {
+        id: req.user!.id,
+        email: req.user!.email,
+        level: req.user!.level ?? null,
+        geoState: req.user!.geoState ?? null,
+        geoDistrict: req.user!.geoDistrict ?? null,
+        geoBlock: req.user!.geoBlock ?? null,
+      },
       createdAt: FieldValue.serverTimestamp(),
     });
 

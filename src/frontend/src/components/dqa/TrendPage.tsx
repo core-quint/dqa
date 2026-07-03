@@ -45,6 +45,7 @@ interface Snapshot {
     completenessScore?: number;
     accuracyScore: number;
     consistencyScore: number;
+    designation?: string | null;
   };
 }
 
@@ -161,7 +162,7 @@ export function TrendPage({
   function handleDownloadExcel() {
     const headers = [
       "Date",
-      "Saved By",
+      "Reviewed By",
       "State",
       "District",
       "Duration",
@@ -171,11 +172,12 @@ export function TrendPage({
       "Completeness",
       "Accuracy",
       "Consistency",
+      "Saved By",
     ];
 
     const rows = [...filtered].reverse().map((snapshot) => [
       formatDate(snapshot.createdAt),
-      snapshot.createdBy?.email ?? "-",
+      snapshot.kpiData?.designation ?? "-",
       snapshot.state,
       snapshot.district,
       snapshot.reportingMonth,
@@ -187,6 +189,7 @@ export function TrendPage({
         : "-",
       snapshot.kpiData?.accuracyScore?.toFixed(1) ?? "-",
       snapshot.kpiData?.consistencyScore?.toFixed(1) ?? "-",
+      snapshot.createdBy?.email ?? "-",
     ]);
 
     const tableHtml = `
@@ -466,7 +469,7 @@ export function TrendPage({
                     <tr className="bg-white/60 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                       <th className="px-4 py-3">Date</th>
                       <th className="px-4 py-3">Portal</th>
-                      <th className="px-4 py-3">Saved by</th>
+                      <th className="px-4 py-3">Reviewed by</th>
                       <th className="px-4 py-3">State</th>
                       <th className="px-4 py-3">District</th>
                       <th className="px-4 py-3">Duration</th>
@@ -476,6 +479,7 @@ export function TrendPage({
                       <th className="px-4 py-3 text-right">Accur.</th>
                       <th className="px-4 py-3 text-right">Consis.</th>
                       <th className="px-4 py-3 text-center">Action</th>
+                      <th className="px-4 py-3">Saved by</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -488,13 +492,8 @@ export function TrendPage({
                           {formatDate(snapshot.createdAt)}
                         </td>
                         <td className="px-4 py-3">{portalBadge(snapshot.portal)}</td>
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-slate-700">
-                            {snapshot.createdBy?.email ?? "-"}
-                          </div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                            {snapshot.createdBy?.level ?? ""}
-                          </div>
+                        <td className="px-4 py-3 font-medium text-slate-700">
+                          {snapshot.kpiData?.designation ?? "-"}
                         </td>
                         <td className="px-4 py-3 text-slate-700">{snapshot.state}</td>
                         <td className="px-4 py-3 text-slate-700">{snapshot.district}</td>
@@ -533,6 +532,9 @@ export function TrendPage({
                               Read only
                             </span>
                           )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {snapshot.createdBy?.email ?? "-"}
                         </td>
                       </tr>
                     ))}

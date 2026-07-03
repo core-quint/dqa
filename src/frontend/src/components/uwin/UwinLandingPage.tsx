@@ -23,7 +23,7 @@ import {
 } from "../../lib/dqa/preUploadOptions";
 
 interface Props {
-  onDataReady: (data: UwinParsedCSV) => void;
+  onDataReady: (data: UwinParsedCSV, designation: string) => void;
   auth: AuthState;
   onBack: () => void;
 }
@@ -138,7 +138,7 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
         return;
       }
       logUploadSession("UWIN", preInfo).catch((err) => console.error("Upload session log failed:", err));
-      onDataReady(parsed);
+      onDataReady(parsed, preInfo.designation);
     } catch (parseError) {
       setError(
         parseError instanceof Error

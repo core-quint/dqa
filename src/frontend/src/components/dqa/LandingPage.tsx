@@ -18,7 +18,7 @@ import {
 } from "../../lib/dqa/preUploadOptions";
 
 interface Props {
-  onDataReady: (data: ParsedCSV) => void;
+  onDataReady: (data: ParsedCSV, designation: string) => void;
   auth: AuthState;
   onBack: () => void;
 }
@@ -73,7 +73,7 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
         return;
       }
       logUploadSession("HMIS", preInfo).catch((err) => console.error("Upload session log failed:", err));
-      onDataReady(parsed);
+      onDataReady(parsed, preInfo.designation);
     } catch (parseError) {
       setError(
         parseError instanceof Error

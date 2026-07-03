@@ -32,6 +32,7 @@ interface Props {
   onGroupChange: (g: ActiveGroup) => void;
   snapshotSaved: boolean;
   onSnapshotSaved: () => void;
+  reviewDesignation: string;
 }
 
 const GROUP_META: Record<
@@ -111,6 +112,7 @@ export function ResultsPage({
   onGroupChange,
   snapshotSaved,
   onSnapshotSaved,
+  reviewDesignation,
 }: Props) {
   const [filters, setFilters] = useState<FilterState>({ ...DEFAULT_FILTERS });
   const [kpis, setKpis] = useState<ComputedKpis | null>(() =>
@@ -198,6 +200,7 @@ export function ResultsPage({
           state: csv.stateName,
           district: csv.distName,
           duration: durationStr,
+          designation: reviewDesignation || null,
           overallScore: overall,
           availabilityScore: components.availability?.score ?? 0,
           completenessScore: components.completeness?.score ?? 0,

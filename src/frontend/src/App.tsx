@@ -30,6 +30,10 @@ function AppContent() {
     setHmisSnapshotSaved,
     uwinSnapshotSaved,
     setUwinSnapshotSaved,
+    hmisReviewDesignation,
+    setHmisReviewDesignation,
+    uwinReviewDesignation,
+    setUwinReviewDesignation,
     handleLogout,
   } = useAppContext();
 
@@ -73,9 +77,10 @@ function AppContent() {
       <AppShell>
         <LandingPage
           auth={auth}
-          onDataReady={(data) => {
+          onDataReady={(data, designation) => {
             setCsvData(data);
             setActiveGroup("availability");
+            setHmisReviewDesignation(designation);
             setAppState("results");
           }}
           onBack={() => setAppState("portal")}
@@ -94,10 +99,12 @@ function AppContent() {
           onGroupChange={setActiveGroup}
           snapshotSaved={hmisSnapshotSaved}
           onSnapshotSaved={() => setHmisSnapshotSaved(true)}
+          reviewDesignation={hmisReviewDesignation}
           onReset={() => {
             setCsvData(null);
             setActiveGroup("availability");
             setHmisSnapshotSaved(false);
+            setHmisReviewDesignation("");
             setAppState("portal");
           }}
           onTrend={() => {
@@ -154,9 +161,10 @@ function AppContent() {
       <AppShell>
         <UwinLandingPage
           auth={auth}
-          onDataReady={(data) => {
+          onDataReady={(data, designation) => {
             setUwinData(data);
             setUwinActiveGroup("availability");
+            setUwinReviewDesignation(designation);
             setAppState("uwin-results");
           }}
           onBack={() => setAppState("portal")}
@@ -175,10 +183,12 @@ function AppContent() {
           onGroupChange={setUwinActiveGroup}
           snapshotSaved={uwinSnapshotSaved}
           onSnapshotSaved={() => setUwinSnapshotSaved(true)}
+          reviewDesignation={uwinReviewDesignation}
           onReset={() => {
             setUwinData(null);
             setUwinActiveGroup("availability");
             setUwinSnapshotSaved(false);
+            setUwinReviewDesignation("");
             setAppState("portal");
           }}
           onTrend={() => {

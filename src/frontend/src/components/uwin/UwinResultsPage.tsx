@@ -27,6 +27,7 @@ interface Props {
   onGroupChange: (g: ActiveGroup) => void;
   snapshotSaved: boolean;
   onSnapshotSaved: () => void;
+  reviewDesignation: string;
 }
 
 const TABS: Exclude<ActiveGroup, "">[] = [
@@ -100,6 +101,7 @@ export function UwinResultsPage({
   onGroupChange,
   snapshotSaved,
   onSnapshotSaved,
+  reviewDesignation,
 }: Props) {
   const [filters, setFilters] = useState<FilterState>({
     ...UWIN_DEFAULT_FILTERS,
@@ -194,6 +196,7 @@ export function UwinResultsPage({
           state: csv.stateName,
           district: csv.distName,
           duration: durationStr,
+          designation: reviewDesignation || null,
           overallScore: overall,
           availabilityScore: components.availability?.score ?? 0,
           completenessScore: components.completeness?.score ?? 0,
