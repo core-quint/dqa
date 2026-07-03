@@ -1,22 +1,18 @@
-// ============================================================
-// Pre-upload review info: Designation / Purpose / GPS
-// Collected on the HMIS and U-WIN landing pages before analysis can start.
-// ============================================================
 import { apiFetch } from '../../api';
 import type { AuthState } from '../../components/dqa/LoginPage';
 
 type GeoLevel = 'STATE' | 'DISTRICT' | 'BLOCK';
 
 export const DESIGNATION_OPTIONS: Record<GeoLevel, string[]> = {
-  STATE: ['SEPIO/SNO', 'State Data Manager', 'Data Entry Operator', 'Development Partner'],
+  STATE: ['SEPIO/SNO', 'State Data Manager', 'Data Entry Operator', 'Development Partner', 'State Analyst', 'State Lead',],
   DISTRICT: [
     'CS/CMO', 'RCHO/DIO/DNO', 'Assistant Research Officer', 'District Data Manager',
-    'District Programme Manager', 'Data Entry Operator', 'Development Partner',
+    'District Programme Manager', 'Data Entry Operator', 'Development Partner', 'District Coordinator',
   ],
   BLOCK: [
     'MOI/C', 'Block Medical Officer', 'Block Programme Manager', 'Block Data Manager',
     'Assistant Research Officer', 'Data Entry Operator', 'Block Health Manager',
-    'Development Partner',
+    'Development Partner', 'District Coordinator',
   ],
 };
 
