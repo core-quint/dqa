@@ -1,10 +1,15 @@
+// ============================================================
+// Pre-upload review info: Designation / Purpose / GPS
+// Collected on the HMIS and U-WIN landing pages before analysis can start.
+// ============================================================
 import { apiFetch } from '../../api';
 import type { AuthState } from '../../components/dqa/LoginPage';
 
-type GeoLevel = 'STATE' | 'DISTRICT' | 'BLOCK';
+type Level = AuthState['level'];
 
-export const DESIGNATION_OPTIONS: Record<GeoLevel, string[]> = {
-  STATE: ['SEPIO/SNO', 'State Data Manager', 'Data Entry Operator', 'Development Partner', 'State Analyst', 'State Lead',],
+export const DESIGNATION_OPTIONS: Record<Level, string[]> = {
+  NATIONAL: ['MoHFW Officials', 'Development Partner'],
+  STATE: ['SEPIO/SNO', 'State Data Manager', 'Data Entry Operator', 'Development Partner', 'State Analyst', 'State Lead'],
   DISTRICT: [
     'CS/CMO', 'RCHO/DIO/DNO', 'Assistant Research Officer', 'District Data Manager',
     'District Programme Manager', 'Data Entry Operator', 'Development Partner', 'District Coordinator',
@@ -20,7 +25,8 @@ export const PURPOSE_OPTIONS = [
   'Review Meeting', 'Desk Review', 'Training Demonstration', 'Self Learning', 'Others',
 ] as const;
 
-export const REVIEW_MEETING_SUBOPTIONS: Record<GeoLevel, string[]> = {
+// Each level's own meeting types, before rolling up the hierarchy below.
+const REVIEW_MEETING_BASE = {
   STATE: ['State task force meeting for Immunization', 'DIO Review Meeting', 'Partners Meeting'],
   DISTRICT: [
     'District task force for Immunization', 'District Data Validation Committee',
@@ -32,6 +38,17 @@ export const REVIEW_MEETING_SUBOPTIONS: Record<GeoLevel, string[]> = {
   ],
 };
 
+// A reviewer at a given level can plausibly sit in on meetings at their own level
+// or any level below them, so each dropdown is the union of its own tier and every
+// tier beneath it — National/State see everything, District sees district+block,
+// Block sees just its own.
+export const REVIEW_MEETING_SUBOPTIONS: Record<Level, string[]> = {
+  NATIONAL: [...new Set([...REVIEW_MEETING_BASE.STATE, ...REVIEW_MEETING_BASE.DISTRICT, ...REVIEW_MEETING_BASE.BLOCK])],
+  STATE: [...new Set([...REVIEW_MEETING_BASE.STATE, ...REVIEW_MEETING_BASE.DISTRICT, ...REVIEW_MEETING_BASE.BLOCK])],
+  DISTRICT: [...new Set([...REVIEW_MEETING_BASE.DISTRICT, ...REVIEW_MEETING_BASE.BLOCK])],
+  BLOCK: [...REVIEW_MEETING_BASE.BLOCK],
+};
+
 export interface PreUploadInfo {
   designation: string;
   purpose: string; // one of PURPOSE_OPTIONS
@@ -39,6 +56,7 @@ export interface PreUploadInfo {
   purposeOtherText: string; // only meaningful when purpose === 'Others'
   gpsLat: number | null;
   gpsLng: number | null;
+  gpsAddress: string | null; // reverse-geocoded from gpsLat/gpsLng, best-effort
 }
 
 export const EMPTY_PRE_UPLOAD_INFO: PreUploadInfo = {
@@ -48,18 +66,15 @@ export const EMPTY_PRE_UPLOAD_INFO: PreUploadInfo = {
   purposeOtherText: '',
   gpsLat: null,
   gpsLng: null,
+  gpsAddress: null,
 };
 
-function isGeoLevel(level: AuthState['level']): level is GeoLevel {
-  return level === 'STATE' || level === 'DISTRICT' || level === 'BLOCK';
+/** Every level (including National) must fill Designation/Purpose before upload. */
+export function requiresPreUploadInfo(_level: Level): boolean {
+  return true;
 }
 
-/** National-level users skip the gate entirely — the option lists don't cover that role. */
-export function requiresPreUploadInfo(level: AuthState['level']): level is GeoLevel {
-  return isGeoLevel(level);
-}
-
-export function isPreUploadInfoComplete(info: PreUploadInfo, level: AuthState['level']): boolean {
+export function isPreUploadInfoComplete(info: PreUploadInfo, level: Level): boolean {
   if (!requiresPreUploadInfo(level)) return true;
   if (!info.designation || !info.purpose) return false;
   if (info.purpose === 'Review Meeting' && !info.purposeSubOption) return false;
@@ -73,4 +88,25 @@ export function logUploadSession(portal: 'HMIS' | 'UWIN', info: PreUploadInfo): 
     method: 'POST',
     body: JSON.stringify({ portal, ...info }),
   });
+}
+
+/**
+ * Best-effort reverse geocode via OpenStreetMap Nominatim (free, no API key).
+ * Returns a short human-readable address, or null if the lookup fails.
+ */
+export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=14&addressdetails=1`,
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const a = data?.address ?? {};
+    const locality = a.city || a.town || a.village || a.suburb || a.county;
+    const parts = [locality, a.state_district, a.state].filter(Boolean);
+    if (parts.length > 0) return parts.join(', ');
+    return typeof data?.display_name === 'string' ? data.display_name : null;
+  } catch {
+    return null;
+  }
 }

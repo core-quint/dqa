@@ -15,6 +15,7 @@ const uploadSessionSchema = z.object({
   purposeOtherText: z.string().trim().optional().nullable(),
   gpsLat: z.number().optional().nullable(),
   gpsLng: z.number().optional().nullable(),
+  gpsAddress: z.string().trim().optional().nullable(),
 });
 
 export const createUploadSession = async (req: AuthRequest, res: Response) => {
@@ -25,7 +26,7 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
   }
 
   const {
-    portal, designation, purpose, purposeSubOption, purposeOtherText, gpsLat, gpsLng,
+    portal, designation, purpose, purposeSubOption, purposeOtherText, gpsLat, gpsLng, gpsAddress,
   } = parsed.data;
 
   try {
@@ -38,6 +39,7 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
       purposeOtherText: purposeOtherText?.trim() || null,
       gpsLat: gpsLat ?? null,
       gpsLng: gpsLng ?? null,
+      gpsAddress: gpsAddress?.trim() || null,
       userId: req.user!.id,
       createdAt: FieldValue.serverTimestamp(),
     });

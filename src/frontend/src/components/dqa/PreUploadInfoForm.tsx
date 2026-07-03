@@ -1,18 +1,19 @@
-import { useEffect, useState } from "react";
-import { MapPin } from "lucide-react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { MapPin, Loader2 } from "lucide-react";
 import type { AuthState } from "./LoginPage";
 import {
   DESIGNATION_OPTIONS,
   PURPOSE_OPTIONS,
   REVIEW_MEETING_SUBOPTIONS,
   requiresPreUploadInfo,
+  reverseGeocode,
   type PreUploadInfo,
 } from "../../lib/dqa/preUploadOptions";
 
 interface Props {
   auth: AuthState;
   value: PreUploadInfo;
-  onChange: (value: PreUploadInfo) => void;
+  onChange: Dispatch<SetStateAction<PreUploadInfo>>;
 }
 
 const selectClassName =
@@ -21,9 +22,13 @@ const selectClassName =
 const labelClassName =
   "mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500";
 
+function formatLatLng(lat: number, lng: number): string {
+  return `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? "N" : "S"}, ${Math.abs(lng).toFixed(4)}°${lng >= 0 ? "E" : "W"}`;
+}
+
 export function PreUploadInfoForm({ auth, value, onChange }: Props) {
   const level = auth.level;
-  const [gpsStatus, setGpsStatus] = useState<"idle" | "captured" | "unavailable">("idle");
+  const [gpsStatus, setGpsStatus] = useState<"idle" | "locating" | "captured" | "unavailable">("idle");
 
   useEffect(() => {
     if (!requiresPreUploadInfo(level)) return;
@@ -31,10 +36,17 @@ export function PreUploadInfoForm({ auth, value, onChange }: Props) {
       setGpsStatus("unavailable");
       return;
     }
+    setGpsStatus("locating");
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        // Functional update: merges into whatever Designation/Purpose the user has
+        // already typed by the time GPS resolves (can take several seconds), rather
+        // than a stale snapshot of `value` from when this effect first ran.
+        onChange((prev) => ({ ...prev, gpsLat: latitude, gpsLng: longitude }));
+        const address = await reverseGeocode(latitude, longitude);
+        onChange((prev) => ({ ...prev, gpsAddress: address }));
         setGpsStatus("captured");
-        onChange({ ...value, gpsLat: pos.coords.latitude, gpsLng: pos.coords.longitude });
       },
       () => setGpsStatus("unavailable"),
       { timeout: 8000 },
@@ -50,10 +62,15 @@ export function PreUploadInfoForm({ auth, value, onChange }: Props) {
         <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
           Review details
         </div>
-        {gpsStatus === "captured" ? (
+        {gpsStatus === "locating" ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-500">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Locating...
+          </span>
+        ) : gpsStatus === "captured" ? (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">
             <MapPin className="h-3 w-3" />
-            Location captured
+            {value.gpsAddress ?? (value.gpsLat !== null && value.gpsLng !== null ? formatLatLng(value.gpsLat, value.gpsLng) : "Location captured")}
           </span>
         ) : null}
       </div>
