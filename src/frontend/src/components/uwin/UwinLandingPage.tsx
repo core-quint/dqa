@@ -18,12 +18,14 @@ import { GlassPanel } from "../branding/GlassPanel";
 import { PreUploadInfoForm } from "../dqa/PreUploadInfoForm";
 import {
   EMPTY_PRE_UPLOAD_INFO,
+  buildUploadDatasetContext,
   isPreUploadInfoComplete,
   logUploadSession,
+  type PreUploadInfo,
 } from "../../lib/dqa/preUploadOptions";
 
 interface Props {
-  onDataReady: (data: UwinParsedCSV, designation: string) => void;
+  onDataReady: (data: UwinParsedCSV, reviewInfo: PreUploadInfo) => void;
   auth: AuthState;
   onBack: () => void;
 }
@@ -137,8 +139,8 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
         setError(geoErr);
         return;
       }
-      logUploadSession("UWIN", preInfo).catch((err) => console.error("Upload session log failed:", err));
-      onDataReady(parsed, preInfo.designation);
+      logUploadSession("UWIN", preInfo, buildUploadDatasetContext(parsed)).catch((err) => console.error("Upload session log failed:", err));
+      onDataReady(parsed, preInfo);
     } catch (parseError) {
       setError(
         parseError instanceof Error

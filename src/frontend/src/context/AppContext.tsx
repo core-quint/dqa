@@ -5,6 +5,7 @@ import type { ParsedCSV } from "../lib/dqa/types";
 import type { UwinParsedCSV } from "../lib/uwin/types";
 import type { AuthState } from "../components/dqa/LoginPage";
 import type { ActiveGroup } from "../lib/dqa/types";
+import type { PreUploadInfo } from "../lib/dqa/preUploadOptions";
 
 export type AppState =
   | "login"
@@ -12,6 +13,7 @@ export type AppState =
   | "landing"
   | "results"
   | "trend"
+  | "dashboard"
   | "coverage"
   | "admin"
   | "uwin-landing"
@@ -38,10 +40,10 @@ interface AppContextValue {
   setHmisSnapshotSaved: (v: boolean) => void;
   uwinSnapshotSaved: boolean;
   setUwinSnapshotSaved: (v: boolean) => void;
-  hmisReviewDesignation: string;
-  setHmisReviewDesignation: (v: string) => void;
-  uwinReviewDesignation: string;
-  setUwinReviewDesignation: (v: string) => void;
+  hmisReviewInfo: PreUploadInfo | null;
+  setHmisReviewInfo: (v: PreUploadInfo | null) => void;
+  uwinReviewInfo: PreUploadInfo | null;
+  setUwinReviewInfo: (v: PreUploadInfo | null) => void;
   handleLogout: () => void;
 }
 
@@ -61,8 +63,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
   const [hmisSnapshotSaved, setHmisSnapshotSaved] = useState(false);
   const [uwinSnapshotSaved, setUwinSnapshotSaved] = useState(false);
-  const [hmisReviewDesignation, setHmisReviewDesignation] = useState("");
-  const [uwinReviewDesignation, setUwinReviewDesignation] = useState("");
+  const [hmisReviewInfo, setHmisReviewInfo] = useState<PreUploadInfo | null>(null);
+  const [uwinReviewInfo, setUwinReviewInfo] = useState<PreUploadInfo | null>(null);
 
   const handleLogout = useCallback(() => {
     signOut(auth).catch(() => {});
@@ -75,8 +77,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUwinActiveGroup("availability");
     setHmisSnapshotSaved(false);
     setUwinSnapshotSaved(false);
-    setHmisReviewDesignation("");
-    setUwinReviewDesignation("");
+    setHmisReviewInfo(null);
+    setUwinReviewInfo(null);
   }, []);
 
   return (
@@ -100,10 +102,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setHmisSnapshotSaved,
         uwinSnapshotSaved,
         setUwinSnapshotSaved,
-        hmisReviewDesignation,
-        setHmisReviewDesignation,
-        uwinReviewDesignation,
-        setUwinReviewDesignation,
+        hmisReviewInfo,
+        setHmisReviewInfo,
+        uwinReviewInfo,
+        setUwinReviewInfo,
         handleLogout,
       }}
     >

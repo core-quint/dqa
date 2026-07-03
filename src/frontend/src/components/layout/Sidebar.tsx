@@ -3,6 +3,7 @@ import {
   BarChart2,
   ChevronDown,
   Database,
+  LayoutDashboard,
   LogOut,
   MapPinned,
   PanelLeftClose,
@@ -134,6 +135,15 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
         setAnalysisOpen((v) => !v);
         setAppState(portal === "U-WIN" ? "uwin-results" : "results");
       },
+    },
+    {
+      key: "dashboard",
+      label: "Dashboard",
+      icon: LayoutDashboard,
+      active: appState === "dashboard",
+      disabled: false,
+      hasChildren: false,
+      onClick: () => setAppState("dashboard"),
     },
     {
       key: "trend",

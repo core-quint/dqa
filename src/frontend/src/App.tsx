@@ -5,6 +5,7 @@ import { PortalSelector } from "./components/dqa/PortalSelector";
 import { LandingPage } from "./components/dqa/LandingPage";
 import { ResultsPage } from "./components/dqa/ResultsPage";
 import { TrendPage } from "./components/dqa/TrendPage";
+import { DashboardPage } from "./components/dqa/DashboardPage";
 import { CoveragePage } from "./components/dqa/CoveragePage";
 import { AdminPage } from "./components/dqa/AdminPage";
 import { UwinLandingPage } from "./components/uwin/UwinLandingPage";
@@ -30,10 +31,10 @@ function AppContent() {
     setHmisSnapshotSaved,
     uwinSnapshotSaved,
     setUwinSnapshotSaved,
-    hmisReviewDesignation,
-    setHmisReviewDesignation,
-    uwinReviewDesignation,
-    setUwinReviewDesignation,
+    hmisReviewInfo,
+    setHmisReviewInfo,
+    uwinReviewInfo,
+    setUwinReviewInfo,
     handleLogout,
   } = useAppContext();
 
@@ -77,10 +78,10 @@ function AppContent() {
       <AppShell>
         <LandingPage
           auth={auth}
-          onDataReady={(data, designation) => {
+          onDataReady={(data, reviewInfo) => {
             setCsvData(data);
             setActiveGroup("availability");
-            setHmisReviewDesignation(designation);
+            setHmisReviewInfo(reviewInfo);
             setAppState("results");
           }}
           onBack={() => setAppState("portal")}
@@ -99,12 +100,12 @@ function AppContent() {
           onGroupChange={setActiveGroup}
           snapshotSaved={hmisSnapshotSaved}
           onSnapshotSaved={() => setHmisSnapshotSaved(true)}
-          reviewDesignation={hmisReviewDesignation}
+          reviewInfo={hmisReviewInfo}
           onReset={() => {
             setCsvData(null);
             setActiveGroup("availability");
             setHmisSnapshotSaved(false);
-            setHmisReviewDesignation("");
+            setHmisReviewInfo(null);
             setAppState("portal");
           }}
           onTrend={() => {
@@ -148,6 +149,14 @@ function AppContent() {
     );
   }
 
+  if (appState === "dashboard") {
+    return (
+      <AppShell>
+        <DashboardPage auth={auth} />
+      </AppShell>
+    );
+  }
+
   if (appState === "coverage") {
     return (
       <AppShell>
@@ -161,10 +170,10 @@ function AppContent() {
       <AppShell>
         <UwinLandingPage
           auth={auth}
-          onDataReady={(data, designation) => {
+          onDataReady={(data, reviewInfo) => {
             setUwinData(data);
             setUwinActiveGroup("availability");
-            setUwinReviewDesignation(designation);
+            setUwinReviewInfo(reviewInfo);
             setAppState("uwin-results");
           }}
           onBack={() => setAppState("portal")}
@@ -183,12 +192,12 @@ function AppContent() {
           onGroupChange={setUwinActiveGroup}
           snapshotSaved={uwinSnapshotSaved}
           onSnapshotSaved={() => setUwinSnapshotSaved(true)}
-          reviewDesignation={uwinReviewDesignation}
+          reviewInfo={uwinReviewInfo}
           onReset={() => {
             setUwinData(null);
             setUwinActiveGroup("availability");
             setUwinSnapshotSaved(false);
-            setUwinReviewDesignation("");
+            setUwinReviewInfo(null);
             setAppState("portal");
           }}
           onTrend={() => {

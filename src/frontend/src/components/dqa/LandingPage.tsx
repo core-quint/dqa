@@ -13,12 +13,14 @@ import { GlassPanel } from "../branding/GlassPanel";
 import { PreUploadInfoForm } from "./PreUploadInfoForm";
 import {
   EMPTY_PRE_UPLOAD_INFO,
+  buildUploadDatasetContext,
   isPreUploadInfoComplete,
   logUploadSession,
+  type PreUploadInfo,
 } from "../../lib/dqa/preUploadOptions";
 
 interface Props {
-  onDataReady: (data: ParsedCSV, designation: string) => void;
+  onDataReady: (data: ParsedCSV, reviewInfo: PreUploadInfo) => void;
   auth: AuthState;
   onBack: () => void;
 }
@@ -72,8 +74,8 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
         setError(geoErr);
         return;
       }
-      logUploadSession("HMIS", preInfo).catch((err) => console.error("Upload session log failed:", err));
-      onDataReady(parsed, preInfo.designation);
+      logUploadSession("HMIS", preInfo, buildUploadDatasetContext(parsed)).catch((err) => console.error("Upload session log failed:", err));
+      onDataReady(parsed, preInfo);
     } catch (parseError) {
       setError(
         parseError instanceof Error

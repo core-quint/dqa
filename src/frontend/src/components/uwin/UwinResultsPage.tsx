@@ -17,6 +17,7 @@ import { buildSnapshotSaveMeta } from "../../lib/snapshots";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { GlassPanel } from "../branding/GlassPanel";
 import type { AuthState } from "../dqa/LoginPage";
+import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
 
 interface Props {
   csv: UwinParsedCSV;
@@ -27,7 +28,7 @@ interface Props {
   onGroupChange: (g: ActiveGroup) => void;
   snapshotSaved: boolean;
   onSnapshotSaved: () => void;
-  reviewDesignation: string;
+  reviewInfo: PreUploadInfo | null;
 }
 
 const TABS: Exclude<ActiveGroup, "">[] = [
@@ -101,7 +102,7 @@ export function UwinResultsPage({
   onGroupChange,
   snapshotSaved,
   onSnapshotSaved,
-  reviewDesignation,
+  reviewInfo,
 }: Props) {
   const [filters, setFilters] = useState<FilterState>({
     ...UWIN_DEFAULT_FILTERS,
@@ -196,7 +197,10 @@ export function UwinResultsPage({
           state: csv.stateName,
           district: csv.distName,
           duration: durationStr,
-          designation: reviewDesignation || null,
+          designation: reviewInfo?.designation || null,
+          purpose: reviewInfo?.purpose || null,
+          purposeDetail:
+            reviewInfo?.purposeSubOption || reviewInfo?.purposeOtherText || null,
           overallScore: overall,
           availabilityScore: components.availability?.score ?? 0,
           completenessScore: components.completeness?.score ?? 0,

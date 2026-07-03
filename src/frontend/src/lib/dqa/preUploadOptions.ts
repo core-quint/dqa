@@ -82,11 +82,46 @@ export function isPreUploadInfoComplete(info: PreUploadInfo, level: Level): bool
   return true;
 }
 
+/** Dataset context attached to the upload-session audit log, known once the CSV parses. */
+export interface UploadDatasetContext {
+  state: string | null;
+  district: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  blockCount: number | null;
+  facilityCount: number | null;
+  sessionSiteCount: number | null;
+}
+
+export function buildUploadDatasetContext(parsed: {
+  stateName: string;
+  distName: string;
+  allMonths: Record<string, string>;
+  globalBlockCount: number;
+  globalFacilityCount: number;
+  globalSessionSiteCount?: number;
+}): UploadDatasetContext {
+  const months = Object.keys(parsed.allMonths).sort();
+  return {
+    state: parsed.stateName || null,
+    district: parsed.distName || null,
+    periodStart: months[0] ?? null,
+    periodEnd: months[months.length - 1] ?? null,
+    blockCount: parsed.globalBlockCount ?? null,
+    facilityCount: parsed.globalFacilityCount ?? null,
+    sessionSiteCount: parsed.globalSessionSiteCount ?? null,
+  };
+}
+
 /** Fire-and-forget audit log of who uploaded, why, and from where. Never blocks upload flow. */
-export function logUploadSession(portal: 'HMIS' | 'UWIN', info: PreUploadInfo): Promise<unknown> {
+export function logUploadSession(
+  portal: 'HMIS' | 'UWIN',
+  info: PreUploadInfo,
+  dataset?: UploadDatasetContext,
+): Promise<unknown> {
   return apiFetch('/api/upload-sessions', {
     method: 'POST',
-    body: JSON.stringify({ portal, ...info }),
+    body: JSON.stringify({ portal, ...info, ...(dataset ?? {}) }),
   });
 }
 

@@ -22,6 +22,7 @@ import { buildSnapshotSaveMeta } from "../../lib/snapshots";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { GlassPanel } from "../branding/GlassPanel";
 import type { AuthState } from "./LoginPage";
+import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
 
 interface Props {
   csv: ParsedCSV;
@@ -32,7 +33,7 @@ interface Props {
   onGroupChange: (g: ActiveGroup) => void;
   snapshotSaved: boolean;
   onSnapshotSaved: () => void;
-  reviewDesignation: string;
+  reviewInfo: PreUploadInfo | null;
 }
 
 const GROUP_META: Record<
@@ -112,7 +113,7 @@ export function ResultsPage({
   onGroupChange,
   snapshotSaved,
   onSnapshotSaved,
-  reviewDesignation,
+  reviewInfo,
 }: Props) {
   const [filters, setFilters] = useState<FilterState>({ ...DEFAULT_FILTERS });
   const [kpis, setKpis] = useState<ComputedKpis | null>(() =>
@@ -200,7 +201,10 @@ export function ResultsPage({
           state: csv.stateName,
           district: csv.distName,
           duration: durationStr,
-          designation: reviewDesignation || null,
+          designation: reviewInfo?.designation || null,
+          purpose: reviewInfo?.purpose || null,
+          purposeDetail:
+            reviewInfo?.purposeSubOption || reviewInfo?.purposeOtherText || null,
           overallScore: overall,
           availabilityScore: components.availability?.score ?? 0,
           completenessScore: components.completeness?.score ?? 0,
