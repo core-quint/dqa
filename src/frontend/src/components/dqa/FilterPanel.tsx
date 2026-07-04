@@ -13,10 +13,10 @@ interface Props {
 }
 
 const dropdownTriggerClass =
-  "group inline-flex min-h-[2.75rem] items-center gap-2 rounded-2xl border border-white/80 bg-white/78 px-4 py-2 text-sm font-semibold text-slate-700 shadow-[0_12px_28px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-white";
+  "group inline-flex min-h-[2.75rem] items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/78 px-4 py-2 text-sm font-semibold text-slate-700 shadow-[0_12px_28px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-white";
 
 const dropdownPanelClass =
-  "absolute left-0 top-full z-[9999] mt-3 min-w-[280px] max-w-[92vw] overflow-hidden rounded-[24px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(248,250,252,0.92))] p-4 shadow-[0_26px_60px_rgba(15,23,42,0.16)] backdrop-blur-xl sm:max-w-[360px]";
+  "absolute left-0 top-full z-[9999] mt-3 min-w-[280px] max-w-[92vw] overflow-hidden rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(248,250,252,0.92))] p-4 shadow-[0_26px_60px_rgba(15,23,42,0.16)] backdrop-blur-xl sm:max-w-[360px]";
 
 const selectClassName =
   "h-10 w-full rounded-2xl border border-slate-200/80 bg-white/90 px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-200/70";
@@ -195,7 +195,7 @@ function AnalysisModeToggle({
   return (
     <div
       className={[
-        "inline-flex items-center gap-1 rounded-2xl border border-white/80 bg-white/78 p-1 shadow-[0_12px_28px_rgba(15,23,42,0.06)]",
+        "inline-flex items-center gap-1 rounded-2xl border border-slate-200/80 bg-white/78 p-1 shadow-[0_12px_28px_rgba(15,23,42,0.06)]",
         fullWidth ? "w-full" : "",
       ].join(" ")}
     >

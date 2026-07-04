@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarRange,
   Download,
@@ -97,8 +97,10 @@ const portalLabelMap: Record<PortalFilter, string> = {
   UWIN: "U-WIN",
 };
 
-// 5-step discrete color scale: red → orange → yellow → lime → green
-const COLOR_SCALE = ["#dc2626", "#f97316", "#eab308", "#84cc16", "#16a34a"];
+// 5-step discrete diverging scale (ColorBrewer RdYlBu, colorblind-safe):
+// red (low) → pale yellow (mid) → blue (high). Red↔green is unreadable for
+// deutan/protan viewers, so green is deliberately not used here.
+const COLOR_SCALE = ["#d7191c", "#fdae61", "#ffffbf", "#abd9e9", "#2c7bb6"];
 const LEGEND_BANDS = ["0–20", "20–40", "40–60", "60–80", "80–100"];
 
 export function CoveragePage({ auth }: { auth: AuthState }) {
@@ -777,7 +779,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
         {/* Map card */}
         <GlassPanel className="overflow-hidden p-0">
           {/* Map header */}
-          <div className="border-b border-white/70 px-5 py-4">
+          <div className="border-b border-slate-200/70 px-5 py-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -798,7 +800,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                         {valueExtent[0]} – {Math.round(valueExtent[1])}
                       </span>
                     </div>
-                    <div className="h-3.5 rounded-full bg-[linear-gradient(90deg,#dc2626_0%,#f97316_25%,#eab308_50%,#84cc16_75%,#16a34a_100%)]" />
+                    <div className="h-3.5 rounded-full bg-[linear-gradient(90deg,#d7191c_0%,#fdae61_25%,#ffffbf_50%,#abd9e9_75%,#2c7bb6_100%)]" />
                   </div>
                 ) : (
                   <div className="min-w-[210px]">
@@ -872,7 +874,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 No map regions match the current scope.
               </div>
             ) : (
-              <div className="relative overflow-hidden rounded-[28px] border border-white/70 bg-[radial-gradient(circle_at_top,rgba(226,232,240,0.95),rgba(248,250,252,0.92)_48%,rgba(255,255,255,0.92)_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
+              <div className="relative overflow-hidden rounded-[28px] border border-slate-200/70 bg-[radial-gradient(circle_at_top,rgba(226,232,240,0.95),rgba(248,250,252,0.92)_48%,rgba(255,255,255,0.92)_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
                 {/* Zoom controls */}
                 <div className="absolute right-4 top-4 z-10 flex flex-col gap-1">
                   <button
@@ -1031,7 +1033,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
             {/* Floating tooltip */}
             {hovered ? (
               <div
-                className="pointer-events-none fixed z-50 min-w-[180px] rounded-2xl border border-white/80 bg-slate-950/95 px-4 py-3 shadow-[0_22px_50px_rgba(15,23,42,0.32)] backdrop-blur-sm"
+                className="pointer-events-none fixed z-50 min-w-[180px] rounded-2xl border border-slate-200/80 bg-slate-950/95 px-4 py-3 shadow-[0_22px_50px_rgba(15,23,42,0.32)] backdrop-blur-sm"
                 style={{
                   left: Math.min(hovered.x + 18, globalThis.window?.innerWidth - 220 || hovered.x + 18),
                   top: Math.min(hovered.y + 18, globalThis.window?.innerHeight - 130 || hovered.y + 18),
@@ -1061,7 +1063,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
           {/* Ranked regions table */}
           {(topRegions.length > 0 || bottomRegions.length > 0) && (
-            <div className="border-t border-white/70 px-5 py-5">
+            <div className="border-t border-slate-200/70 px-5 py-5">
               <div className="grid gap-6 md:grid-cols-2">
                 {topRegions.length > 0 && (
                   <div>
@@ -1123,7 +1125,7 @@ function SummaryCard({
   icon: typeof Layers3;
 }) {
   return (
-    <div className="rounded-[24px] border border-white/70 bg-white/72 p-4 shadow-[0_18px_38px_rgba(15,23,42,0.08)]">
+    <div className="rounded-[24px] border border-slate-200/70 bg-white/72 p-4 shadow-[0_18px_38px_rgba(15,23,42,0.08)]">
       <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
         <Icon className="h-3.5 w-3.5" />
         {label}

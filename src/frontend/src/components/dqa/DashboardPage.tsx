@@ -1194,7 +1194,7 @@ export function DashboardPage({ auth }: Props) {
 
               {/* ── Summary table ─────────────────── */}
               <GlassPanel className="overflow-hidden">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/70 px-5 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4">
                   <div>
                     <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Summary</div>
                     <div className="mt-1 text-lg font-bold text-slate-950">{levelNoun}-wise DQA summary</div>
@@ -1221,7 +1221,7 @@ export function DashboardPage({ auth }: Props) {
                     </thead>
                     <tbody>
                       {sortedGeoRows.map((row) => (
-                        <tr key={row.key} className="border-t border-white/80 bg-white/50 transition hover:bg-white/80">
+                        <tr key={row.key} className="border-t border-slate-200/80 bg-white/50 transition hover:bg-white/80">
                           <td className="px-4 py-2.5 font-semibold text-slate-800">{row.label}</td>
                           <td className="px-4 py-2.5 text-right font-bold tabular-nums text-slate-900">{fmtCount(row.total)}</td>
                           <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.hmis)}</td>
@@ -1237,7 +1237,7 @@ export function DashboardPage({ auth }: Props) {
                     </tbody>
                   </table>
                 </div>
-                <div className="border-t border-white/70 px-5 py-3 text-[11px] font-medium text-slate-500">
+                <div className="border-t border-slate-200/70 px-5 py-3 text-[11px] font-medium text-slate-500">
                   * Coverage estimates: snapshots store dataset totals, not facility lists, so each geography counts its single widest review (largest block/facility/session-site count among the filtered reviews) — repeat reviews never double-count. HMIS and U-WIN facility universes are counted separately.
                 </div>
               </GlassPanel>

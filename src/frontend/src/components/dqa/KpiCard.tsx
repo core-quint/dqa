@@ -12,62 +12,62 @@ const GROUP_STYLE: Record<
   { badgeBg: string; badgeText: string; accent: string; panel: string }
 > = {
   availability: {
-    badgeBg: "#fef2f2",
-    badgeText: "#b91c1c",
-    accent: "#ef4444",
-    panel: "linear-gradient(180deg, rgba(254,242,242,0.96), rgba(255,255,255,0.92))",
+    badgeBg: "#e8f1fb",
+    badgeText: "#1c5cab",
+    accent: "#2a78d6",
+    panel: "linear-gradient(180deg, rgba(232,241,251,0.6), rgba(255,255,255,1))",
   },
   completeness: {
-    badgeBg: "#eef2ff",
-    badgeText: "#4338ca",
-    accent: "#6366f1",
-    panel: "linear-gradient(180deg, rgba(238,242,255,0.96), rgba(255,255,255,0.92))",
+    badgeBg: "#eceafa",
+    badgeText: "#3a2d85",
+    accent: "#4a3aa7",
+    panel: "linear-gradient(180deg, rgba(236,234,250,0.6), rgba(255,255,255,1))",
   },
   accuracy: {
-    badgeBg: "#fffbeb",
-    badgeText: "#92400e",
-    accent: "#f59e0b",
-    panel: "linear-gradient(180deg, rgba(255,251,235,0.96), rgba(255,255,255,0.92))",
+    badgeBg: "#fdeee7",
+    badgeText: "#b04516",
+    accent: "#eb6834",
+    panel: "linear-gradient(180deg, rgba(253,238,231,0.6), rgba(255,255,255,1))",
   },
   consistency: {
-    badgeBg: "#f0fdf4",
-    badgeText: "#166534",
-    accent: "#22c55e",
-    panel: "linear-gradient(180deg, rgba(240,253,244,0.96), rgba(255,255,255,0.92))",
+    badgeBg: "#e5f6ef",
+    badgeText: "#0d7a54",
+    accent: "#199e70",
+    panel: "linear-gradient(180deg, rgba(229,246,239,0.6), rgba(255,255,255,1))",
   },
 };
 
 function resolveStyle(group: string, id: string) {
   if (id.startsWith("drop_")) {
     return {
-      badgeBg: "#faf5ff",
-      badgeText: "#7e22ce",
-      accent: "#a855f7",
-      panel: "linear-gradient(180deg, rgba(250,245,255,0.96), rgba(255,255,255,0.92))",
+      badgeBg: "#fbecf2",
+      badgeText: "#a63762",
+      accent: "#d55181",
+      panel: "linear-gradient(180deg, rgba(251,236,242,0.6), rgba(255,255,255,1))",
     };
   }
   if (id === "t3" || id.startsWith("t3")) {
     return {
-      badgeBg: "#eff6ff",
-      badgeText: "#1d4ed8",
-      accent: "#3b82f6",
-      panel: "linear-gradient(180deg, rgba(239,246,255,0.96), rgba(255,255,255,0.92))",
+      badgeBg: "#fbf3e2",
+      badgeText: "#8a5c00",
+      accent: "#c98500",
+      panel: "linear-gradient(180deg, rgba(251,243,226,0.6), rgba(255,255,255,1))",
     };
   }
   if (id.startsWith("iadd_")) {
     return {
-      badgeBg: "#dcfce7",
-      badgeText: "#14532d",
-      accent: "#22c55e",
-      panel: "linear-gradient(180deg, rgba(220,252,231,0.96), rgba(255,255,255,0.92))",
+      badgeBg: "#e5f6ef",
+      badgeText: "#0d7a54",
+      accent: "#3fae85",
+      panel: "linear-gradient(180deg, rgba(229,246,239,0.6), rgba(255,255,255,1))",
     };
   }
   if (id.startsWith("co")) {
     return {
-      badgeBg: "#166534",
+      badgeBg: "#0e7a54",
       badgeText: "#ffffff",
-      accent: "#15803d",
-      panel: "linear-gradient(180deg, rgba(240,253,244,0.96), rgba(255,255,255,0.92))",
+      accent: "#199e70",
+      panel: "linear-gradient(180deg, rgba(229,246,239,0.6), rgba(255,255,255,1))",
     };
   }
   return (
@@ -75,7 +75,7 @@ function resolveStyle(group: string, id: string) {
       badgeBg: "#f1f5f9",
       badgeText: "#475569",
       accent: "#64748b",
-      panel: "linear-gradient(180deg, rgba(248,250,252,0.96), rgba(255,255,255,0.92))",
+      panel: "linear-gradient(180deg, rgba(248,250,252,0.6), rgba(255,255,255,1))",
     }
   );
 }
@@ -99,11 +99,11 @@ export function KpiCard({ card, top3, onClick }: Props) {
         "group flex w-full flex-col gap-4 overflow-hidden rounded-[28px] border p-4 text-left transition-all md:p-5",
         isEmpty
           ? "cursor-not-allowed border-slate-200/70 opacity-55"
-          : "cursor-pointer border-white/80 hover:-translate-y-1 hover:shadow-[0_24px_44px_rgba(15,23,42,0.14)]",
+          : "cursor-pointer border-slate-200/90 hover:-translate-y-1 hover:shadow-[0_16px_32px_rgba(15,23,42,0.10)]",
       ].join(" ")}
       style={{
         background: style.panel,
-        boxShadow: "0 16px 34px rgba(15,23,42,0.08)",
+        boxShadow: "0 1px 2px rgba(15,23,42,0.04), 0 10px 24px rgba(15,23,42,0.05)",
       }}
       onClick={isEmpty ? undefined : onClick}
       disabled={isEmpty}
@@ -126,7 +126,7 @@ export function KpiCard({ card, top3, onClick }: Props) {
         ) : null}
       </div>
 
-      <div className="rounded-[24px] border border-white/80 bg-white/76 p-4">
+      <div className="rounded-[24px] border border-slate-200/80 bg-white/76 p-4">
         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
           Flagged facilities
         </div>
@@ -142,7 +142,7 @@ export function KpiCard({ card, top3, onClick }: Props) {
 
       {showSplit ? (
         <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-[22px] border border-white/80 bg-white/70 px-4 py-3">
+          <div className="rounded-[22px] border border-slate-200/80 bg-white/70 px-4 py-3">
             <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
               Any month
             </div>
@@ -151,7 +151,7 @@ export function KpiCard({ card, top3, onClick }: Props) {
             </div>
             <div className="text-xs text-slate-500">at least one period</div>
           </div>
-          <div className="rounded-[22px] border border-white/80 bg-white/70 px-4 py-3">
+          <div className="rounded-[22px] border border-slate-200/80 bg-white/70 px-4 py-3">
             <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
               All months
             </div>
@@ -164,7 +164,7 @@ export function KpiCard({ card, top3, onClick }: Props) {
       ) : null}
 
       {top3 && top3.length > 0 ? (
-        <div className="rounded-[22px] border border-white/80 bg-white/70 px-4 py-3">
+        <div className="rounded-[22px] border border-slate-200/80 bg-white/70 px-4 py-3">
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
             Quick hints
           </div>

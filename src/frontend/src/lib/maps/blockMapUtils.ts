@@ -81,7 +81,12 @@ export function matchBlock(
 
 export const FLAG_THRESHOLDS = [0, 0.2, 0.4, 0.6, 0.8, 1];
 export const FLAG_LABELS = ['Very low', 'Low', 'Medium', 'High', 'Very high'];
-export const FLAG_COLORS = ['#fef9c3', '#fde68a', '#f97316', '#ef4444', '#b91c1c'];
+// ColorBrewer YlOrRd sequential ramp (colorblind-safe severity scale).
+export const FLAG_COLORS = ['#ffffb2', '#fecc5c', '#fd8d3c', '#f03b20', '#bd0026'];
+
+// "All clear" is a light blue, not green — pale green vs pale yellow is
+// indistinguishable for deutan viewers next to the YlOrRd ramp.
+const ZERO_FLAG_COLOR = '#cde2fb';
 
 export function flagColor(
   featureId: string,
@@ -92,17 +97,17 @@ export function flagColor(
   const inData = featureInData.get(featureId) ?? false;
   if (!inData) return '#e2e8f0';
   const count = featureToCount.get(featureId) ?? 0;
-  if (count === 0) return '#bbf7d0';
+  if (count === 0) return ZERO_FLAG_COLOR;
   const ratio = count / Math.max(maxCount, 1);
-  if (ratio < 0.2) return '#fef9c3';
-  if (ratio < 0.4) return '#fde68a';
-  if (ratio < 0.6) return '#f97316';
-  if (ratio < 0.8) return '#ef4444';
-  return '#b91c1c';
+  if (ratio < 0.2) return FLAG_COLORS[0];
+  if (ratio < 0.4) return FLAG_COLORS[1];
+  if (ratio < 0.6) return FLAG_COLORS[2];
+  if (ratio < 0.8) return FLAG_COLORS[3];
+  return FLAG_COLORS[4];
 }
 
 export function buildLegendItems(maxCount: number) {
-  const base = [{ color: '#bbf7d0', label: 'No flagged facilities' }];
+  const base = [{ color: ZERO_FLAG_COLOR, label: 'No flagged facilities' }];
   const tail = [{ color: '#e2e8f0', label: 'Not in this analysis' }];
   if (maxCount <= 0) return [...base, ...tail];
   const bands = FLAG_LABELS.map((label, i) => {

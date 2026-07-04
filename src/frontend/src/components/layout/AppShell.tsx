@@ -29,7 +29,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         />
 
         <div className="relative flex-1 min-w-0 md:min-h-0">
-          <main className="flex h-full min-h-0 flex-col overflow-hidden rounded-[32px] border border-white/70 bg-white/32 shadow-[0_24px_60px_rgba(15,23,42,0.10)] backdrop-blur-sm">
+          <main className="flex h-full min-h-0 flex-col overflow-hidden rounded-[32px] border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03),0_16px_40px_rgba(15,23,42,0.06)]">
             <TopBar
               sidebarCollapsed={sidebarCollapsed}
               onToggleSidebar={() => setSidebarCollapsed((value) => !value)}

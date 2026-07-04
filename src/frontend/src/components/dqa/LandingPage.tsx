@@ -96,7 +96,7 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-6 md:py-8">
         <GlassPanel className="overflow-hidden">
-          <div className="border-b border-white/70 px-6 py-5">
+          <div className="border-b border-slate-200/70 px-6 py-5">
             <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-slate-500">
               Upload dataset
             </div>
@@ -197,7 +197,7 @@ export function LandingPage({ onDataReady, auth, onBack }: Props) {
             </div>
           ) : null}
 
-          <div className="border-t border-white/70 px-6 py-4 text-xs font-medium uppercase tracking-[0.16em] text-slate-500">
+          <div className="border-t border-slate-200/70 px-6 py-4 text-xs font-medium uppercase tracking-[0.16em] text-slate-500">
             Files are processed in-memory for the current session only.
           </div>
         </GlassPanel>

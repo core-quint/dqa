@@ -36,14 +36,20 @@ export const CO_LABELS: Record<string, string> = {
   co5: '2 years — MR2, DPT 1st Booster',
 };
 
+// CVD-validated categorical palette (dataviz reference set), all >=3:1 on white.
 export const GROUP_COLORS: Record<string, string> = {
-  availability: '#0ea5e9',
-  completeness: '#6366f1',
-  accuracy: '#f97316',
-  consistency: '#22c55e',
+  availability: '#2a78d6',
+  completeness: '#4a3aa7',
+  accuracy: '#eb6834',
+  consistency: '#199e70',
 };
 
-export const INCONS_LIGHT = '#86efac';
+// Dropout / outlier cards get their own identities so they never impersonate
+// their parent accuracy group in side-by-side card grids.
+export const DROPOUT_COLOR = '#d55181';
+export const OUTLIER_COLOR = '#c98500';
+
+export const INCONS_LIGHT = '#3fae85';
 
 export const UWIN_DEFAULT_FILTERS = {
   blocks: [] as string[],

@@ -446,7 +446,7 @@ export function TrendPage({
             </GlassPanel>
 
             <GlassPanel className="overflow-hidden">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/70 px-5 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4">
                 <div>
                   <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                     Snapshot history
@@ -486,7 +486,7 @@ export function TrendPage({
                     {[...filtered].reverse().map((snapshot) => (
                       <tr
                         key={snapshot.id}
-                        className="border-t border-white/80 bg-white/50 transition hover:bg-white/80"
+                        className="border-t border-slate-200/80 bg-white/50 transition hover:bg-white/80"
                       >
                         <td className="px-4 py-3 font-medium text-slate-700">
                           {formatDate(snapshot.createdAt)}

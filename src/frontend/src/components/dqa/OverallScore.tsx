@@ -164,12 +164,7 @@ export function OverallScore({
     return () => document.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  const componentColors: Record<string, string> = {
-    availability: "#ef4444",
-    completeness: "#6366f1",
-    accuracy: "#f59e0b",
-    consistency: "#22c55e",
-  };
+  const componentColors: Record<string, string> = GROUP_COLORS;
 
   const barOptions = (maxValue: number): ChartOptions<"bar"> => {
     const dynamicMax = maxValue <= 0 ? 10 : Math.min(100, Math.ceil(maxValue * 1.3 + 1));
@@ -185,6 +180,7 @@ export function OverallScore({
         x: {
           ticks: {
             font: { size: 11 },
+            color: "#64748b",
             maxRotation: 0,
             minRotation: 0,
             callback(val) {
@@ -209,6 +205,7 @@ export function OverallScore({
             },
           },
           grid: { display: false },
+          border: { color: "#cbd5e1" },
         },
         y: {
           beginAtZero: true,
@@ -217,7 +214,10 @@ export function OverallScore({
           ticks: {
             callback: (value) => `${value}%`,
             font: { size: 11 },
+            color: "#64748b",
           },
+          grid: { color: "#eef1f6" },
+          border: { display: false },
         },
       },
     };
@@ -227,7 +227,7 @@ export function OverallScore({
     <PageBackdrop className="fixed inset-0 z-50 overflow-y-auto">
       <div className="mx-auto max-w-[1400px] px-4 py-4 md:px-6 md:py-6">
         <GlassPanel tone="warm" className="mb-5 overflow-hidden">
-          <div className="flex flex-wrap items-end justify-between gap-4 border-b border-white/70 p-5 md:p-6">
+          <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200/70 p-5 md:p-6">
             <div className="max-w-2xl">
               <BrandMark
                 size="md"
@@ -265,7 +265,7 @@ export function OverallScore({
             ].map((card) => (
               <div
                 key={card.label}
-                className="rounded-[24px] border border-white/70 bg-white/72 p-4 shadow-[0_18px_38px_rgba(15,23,42,0.08)]"
+                className="rounded-[24px] border border-slate-200/70 bg-white/72 p-4 shadow-[0_18px_38px_rgba(15,23,42,0.08)]"
               >
                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                   {card.label}
@@ -356,7 +356,7 @@ export function OverallScore({
 
             return (
               <GlassPanel key={group} className="overflow-hidden">
-                <div className="border-b border-white/70 px-5 py-4">
+                <div className="border-b border-slate-200/70 px-5 py-4">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                     {component.name}
                   </div>
@@ -375,20 +375,20 @@ export function OverallScore({
                         className="h-full rounded-full"
                         style={{
                           width: `${Math.min(100, component.maxAny)}%`,
-                          background: "#2563eb",
+                          background: "#2a78d6",
                         }}
                       />
                     </div>
                     <div className="mt-4 space-y-2 text-sm font-semibold text-slate-700">
                       <div className="flex items-center gap-2">
-                        <span className="h-2.5 w-2.5 rounded-full bg-sky-600" />
+                        <span className="h-2.5 w-2.5 rounded-full bg-[#2a78d6]" />
                         Any month
                         <span className="ml-auto text-slate-900">
                           {component.maxAny.toFixed(1)}%
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />
+                        <span className="h-2.5 w-2.5 rounded-full bg-[#199e70]" />
                         All months
                         <span className="ml-auto text-slate-900">
                           {component.maxAll.toFixed(1)}%
@@ -461,6 +461,7 @@ export function OverallScore({
                                 backgroundColor: componentColors[group],
                                 borderRadius: 6,
                                 borderWidth: 0,
+                                maxBarThickness: 44,
                               },
                             ],
                           }}

@@ -11,16 +11,16 @@ export interface ShellGroupItem {
 }
 
 export const HMIS_GROUPS: ShellGroupItem[] = [
-  { id: "availability", label: "Availability", color: "#ef4444" },
-  { id: "completeness", label: "Completeness", color: "#6366f1" },
-  { id: "accuracy", label: "Accuracy", color: "#f59e0b" },
-  { id: "consistency", label: "Consistency", color: "#22c55e" },
+  { id: "availability", label: "Availability", color: "#2a78d6" },
+  { id: "completeness", label: "Completeness", color: "#4a3aa7" },
+  { id: "accuracy", label: "Accuracy", color: "#eb6834" },
+  { id: "consistency", label: "Consistency", color: "#199e70" },
 ];
 
 export const UWIN_GROUPS: ShellGroupItem[] = [
-  { id: "availability", label: "Availability", color: "#2563eb" },
-  { id: "accuracy", label: "Accuracy", color: "#f59e0b" },
-  { id: "consistency", label: "Consistency", color: "#22c55e" },
+  { id: "availability", label: "Availability", color: "#2a78d6" },
+  { id: "accuracy", label: "Accuracy", color: "#eb6834" },
+  { id: "consistency", label: "Consistency", color: "#199e70" },
 ];
 
 export function getPortalForView(

@@ -240,7 +240,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
         onOpenChange={setCommandOpen}
         title="Command palette"
         description="Search routes, tabs, and actions."
-        className="overflow-hidden rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(246,242,233,0.96))] p-0 shadow-[0_36px_90px_rgba(15,23,42,0.18)] sm:max-w-2xl"
+        className="overflow-hidden rounded-[28px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(246,242,233,0.96))] p-0 shadow-[0_36px_90px_rgba(15,23,42,0.18)] sm:max-w-2xl"
       >
         <CommandInput
           placeholder="Search pages, tabs, actions…"

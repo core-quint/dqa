@@ -134,7 +134,7 @@ export function LoginPage({ onLogin }: Props) {
                 {VALUE_PROPS.map((item) => (
                   <div
                     key={item.title}
-                    className="rounded-[24px] border border-white/70 bg-white/70 p-4 shadow-[0_18px_38px_rgba(15,23,42,0.08)]"
+                    className="rounded-[24px] border border-slate-200/70 bg-white/70 p-4 shadow-[0_18px_38px_rgba(15,23,42,0.08)]"
                   >
                     <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white">
                       {item.icon}

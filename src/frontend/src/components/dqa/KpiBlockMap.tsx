@@ -284,7 +284,7 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
 
       {hovered && (
         <div
-          className="pointer-events-none fixed z-50 min-w-[160px] rounded-xl border border-white/80 bg-slate-950/95 px-3 py-2.5 shadow-xl backdrop-blur-sm"
+          className="pointer-events-none fixed z-50 min-w-[160px] rounded-xl border border-slate-200/80 bg-slate-950/95 px-3 py-2.5 shadow-xl backdrop-blur-sm"
           style={{
             left: Math.min(hovered.x + 14, (globalThis.window?.innerWidth ?? 9999) - 200),
             top: Math.min(hovered.y + 14, (globalThis.window?.innerHeight ?? 9999) - 100),

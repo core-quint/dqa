@@ -57,7 +57,7 @@ const TONE_MAP: Record<
   }
 > = {
   light: {
-    tile: "border-white/80 bg-white/80 shadow-[0_24px_50px_rgba(15,23,42,0.14)]",
+    tile: "border-slate-200/80 bg-white/80 shadow-[0_24px_50px_rgba(15,23,42,0.14)]",
     title: "text-slate-950",
     subtitle: "text-slate-600",
     caption: "text-slate-500",

@@ -33,6 +33,8 @@ import {
   BASE_VAX,
   ADD_VAX,
   GROUP_COLORS,
+  DROPOUT_COLOR,
+  OUTLIER_COLOR,
   INCONS_LIGHT,
   CO_SPECS,
   CO_LABELS,
@@ -72,7 +74,7 @@ function chartCountsByBlock(
   return {
     labels: sorted,
     values: sorted.map((k) => counts[k]),
-    color: '#0ea5e9',
+    color: '#2a78d6',
   };
 }
 
@@ -677,7 +679,7 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
     t7: mkChart(t7Stat.facilityKeys, GROUP_COLORS.availability),
     t2: mkChart(t2Stat.facilityKeys, GROUP_COLORS.completeness),
     t6: mkChart(t6Stat.facilityKeys, GROUP_COLORS.accuracy),
-    t3: mkChart(t3Stat.facilityKeys, GROUP_COLORS.accuracy),
+    t3: mkChart(t3Stat.facilityKeys, OUTLIER_COLOR),
     i1: mkChart(i1Stat.facilityKeys, INCONS_LIGHT),
     i2: mkChart(i2Stat.facilityKeys, INCONS_LIGHT),
     co1: mkChart(coStats.co1.facilityKeys, GROUP_COLORS.consistency),
@@ -688,7 +690,7 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
   };
 
   for (const [dk, ds] of Object.entries(dropStats)) {
-    charts[dk] = mkChart(ds.facilityKeys, GROUP_COLORS.accuracy);
+    charts[dk] = mkChart(ds.facilityKeys, DROPOUT_COLOR);
   }
   for (const [dlKey, meta] of Object.entries(inconsPairMap)) {
     const stat = inconsStats[meta.pid];

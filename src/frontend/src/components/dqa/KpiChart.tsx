@@ -71,6 +71,7 @@ export function KpiChart({ payload, canvasId }: Props) {
       x: {
         ticks: {
           font: { size: 11 },
+          color: '#64748b',
           maxRotation: 40,
           minRotation: 0,
           callback(val) {
@@ -79,10 +80,13 @@ export function KpiChart({ payload, canvasId }: Props) {
           },
         },
         grid: { display: false },
+        border: { color: '#cbd5e1' },
       },
       y: {
         beginAtZero: true,
-        ticks: { precision: 0, font: { size: 11 } },
+        ticks: { precision: 0, font: { size: 11 }, color: '#64748b' },
+        grid: { color: '#eef1f6' },
+        border: { display: false },
       },
     },
   };
@@ -96,6 +100,7 @@ export function KpiChart({ payload, canvasId }: Props) {
         backgroundColor: payload.color,
         borderRadius: 4,
         borderWidth: 0,
+        maxBarThickness: 44,
       },
     ],
   };

@@ -51,43 +51,43 @@ const GROUP_META: Record<
 > = {
   availability: {
     label: "Availability",
-    color: "#ef4444",
-    surface: "#fff1f2",
-    soft: "#fef2f2",
-    chip: "bg-red-100",
-    text: "text-red-700",
-    bar: "bg-red-500",
-    ring: "ring-red-200",
+    color: "#2a78d6",
+    surface: "#e8f1fb",
+    soft: "#e8f1fb",
+    chip: "bg-[#e8f1fb]",
+    text: "text-[#1c5cab]",
+    bar: "bg-[#2a78d6]",
+    ring: "ring-[#c9ddf5]",
   },
   completeness: {
     label: "Completeness",
-    color: "#6366f1",
-    surface: "#eef2ff",
-    soft: "#eef2ff",
-    chip: "bg-indigo-100",
-    text: "text-indigo-700",
-    bar: "bg-indigo-500",
-    ring: "ring-indigo-200",
+    color: "#4a3aa7",
+    surface: "#eceafa",
+    soft: "#eceafa",
+    chip: "bg-[#eceafa]",
+    text: "text-[#3a2d85]",
+    bar: "bg-[#4a3aa7]",
+    ring: "ring-[#d6d1f1]",
   },
   accuracy: {
     label: "Accuracy",
-    color: "#f59e0b",
-    surface: "#fffbeb",
-    soft: "#fff7ed",
-    chip: "bg-amber-100",
-    text: "text-amber-700",
-    bar: "bg-amber-500",
-    ring: "ring-amber-200",
+    color: "#eb6834",
+    surface: "#fdeee7",
+    soft: "#fdeee7",
+    chip: "bg-[#fdeee7]",
+    text: "text-[#b04516]",
+    bar: "bg-[#eb6834]",
+    ring: "ring-[#f8d3c2]",
   },
   consistency: {
     label: "Consistency",
-    color: "#22c55e",
-    surface: "#f0fdf4",
-    soft: "#f0fdf4",
-    chip: "bg-emerald-100",
-    text: "text-emerald-700",
-    bar: "bg-emerald-500",
-    ring: "ring-emerald-200",
+    color: "#199e70",
+    surface: "#e5f6ef",
+    soft: "#e5f6ef",
+    chip: "bg-[#e5f6ef]",
+    text: "text-[#0d7a54]",
+    bar: "bg-[#199e70]",
+    ring: "ring-[#c2e9d9]",
   },
 };
 
@@ -278,9 +278,9 @@ export function ResultsPage({
       >
         <SheetContent
           side="right"
-          className="flex w-[min(760px,94vw)] flex-col overflow-hidden border-l border-white/70 bg-[linear-gradient(180deg,rgba(246,242,233,0.98),rgba(255,255,255,0.96))] p-0 backdrop-blur-xl sm:max-w-[760px]"
+          className="flex w-[min(760px,94vw)] flex-col overflow-hidden border-l border-slate-200/70 bg-[linear-gradient(180deg,rgba(246,242,233,0.98),rgba(255,255,255,0.96))] p-0 backdrop-blur-xl sm:max-w-[760px]"
         >
-          <SheetHeader className="border-b border-white/70 px-5 py-4">
+          <SheetHeader className="border-b border-slate-200/70 px-5 py-4">
             <SheetTitle className="text-left text-base font-bold text-slate-950">
               {drawerCard?.name}
             </SheetTitle>
@@ -365,10 +365,10 @@ export function ResultsPage({
                 </span>
                 {([
                   { label: "Overall", score: lastSnapshot.overallScore, style: scoreBadgeStyle(lastSnapshot.overallScore) },
-                  { label: "Availability", score: lastSnapshot.availabilityScore, style: { bg: "#fff1f2", text: "#b91c1c" } },
-                  { label: "Completeness", score: lastSnapshot.completenessScore, style: { bg: "#eef2ff", text: "#4338ca" } },
-                  { label: "Accuracy", score: lastSnapshot.accuracyScore, style: { bg: "#fffbeb", text: "#92400e" } },
-                  { label: "Consistency", score: lastSnapshot.consistencyScore, style: { bg: "#f0fdf4", text: "#15803d" } },
+                  { label: "Availability", score: lastSnapshot.availabilityScore, style: { bg: "#e8f1fb", text: "#1c5cab" } },
+                  { label: "Completeness", score: lastSnapshot.completenessScore, style: { bg: "#eceafa", text: "#3a2d85" } },
+                  { label: "Accuracy", score: lastSnapshot.accuracyScore, style: { bg: "#fdeee7", text: "#b04516" } },
+                  { label: "Consistency", score: lastSnapshot.consistencyScore, style: { bg: "#e5f6ef", text: "#0d7a54" } },
                 ] as const).map(({ label, score, style }) => (
                   <span
                     key={label}
@@ -514,7 +514,7 @@ export function ResultsPage({
                               return (
                                 <div
                                   key={card.id}
-                                  className="rounded-[24px] border border-white/70 bg-white/78 p-4 shadow-[0_14px_30px_rgba(15,23,42,0.08)]"
+                                  className="rounded-[24px] border border-slate-200/70 bg-white/78 p-4 shadow-[0_14px_30px_rgba(15,23,42,0.08)]"
                                 >
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">

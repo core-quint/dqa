@@ -41,34 +41,34 @@ const GROUP_LABELS: Record<string, string> = {
 function resolveStyle(group: string, id: string) {
   if (id.startsWith("drop_")) {
     return {
-      badgeBg: "#faf5ff",
-      badgeText: "#7e22ce",
-      accent: "#a855f7",
-      panel: "linear-gradient(180deg, rgba(250,245,255,0.96), rgba(255,255,255,0.92))",
+      badgeBg: "#fbecf2",
+      badgeText: "#a63762",
+      accent: "#d55181",
+      panel: "linear-gradient(180deg, rgba(251,236,242,0.6), rgba(255,255,255,1))",
     };
   }
   if (id === "t3" || id.startsWith("t3")) {
     return {
-      badgeBg: "#eff6ff",
-      badgeText: "#1d4ed8",
-      accent: "#3b82f6",
-      panel: "linear-gradient(180deg, rgba(239,246,255,0.96), rgba(255,255,255,0.92))",
+      badgeBg: "#fbf3e2",
+      badgeText: "#8a5c00",
+      accent: "#c98500",
+      panel: "linear-gradient(180deg, rgba(251,243,226,0.6), rgba(255,255,255,1))",
     };
   }
   if (id.startsWith("iadd_")) {
     return {
-      badgeBg: "#dcfce7",
-      badgeText: "#14532d",
-      accent: "#22c55e",
-      panel: "linear-gradient(180deg, rgba(220,252,231,0.96), rgba(255,255,255,0.92))",
+      badgeBg: "#e5f6ef",
+      badgeText: "#0d7a54",
+      accent: "#3fae85",
+      panel: "linear-gradient(180deg, rgba(229,246,239,0.6), rgba(255,255,255,1))",
     };
   }
   if (id.startsWith("co")) {
     return {
-      badgeBg: "#166534",
+      badgeBg: "#0e7a54",
       badgeText: "#ffffff",
-      accent: "#15803d",
-      panel: "linear-gradient(180deg, rgba(240,253,244,0.96), rgba(255,255,255,0.92))",
+      accent: "#199e70",
+      panel: "linear-gradient(180deg, rgba(229,246,239,0.6), rgba(255,255,255,1))",
     };
   }
 
@@ -77,28 +77,28 @@ function resolveStyle(group: string, id: string) {
     { badgeBg: string; badgeText: string; accent: string; panel: string }
   > = {
     availability: {
-      badgeBg: "#fef2f2",
-      badgeText: "#b91c1c",
-      accent: "#ef4444",
-      panel: "linear-gradient(180deg, rgba(254,242,242,0.96), rgba(255,255,255,0.92))",
+      badgeBg: "#e8f1fb",
+      badgeText: "#1c5cab",
+      accent: "#2a78d6",
+      panel: "linear-gradient(180deg, rgba(232,241,251,0.6), rgba(255,255,255,1))",
     },
     completeness: {
-      badgeBg: "#eef2ff",
-      badgeText: "#4338ca",
-      accent: "#6366f1",
-      panel: "linear-gradient(180deg, rgba(238,242,255,0.96), rgba(255,255,255,0.92))",
+      badgeBg: "#eceafa",
+      badgeText: "#3a2d85",
+      accent: "#4a3aa7",
+      panel: "linear-gradient(180deg, rgba(236,234,250,0.6), rgba(255,255,255,1))",
     },
     accuracy: {
-      badgeBg: "#fffbeb",
-      badgeText: "#92400e",
-      accent: "#f59e0b",
-      panel: "linear-gradient(180deg, rgba(255,251,235,0.96), rgba(255,255,255,0.92))",
+      badgeBg: "#fdeee7",
+      badgeText: "#b04516",
+      accent: "#eb6834",
+      panel: "linear-gradient(180deg, rgba(253,238,231,0.6), rgba(255,255,255,1))",
     },
     consistency: {
-      badgeBg: "#f0fdf4",
-      badgeText: "#166534",
-      accent: "#22c55e",
-      panel: "linear-gradient(180deg, rgba(240,253,244,0.96), rgba(255,255,255,0.92))",
+      badgeBg: "#e5f6ef",
+      badgeText: "#0d7a54",
+      accent: "#199e70",
+      panel: "linear-gradient(180deg, rgba(229,246,239,0.6), rgba(255,255,255,1))",
     },
   };
 
@@ -107,7 +107,7 @@ function resolveStyle(group: string, id: string) {
       badgeBg: "#f1f5f9",
       badgeText: "#475569",
       accent: "#64748b",
-      panel: "linear-gradient(180deg, rgba(248,250,252,0.96), rgba(255,255,255,0.92))",
+      panel: "linear-gradient(180deg, rgba(248,250,252,0.6), rgba(255,255,255,1))",
     }
   );
 }
@@ -241,8 +241,8 @@ export function KpiPanel({ card, kpis, csv }: Props) {
     .concat(["map"] as View[]);
 
   return (
-    <div className="panel-enter flex h-full min-h-0 flex-col overflow-hidden rounded-[30px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(255,255,255,0.70))] shadow-[0_22px_48px_rgba(15,23,42,0.12)]">
-      <div className="border-b border-white/70 p-5" style={{ background: style.panel }}>
+    <div className="panel-enter flex h-full min-h-0 flex-col overflow-hidden rounded-[30px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(255,255,255,0.70))] shadow-[0_22px_48px_rgba(15,23,42,0.12)]">
+      <div className="border-b border-slate-200/70 p-5" style={{ background: style.panel }}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -252,7 +252,7 @@ export function KpiPanel({ card, kpis, csv }: Props) {
               >
                 {GROUP_LABELS[group] ?? group}
               </span>
-              <span className="rounded-full border border-white/80 bg-white/72 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+              <span className="rounded-full border border-slate-200/80 bg-white/72 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 KPI detail
               </span>
             </div>
@@ -266,7 +266,7 @@ export function KpiPanel({ card, kpis, csv }: Props) {
           </div>
 
           <div className="grid min-w-[220px] gap-2 sm:grid-cols-3">
-            <div className="rounded-[22px] border border-white/80 bg-white/72 px-4 py-3">
+            <div className="rounded-[22px] border border-slate-200/80 bg-white/72 px-4 py-3">
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 Flagged
               </div>
@@ -274,7 +274,7 @@ export function KpiPanel({ card, kpis, csv }: Props) {
                 {stat.total}
               </div>
             </div>
-            <div className="rounded-[22px] border border-white/80 bg-white/72 px-4 py-3">
+            <div className="rounded-[22px] border border-slate-200/80 bg-white/72 px-4 py-3">
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 Any month
               </div>
@@ -282,7 +282,7 @@ export function KpiPanel({ card, kpis, csv }: Props) {
                 {stat.any}
               </div>
             </div>
-            <div className="rounded-[22px] border border-white/80 bg-white/72 px-4 py-3">
+            <div className="rounded-[22px] border border-slate-200/80 bg-white/72 px-4 py-3">
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 All months
               </div>
@@ -346,7 +346,7 @@ export function KpiPanel({ card, kpis, csv }: Props) {
         </div>
 
         <div
-          className={`min-h-0 rounded-[26px] border border-white/80 bg-white/86 ${view === "map" ? "overflow-auto thin-scroll p-4" : "flex-1 overflow-hidden"}`}
+          className={`min-h-0 rounded-[26px] border border-slate-200/80 bg-white/86 ${view === "map" ? "overflow-auto thin-scroll p-4" : "flex-1 overflow-hidden"}`}
         >
           {view === "chart" ? (
             <div className="h-full p-3">

@@ -9,7 +9,7 @@
     --radius: 0.75rem;
 
     /* DQA Brand Colors */
-    --background: 0.975 0.003 240;
+    --background: 1 0 0;
     --foreground: 0.12 0.02 260;
     --card: 1 0 0;
     --card-foreground: 0.12 0.02 260;
@@ -52,13 +52,13 @@
     --sidebar-border: 0.25 0.025 260;
     --sidebar-ring: 0.62 0.14 230;
 
-    /* DQA group tokens — updated per spec */
-    --dqa-avail: 0.637 0.237 25;      /* red-500     #ef4444 */
-    --dqa-comp: 0.512 0.233 277;      /* indigo-500  #6366f1 */
-    --dqa-acc: 0.769 0.188 86;        /* amber-500   #f59e0b */
-    --dqa-cons: 0.723 0.19 149;       /* green-500   #22c55e */
-    --dqa-drop: 0.627 0.258 303;      /* purple-500  #a855f7 */
-    --dqa-out: 0.606 0.224 259;       /* blue-500    #3b82f6 */
+    /* DQA group tokens — CVD-validated palette, >=3:1 on white */
+    --dqa-avail: 0.575 0.163 256;     /* blue     #2a78d6 */
+    --dqa-comp: 0.433 0.167 284;      /* violet   #4a3aa7 */
+    --dqa-acc: 0.671 0.175 41;        /* orange   #eb6834 */
+    --dqa-cons: 0.621 0.128 163;      /* green    #199e70 */
+    --dqa-drop: 0.622 0.171 1;        /* magenta  #d55181 */
+    --dqa-out: 0.670 0.143 73;        /* golden   #c98500 */
 
     --dqa-n-cell-bg: 0.92 0.08 145;
     --dqa-pink-cell-bg: 0.88 0.08 355;
@@ -136,19 +136,19 @@
   }
 
   /* DQA group color utilities */
-  .dqa-avail  { color: #ef4444; }
-  .dqa-comp   { color: #6366f1; }
-  .dqa-acc    { color: #f59e0b; }
-  .dqa-cons   { color: #22c55e; }
-  .dqa-drop   { color: #a855f7; }
-  .dqa-out    { color: #3b82f6; }
+  .dqa-avail  { color: #2a78d6; }
+  .dqa-comp   { color: #4a3aa7; }
+  .dqa-acc    { color: #eb6834; }
+  .dqa-cons   { color: #199e70; }
+  .dqa-drop   { color: #d55181; }
+  .dqa-out    { color: #c98500; }
 
-  .dqa-avail-bg  { background-color: #fef2f2; color: #b91c1c; }
-  .dqa-comp-bg   { background-color: #eef2ff; color: #4338ca; }
-  .dqa-acc-bg    { background-color: #fffbeb; color: #b45309; }
-  .dqa-cons-bg   { background-color: #f0fdf4; color: #15803d; }
-  .dqa-drop-bg   { background-color: #faf5ff; color: #7e22ce; }
-  .dqa-out-bg    { background-color: #eff6ff; color: #1d4ed8; }
+  .dqa-avail-bg  { background-color: #e8f1fb; color: #1c5cab; }
+  .dqa-comp-bg   { background-color: #eceafa; color: #3a2d85; }
+  .dqa-acc-bg    { background-color: #fdeee7; color: #b04516; }
+  .dqa-cons-bg   { background-color: #e5f6ef; color: #0d7a54; }
+  .dqa-drop-bg   { background-color: #fbecf2; color: #a63762; }
+  .dqa-out-bg    { background-color: #fbf3e2; color: #8a5c00; }
 
   /* N cell highlight */
   .n-cell {
