@@ -12,6 +12,39 @@ const createUserSchema = z.object({
   geoBlock: z.string().optional(),
 });
 
+const bulkCreateSchema = z.object({
+  users: z
+    .array(createUserSchema)
+    .min(1, "No users provided")
+    .max(50, "Maximum 50 users per request"),
+});
+
+type NewUserData = z.infer<typeof createUserSchema>;
+
+async function createSingleUser(data: NewUserData) {
+  const { email, password, level, geoState, geoDistrict, geoBlock } = data;
+
+  const fbUser = await adminAuth.createUser({ email, password });
+
+  const claims = {
+    role: "USER",
+    level,
+    geoState: geoState ?? null,
+    geoDistrict: geoDistrict ?? null,
+    geoBlock: geoBlock ?? null,
+  };
+
+  await adminAuth.setCustomUserClaims(fbUser.uid, claims);
+
+  await db.collection("users").doc(fbUser.uid).set({
+    email,
+    ...claims,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  return { id: fbUser.uid, email, ...claims };
+}
+
 export const listUsers = async (_req: AuthRequest, res: Response) => {
   try {
     const snap = await db.collection("users").get();
@@ -35,40 +68,9 @@ export const createUser = async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const { email, password, level, geoState, geoDistrict, geoBlock } = parsed.data;
-
   try {
-    const fbUser = await adminAuth.createUser({ email, password });
-
-    const claims = {
-      role: "USER",
-      level,
-      geoState: geoState ?? null,
-      geoDistrict: geoDistrict ?? null,
-      geoBlock: geoBlock ?? null,
-    };
-
-    await adminAuth.setCustomUserClaims(fbUser.uid, claims);
-
-    await db.collection("users").doc(fbUser.uid).set({
-      email,
-      role: "USER",
-      level,
-      geoState: geoState ?? null,
-      geoDistrict: geoDistrict ?? null,
-      geoBlock: geoBlock ?? null,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-
-    res.status(201).json({
-      id: fbUser.uid,
-      email,
-      role: "USER",
-      level,
-      geoState: geoState ?? null,
-      geoDistrict: geoDistrict ?? null,
-      geoBlock: geoBlock ?? null,
-    });
+    const created = await createSingleUser(parsed.data);
+    res.status(201).json(created);
   } catch (error: unknown) {
     console.error("createUser error:", error);
     if ((error as { code?: string }).code === "auth/email-already-exists") {
@@ -78,6 +80,34 @@ export const createUser = async (req: AuthRequest, res: Response) => {
     const detail = error instanceof Error ? error.message : String(error);
     res.status(500).json({ message: `Failed to create user: ${detail}` });
   }
+};
+
+export const bulkCreateUsers = async (req: AuthRequest, res: Response) => {
+  const parsed = bulkCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: parsed.error.issues[0].message });
+    return;
+  }
+
+  const results: { email: string; status: "created" | "failed"; message?: string }[] = [];
+  for (const user of parsed.data.users) {
+    try {
+      await createSingleUser(user);
+      results.push({ email: user.email, status: "created" });
+    } catch (error: unknown) {
+      console.error(`bulkCreateUsers error for ${user.email}:`, error);
+      const message =
+        (error as { code?: string }).code === "auth/email-already-exists"
+          ? "User already exists"
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      results.push({ email: user.email, status: "failed", message });
+    }
+  }
+
+  const created = results.filter((r) => r.status === "created").length;
+  res.status(201).json({ results, created, failed: results.length - created });
 };
 
 export const deleteUser = async (req: AuthRequest, res: Response) => {
