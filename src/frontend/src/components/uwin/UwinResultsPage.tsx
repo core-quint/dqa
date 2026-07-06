@@ -11,6 +11,7 @@ import { FilterPanel } from "../dqa/FilterPanel";
 import { KpiCard as KpiCardCmp } from "../dqa/KpiCard";
 import { UwinKpiPanel } from "./UwinKpiPanel";
 import { OverallScore } from "../dqa/OverallScore";
+import { OverallSummaryTable } from "../dqa/OverallSummaryTable";
 import { apiFetch } from "../../api";
 import { computeOverallScore, scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
 import { buildSnapshotSaveMeta } from "../../lib/snapshots";
@@ -35,6 +36,7 @@ const TABS: Exclude<ActiveGroup, "">[] = [
   "availability",
   "accuracy",
   "consistency",
+  "overall",
 ];
 
 const GROUP_META: Record<
@@ -84,6 +86,15 @@ const GROUP_META: Record<
     text: "text-[#0d7a54]",
     bar: "bg-[#199e70]",
     ring: "ring-[#c2e9d9]",
+  },
+  overall: {
+    label: "Overall",
+    color: "#334155",
+    surface: "#f1f5f9",
+    chip: "bg-slate-100",
+    text: "text-slate-700",
+    bar: "bg-slate-600",
+    ring: "ring-slate-200",
   },
 };
 
@@ -430,7 +441,15 @@ export function UwinResultsPage({
             </CollapsibleFilterRail>
 
             <div className="min-w-0 flex-1 space-y-5">
-              {kpis && meta
+              {kpis && activeGroup === "overall" ? (
+                <OverallSummaryTable
+                  cards={kpis.cards}
+                  facilities={kpis.filteredFacilities}
+                  exportName={`Blockwise-Overall-Summary-UWIN-${csv.distName || "district"}`}
+                />
+              ) : null}
+
+              {kpis && meta && activeGroup !== "overall"
                 ? (() => {
                     const sortedCards = [...groupCards].sort(
                       (a, b) => b.stat.total - a.stat.total,
@@ -586,7 +605,7 @@ export function UwinResultsPage({
                   })()
                 : null}
 
-              {kpis && activeGroup ? (
+              {kpis && activeGroup && activeGroup !== "overall" ? (
                 <div>
                   <div className="mb-3 flex items-end justify-between gap-3">
                     <div>

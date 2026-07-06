@@ -16,6 +16,7 @@ import { KpiCard as KpiCardCmp } from "./KpiCard";
 import { KpiPanel } from "./KpiPanel";
 import { CollapsibleFilterRail } from "./CollapsibleFilterRail";
 import { OverallScore } from "./OverallScore";
+import { OverallSummaryTable } from "./OverallSummaryTable";
 import { apiFetch } from "../../api";
 import { computeOverallScore, scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
 import { buildSnapshotSaveMeta } from "../../lib/snapshots";
@@ -89,6 +90,16 @@ const GROUP_META: Record<
     bar: "bg-[#199e70]",
     ring: "ring-[#c2e9d9]",
   },
+  overall: {
+    label: "Overall",
+    color: "#334155",
+    surface: "#f1f5f9",
+    soft: "#f1f5f9",
+    chip: "bg-slate-100",
+    text: "text-slate-700",
+    bar: "bg-slate-600",
+    ring: "ring-slate-200",
+  },
 };
 
 const TABS: Exclude<ActiveGroup, "">[] = [
@@ -96,6 +107,7 @@ const TABS: Exclude<ActiveGroup, "">[] = [
   "completeness",
   "accuracy",
   "consistency",
+  "overall",
 ];
 
 const primaryActionClass =
@@ -425,7 +437,15 @@ export function ResultsPage({
             </CollapsibleFilterRail>
 
             <div className="min-w-0 flex-1 space-y-5">
-              {kpis && meta
+              {kpis && activeGroup === "overall" ? (
+                <OverallSummaryTable
+                  cards={kpis.cards}
+                  facilities={kpis.filteredFacilities}
+                  exportName={`Blockwise-Overall-Summary-HMIS-${csv.distName || "district"}`}
+                />
+              ) : null}
+
+              {kpis && meta && activeGroup !== "overall"
                 ? (() => {
                     const sortedCards = [...groupCards].sort(
                       (a, b) => b.stat.total - a.stat.total,
@@ -581,7 +601,7 @@ export function ResultsPage({
                   })()
                 : null}
 
-              {kpis && activeGroup ? (
+              {kpis && activeGroup && activeGroup !== "overall" ? (
                 <div>
                   <div className="mb-3 flex items-end justify-between gap-3">
                     <div>

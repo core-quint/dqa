@@ -251,4 +251,10 @@ export interface SummaryRow {
   pct: number;
 }
 
-export type ActiveGroup = 'availability' | 'completeness' | 'accuracy' | 'consistency' | '';
+export type ActiveGroup =
+  | 'availability'
+  | 'completeness'
+  | 'accuracy'
+  | 'consistency'
+  | 'overall'
+  | '';
