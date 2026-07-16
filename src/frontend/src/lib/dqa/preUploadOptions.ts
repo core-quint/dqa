@@ -91,6 +91,7 @@ export interface UploadDatasetContext {
   blockCount: number | null;
   facilityCount: number | null;
   sessionSiteCount: number | null;
+  districtCount?: number | null;
 }
 
 export function buildUploadDatasetContext(parsed: {
@@ -115,7 +116,7 @@ export function buildUploadDatasetContext(parsed: {
 
 /** Fire-and-forget audit log of who uploaded, why, and from where. Never blocks upload flow. */
 export function logUploadSession(
-  portal: 'HMIS' | 'UWIN',
+  portal: 'HMIS' | 'UWIN' | 'HMIS_STATE',
   info: PreUploadInfo,
   dataset?: UploadDatasetContext,
 ): Promise<unknown> {

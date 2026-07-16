@@ -4,7 +4,7 @@ import { db, FieldValue } from "../lib/firebase";
 import { AuthRequest } from "../middleware/auth.middleware";
 
 const uploadSessionSchema = z.object({
-  portal: z.enum(["HMIS", "UWIN"]),
+  portal: z.enum(["HMIS", "UWIN", "HMIS_STATE"]),
   designation: z.string().min(1),
   purpose: z.string().min(1),
   // The frontend always sends these two as strings (defaulting to '' when not
@@ -26,6 +26,7 @@ const uploadSessionSchema = z.object({
   blockCount: z.number().optional().nullable(),
   facilityCount: z.number().optional().nullable(),
   sessionSiteCount: z.number().optional().nullable(),
+  districtCount: z.number().optional().nullable(),
 });
 
 export const createUploadSession = async (req: AuthRequest, res: Response) => {
@@ -37,7 +38,7 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
 
   const {
     portal, designation, purpose, purposeSubOption, purposeOtherText, gpsLat, gpsLng, gpsAddress,
-    state, district, periodStart, periodEnd, blockCount, facilityCount, sessionSiteCount,
+    state, district, periodStart, periodEnd, blockCount, facilityCount, sessionSiteCount, districtCount,
   } = parsed.data;
 
   try {
@@ -58,6 +59,7 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
       blockCount: blockCount ?? null,
       facilityCount: facilityCount ?? null,
       sessionSiteCount: sessionSiteCount ?? null,
+      districtCount: districtCount ?? null,
       userId: req.user!.id,
       createdAt: FieldValue.serverTimestamp(),
     });

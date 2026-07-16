@@ -10,6 +10,8 @@ import { CoveragePage } from "./components/dqa/CoveragePage";
 import { AdminPage } from "./components/dqa/AdminPage";
 import { UwinLandingPage } from "./components/uwin/UwinLandingPage";
 import { UwinResultsPage } from "./components/uwin/UwinResultsPage";
+import { StateHmisLandingPage } from "./components/stateHmis/StateHmisLandingPage";
+import { StateHmisResultsPage } from "./components/stateHmis/StateHmisResultsPage";
 
 function AppContent() {
   const {
@@ -35,6 +37,12 @@ function AppContent() {
     setHmisReviewInfo,
     uwinReviewInfo,
     setUwinReviewInfo,
+    stateHmisData,
+    setStateHmisData,
+    stateHmisReviewInfo,
+    setStateHmisReviewInfo,
+    stateHmisSnapshotSaved,
+    setStateHmisSnapshotSaved,
     handleLogout,
   } = useAppContext();
 
@@ -56,6 +64,7 @@ function AppContent() {
           auth={auth}
           onSelectHmis={() => setAppState("landing")}
           onSelectUwin={() => setAppState("uwin-landing")}
+          onSelectStateHmis={() => setAppState("state-hmis-landing")}
         />
       </AppShell>
     );
@@ -209,12 +218,21 @@ function AppContent() {
     );
   }
 
+  if (appState === "state-hmis-landing" || (appState === "state-hmis-results" && !stateHmisData)) {
+    return <AppShell><StateHmisLandingPage auth={auth} onBack={() => setAppState("portal")} onDataReady={(data, reviewInfo) => { setStateHmisData(data); setStateHmisReviewInfo(reviewInfo); setStateHmisSnapshotSaved(false); setAppState("state-hmis-results"); }} /></AppShell>;
+  }
+
+  if (appState === "state-hmis-results" && stateHmisData) {
+    return <AppShell><StateHmisResultsPage data={stateHmisData} auth={auth} reviewInfo={stateHmisReviewInfo} snapshotSaved={stateHmisSnapshotSaved} onSnapshotSaved={() => setStateHmisSnapshotSaved(true)} onReset={() => { setStateHmisData(null); setStateHmisReviewInfo(null); setStateHmisSnapshotSaved(false); setAppState("portal"); }} /></AppShell>;
+  }
+
   return (
     <AppShell>
       <PortalSelector
         auth={auth}
         onSelectHmis={() => setAppState("landing")}
         onSelectUwin={() => setAppState("uwin-landing")}
+        onSelectStateHmis={() => setAppState("state-hmis-landing")}
       />
     </AppShell>
   );

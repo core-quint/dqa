@@ -1,8 +1,8 @@
 import type { FilterState } from "./dqa/types";
 import type { AuthState } from "../components/dqa/LoginPage";
 
-export type SnapshotPortal = "HMIS" | "UWIN";
-export type SnapshotDqaLevel = "DISTRICT" | "BLOCK";
+export type SnapshotPortal = "HMIS" | "UWIN" | "HMIS_STATE";
+export type SnapshotDqaLevel = "STATE" | "DISTRICT" | "BLOCK";
 
 export interface SnapshotKpiData {
   availabilityScore?: number;
@@ -16,6 +16,7 @@ export interface SnapshotKpiData {
   blockCount?: number | null;
   facilityCount?: number | null;
   sessionSiteCount?: number | null;
+  districtCount?: number | null;
   designation?: string | null;
   purpose?: string | null;
   purposeDetail?: string | null;
@@ -49,10 +50,14 @@ export interface SnapshotSaveMeta {
 }
 
 export function normalizePortal(portal?: string | null): SnapshotPortal {
-  return portal?.toUpperCase() === "UWIN" ? "UWIN" : "HMIS";
+  const normalized = portal?.toUpperCase();
+  if (normalized === "UWIN") return "UWIN";
+  if (normalized === "HMIS_STATE") return "HMIS_STATE";
+  return "HMIS";
 }
 
 export function getSnapshotDqaLevel(snapshot: Pick<SnapshotRecord, "kpiData">): SnapshotDqaLevel {
+  if (snapshot.kpiData?.dqaLevel === "STATE") return "STATE";
   return snapshot.kpiData?.dqaLevel === "BLOCK" && snapshot.kpiData?.block
     ? "BLOCK"
     : "DISTRICT";

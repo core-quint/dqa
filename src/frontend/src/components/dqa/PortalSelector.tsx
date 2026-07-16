@@ -6,6 +6,7 @@ interface Props {
   auth: AuthState;
   onSelectHmis: () => void;
   onSelectUwin: () => void;
+  onSelectStateHmis: () => void;
 }
 
 const PORTAL_CARDS = [
@@ -27,19 +28,28 @@ const PORTAL_CARDS = [
     bulletA: "Multi-file monthly merge",
     bulletB: "U-WIN-specific session and beneficiary logic",
   },
+  {
+    key: "HMIS-STATE",
+    title: "HMIS State Review",
+    description: "Merge up to twelve Monthly Data Item Wise reports and assess district-level M9 data quality.",
+    accent: "linear-gradient(135deg, rgba(5,150,105,0.95), rgba(14,116,144,0.92))",
+    bulletA: "Multi-file district-wise workflow",
+    bulletB: "State-level completeness, accuracy, and consistency",
+  },
 ];
 
-export function PortalSelector({ onSelectHmis, onSelectUwin }: Props) {
+export function PortalSelector({ auth, onSelectHmis, onSelectUwin, onSelectStateHmis }: Props) {
+  const cards = PORTAL_CARDS.filter((card) => card.key !== "HMIS-STATE" || auth.level === "STATE" || auth.role === "admin");
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
       <div className="grid gap-5 md:grid-cols-2">
-        {PORTAL_CARDS.map((card) => {
+        {cards.map((card) => {
           const isHmis = card.key === "HMIS";
           return (
             <button
               key={card.key}
               type="button"
-              onClick={isHmis ? onSelectHmis : onSelectUwin}
+              onClick={isHmis ? onSelectHmis : card.key === "U-WIN" ? onSelectUwin : onSelectStateHmis}
               className="group text-left"
             >
               <GlassPanel className="h-full overflow-hidden transition duration-300 hover:-translate-y-1.5 hover:shadow-[0_28px_60px_rgba(15,23,42,0.16)]">

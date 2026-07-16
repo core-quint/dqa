@@ -14,13 +14,14 @@ const snapshotSchema = z.object({
   accuracyScore: z.number(),
   consistencyScore: z.number(),
   portal: z.string().optional().default("HMIS"),
-  dqaLevel: z.enum(["DISTRICT", "BLOCK"]).optional(),
+  dqaLevel: z.enum(["STATE", "DISTRICT", "BLOCK"]).optional(),
   block: z.string().trim().min(1).optional().nullable(),
   periodStart: z.string().trim().min(1).optional().nullable(),
   periodEnd: z.string().trim().min(1).optional().nullable(),
   blockCount: z.number().optional().nullable(),
   facilityCount: z.number().optional().nullable(),
   sessionSiteCount: z.number().optional().nullable(),
+  districtCount: z.number().optional().nullable(),
   designation: z.string().trim().optional().nullable(),
   // Pre-upload "Purpose of DQA" — like designation, the frontend sends '' when
   // unset, so these must accept empty strings (normalized to null on write).
@@ -39,7 +40,7 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
     state, district, duration, overallScore,
     availabilityScore, completenessScore, accuracyScore, consistencyScore,
     portal, dqaLevel, block, periodStart, periodEnd,
-    blockCount, facilityCount, sessionSiteCount, designation,
+    blockCount, facilityCount, sessionSiteCount, districtCount, designation,
     purpose, purposeDetail,
   } = parsed.data;
 
@@ -62,6 +63,7 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
         blockCount: blockCount ?? null,
         facilityCount: facilityCount ?? null,
         sessionSiteCount: sessionSiteCount ?? null,
+        districtCount: districtCount ?? null,
         designation: designation ?? null,
         purpose: purpose?.trim() || null,
         purposeDetail: purposeDetail?.trim() || null,

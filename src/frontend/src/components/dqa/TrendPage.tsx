@@ -53,7 +53,7 @@ interface Props {
   onBack: () => void;
   backLabel?: string;
   authEmail?: string;
-  initialPortal?: "ALL" | "HMIS" | "UWIN";
+  initialPortal?: "ALL" | "HMIS" | "UWIN" | "HMIS_STATE";
 }
 
 function formatDate(date: string) {
@@ -80,13 +80,14 @@ function getComponentScore(snapshot: Snapshot | undefined, filter: string): numb
 function portalBadge(portal?: string) {
   const normalized = portal?.toUpperCase() ?? "HMIS";
   const isUwin = normalized === "UWIN";
+  const isState = normalized === "HMIS_STATE";
   return (
     <span
       className={`inline-flex rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${
-        isUwin ? "bg-amber-100 text-amber-700" : "bg-sky-100 text-sky-700"
+        isUwin ? "bg-amber-100 text-amber-700" : isState ? "bg-emerald-100 text-emerald-700" : "bg-sky-100 text-sky-700"
       }`}
     >
-      {isUwin ? "U-WIN" : "HMIS"}
+      {isUwin ? "U-WIN" : isState ? "HMIS State" : "HMIS"}
     </span>
   );
 }
@@ -102,7 +103,7 @@ export function TrendPage({
     "overall" | "availability" | "completeness" | "accuracy" | "consistency"
   >("overall");
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [portalFilter, setPortalFilter] = useState<"ALL" | "HMIS" | "UWIN">(
+  const [portalFilter, setPortalFilter] = useState<"ALL" | "HMIS" | "UWIN" | "HMIS_STATE">(
     initialPortal,
   );
   const [dateFrom, setDateFrom] = useState("");
@@ -181,7 +182,7 @@ export function TrendPage({
       snapshot.state,
       snapshot.district,
       snapshot.reportingMonth,
-      (snapshot.portal?.toUpperCase() ?? "HMIS") === "UWIN" ? "U-WIN" : "HMIS",
+      (snapshot.portal?.toUpperCase() ?? "HMIS") === "UWIN" ? "U-WIN" : (snapshot.portal?.toUpperCase() === "HMIS_STATE" ? "HMIS State" : "HMIS"),
       snapshot.overallScore.toFixed(1),
       snapshot.kpiData?.availabilityScore?.toFixed(1) ?? "-",
       snapshot.kpiData?.completenessScore !== undefined
@@ -331,6 +332,7 @@ export function TrendPage({
                 <option value="ALL">All portals</option>
                 <option value="HMIS">HMIS</option>
                 <option value="UWIN">U-WIN</option>
+                <option value="HMIS_STATE">HMIS State</option>
               </select>
             </label>
 

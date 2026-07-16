@@ -12,7 +12,7 @@ import { computeKpis } from "../../lib/dqa/computeKpis";
 import { monthsSpanInclusive } from "../../lib/dqa/parseUtils";
 import { DEFAULT_FILTERS } from "../../lib/dqa/constants";
 import { FilterPanel } from "./FilterPanel";
-import { KpiCard as KpiCardCmp } from "./KpiCard";
+import { IndicatorSummaryPanel } from "./IndicatorSummaryPanel";
 import { KpiPanel } from "./KpiPanel";
 import { CollapsibleFilterRail } from "./CollapsibleFilterRail";
 import { OverallScore } from "./OverallScore";
@@ -255,16 +255,6 @@ export function ResultsPage({
     ? Math.max(1, Object.keys(kpis.filteredFacilities).length)
     : 0;
 
-  function severityBadge(pct: number) {
-    if (pct >= 50) {
-      return { bg: "bg-red-100", text: "text-red-700", label: "High" };
-    }
-    if (pct >= 25) {
-      return { bg: "bg-amber-100", text: "text-amber-700", label: "Medium" };
-    }
-    return { bg: "bg-emerald-100", text: "text-emerald-700", label: "Low" };
-  }
-
   const contextStats = [
     { label: "Program", value: "HMIS" },
     { label: "State", value: csv.stateName || "-" },
@@ -445,192 +435,29 @@ export function ResultsPage({
                 />
               ) : null}
 
-              {kpis && meta && activeGroup !== "overall"
-                ? (() => {
-                    const sortedCards = [...groupCards].sort(
-                      (a, b) => b.stat.total - a.stat.total,
-                    );
-                    const maxAffected = sortedCards[0]?.stat.total ?? 0;
-                    const worstPct = Math.round(
-                      (maxAffected / totalFacilities) * 100,
-                    );
-                    const affectedUnique = new Set(
-                      sortedCards.flatMap((card) => [...card.stat.facilityKeys]),
-                    ).size;
-
-                    return (
-                      <div
-                        className={`overflow-hidden rounded-[30px] ring-1 ${meta.ring}`}
-                        style={{
-                          background: `linear-gradient(140deg, ${meta.surface}, rgba(255,255,255,0.82))`,
-                        }}
-                      >
-                        <div
-                          className="flex flex-wrap items-center gap-3 px-5 py-4 text-white"
-                          style={{ background: meta.color }}
-                        >
-                          <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/72">
-                            Indicator summary
-                          </span>
-                          <span className="text-sm font-bold">{meta.label}</span>
-                          <span className="ml-auto text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">
-                            {Object.keys(csv.allMonths).length} months /{" "}
-                            {totalFacilities} facilities
-                          </span>
-                        </div>
-
-                        <div className="grid gap-px bg-white/50 sm:grid-cols-3">
-                          {[
-                            {
-                              label: "Worst impact",
-                              value: `${worstPct}%`,
-                              sub: "facilities affected",
-                            },
-                            {
-                              label: "Unique affected",
-                              value: String(affectedUnique),
-                              sub: `of ${totalFacilities} facilities`,
-                            },
-                            {
-                              label: "Indicators",
-                              value: String(sortedCards.length),
-                              sub: "in this component",
-                            },
-                          ].map((item) => (
-                            <div
-                              key={item.label}
-                              className="bg-white/72 px-5 py-4 text-center"
-                            >
-                              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                {item.label}
-                              </div>
-                              <div className="mt-2 text-3xl font-extrabold text-slate-950">
-                                {item.value}
-                              </div>
-                              <div className="mt-1 text-xs font-medium text-slate-500">
-                                {item.sub}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="p-4 md:p-5">
-                          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
-                            Indicators ranked by impact
-                          </div>
-                          <div className="grid gap-3 md:grid-cols-2">
-                            {sortedCards.map((card, index) => {
-                              const pct = Math.round(
-                                (card.stat.total / totalFacilities) * 100,
-                              );
-                              const anyPct = Math.round(
-                                (card.stat.any / totalFacilities) * 100,
-                              );
-                              const allPct = Math.round(
-                                (card.stat.all / totalFacilities) * 100,
-                              );
-                              const severity = severityBadge(pct);
-
-                              return (
-                                <div
-                                  key={card.id}
-                                  className="rounded-[24px] border border-slate-200/70 bg-white/78 p-4 shadow-[0_14px_30px_rgba(15,23,42,0.08)]"
-                                >
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                                        Indicator {index + 1}
-                                      </div>
-                                      <div className="mt-1 text-sm font-bold text-slate-950">
-                                        {card.name}
-                                      </div>
-                                    </div>
-                                    <span
-                                      className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${severity.bg} ${severity.text}`}
-                                    >
-                                      {severity.label}
-                                    </span>
-                                  </div>
-
-                                  <div className="mt-4">
-                                    <div className="mb-2 flex items-center justify-between text-xs font-medium text-slate-500">
-                                      <span>Affected facilities</span>
-                                      <span className="font-bold text-slate-800">
-                                        {card.stat.total} / {pct}%
-                                      </span>
-                                    </div>
-                                    <div className="h-2 rounded-full bg-slate-100">
-                                      <div
-                                        className={`h-2 rounded-full ${meta.bar}`}
-                                        style={{ width: `${pct}%` }}
-                                      />
-                                    </div>
-                                  </div>
-
-                                  <div className="mt-4 grid grid-cols-2 gap-3">
-                                    <div className="rounded-2xl bg-slate-50/80 px-3 py-3 text-center">
-                                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                                        Any month
-                                      </div>
-                                      <div className="mt-1 text-lg font-bold text-slate-900">
-                                        {card.stat.any}
-                                      </div>
-                                      <div className="text-xs text-slate-500">
-                                        {anyPct}% of facilities
-                                      </div>
-                                    </div>
-                                    <div className="rounded-2xl bg-slate-50/80 px-3 py-3 text-center">
-                                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                                        All months
-                                      </div>
-                                      <div className="mt-1 text-lg font-bold text-slate-900">
-                                        {card.stat.all}
-                                      </div>
-                                      <div className="text-xs text-slate-500">
-                                        {allPct}% of facilities
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()
-                : null}
-
-              {kpis && activeGroup && activeGroup !== "overall" ? (
-                <div>
-                  <div className="mb-3 flex items-end justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
-                        Drill-down cards
-                      </div>
-                      <div className="mt-1 text-sm font-medium text-slate-600">
-                        Open any indicator to inspect charts, tables, and summaries.
-                      </div>
-                    </div>
-                    {meta ? (
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] ${meta.chip} ${meta.text}`}
-                      >
-                        {meta.label}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                    {groupCards.map((card) => (
-                      <KpiCardCmp
-                        key={card.id}
-                        card={card}
-                        onClick={() => setDrawerCard(card)}
-                      />
-                    ))}
-                  </div>
-                </div>
+              {kpis && meta && activeGroup !== "overall" ? (
+                <IndicatorSummaryPanel
+                  meta={meta}
+                  monthsCount={Object.keys(csv.allMonths).length}
+                  totalUnits={totalFacilities}
+                  unitLabel="facilities"
+                  affectedUnique={
+                    new Set(
+                      groupCards.flatMap((card) => [...card.stat.facilityKeys]),
+                    ).size
+                  }
+                  cards={groupCards.map((card) => ({
+                    id: card.id,
+                    name: card.name,
+                    total: card.stat.total,
+                    any: card.stat.any,
+                    all: card.stat.all,
+                  }))}
+                  onOpenCard={(id) => {
+                    const card = groupCards.find((c) => c.id === id);
+                    if (card && card.stat.total > 0) setDrawerCard(card);
+                  }}
+                />
               ) : null}
 
             </div>

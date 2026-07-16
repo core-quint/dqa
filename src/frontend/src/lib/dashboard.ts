@@ -58,6 +58,12 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
   const created = new Date(s.createdAt);
   if (Number.isNaN(created.getTime())) return null;
   const portal = normalizePortal(s.portal);
+  // State district-wise snapshots have a different entity denominator and are
+  // intentionally kept out of the two-series facility dashboard. They remain
+  // available in Trend History under their own portal filter.
+  if (portal === "HMIS_STATE") return null;
+  const dqaLevel = getSnapshotDqaLevel(s);
+  if (dqaLevel === "STATE") return null;
   const block = getSnapshotBlock(s);
   const monthKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}`;
   return {
@@ -69,7 +75,7 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
     districtKey: geoKey(s.district),
     block: block ? titleCaseGeo(block) : null,
     blockKey: block ? geoKey(block) : null,
-    dqaLevel: getSnapshotDqaLevel(s),
+    dqaLevel,
     createdAtMs: created.getTime(),
     monthKey,
     periodStart: s.kpiData?.periodStart ?? null,
