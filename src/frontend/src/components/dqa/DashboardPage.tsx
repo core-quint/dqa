@@ -32,6 +32,7 @@ import {
   type GeoLevel,
   type MonthBucket,
 } from "../../lib/dashboard";
+import { canUsePcts } from "../../lib/pcts/access";
 
 // Chart series colors. HMIS keeps the app's portal blue; the U-WIN mark is
 // shifted from the app's violet (#8b5cf6) to fuchsia because blue+violet is
@@ -652,6 +653,7 @@ const selectClass =
 type SortKey = "label" | "total" | "hmis" | "uwin" | "pcts" | "districts" | "blocks" | "facilities" | "sessionSites" | "avgOverall" | "lastAtMs";
 
 export function DashboardPage({ auth }: Props) {
+  const hasPctsAccess = canUsePcts(auth);
   const [snapshots, setSnapshots] = useState<SnapshotRecord[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -677,9 +679,23 @@ export function DashboardPage({ auth }: Props) {
     fetchSnapshots();
   }, [fetchSnapshots]);
 
+  useEffect(() => {
+    if (!hasPctsAccess) {
+      setFilters((current) =>
+        current.portal === "PCTS" ? { ...current, portal: "ALL" } : current,
+      );
+    }
+  }, [hasPctsAccess]);
+
   const records = useMemo(
-    () => (snapshots ?? []).map(toDashboardRecord).filter((r): r is DashboardRecord => r !== null),
-    [snapshots],
+    () =>
+      (snapshots ?? [])
+        .map(toDashboardRecord)
+        .filter(
+          (record): record is DashboardRecord =>
+            record !== null && (hasPctsAccess || record.portal !== "PCTS"),
+        ),
+    [hasPctsAccess, snapshots],
   );
 
   const filtered = useMemo(() => applyDashboardFilters(records, filters), [records, filters]);
@@ -959,7 +975,7 @@ export function DashboardPage({ auth }: Props) {
                 <option value="ALL">All portals</option>
                 <option value="HMIS">HMIS</option>
                 <option value="UWIN">U-WIN</option>
-                <option value="PCTS">PCTS</option>
+                {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
               </select>
             </label>
             <label className="block">

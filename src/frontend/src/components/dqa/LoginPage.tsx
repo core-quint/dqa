@@ -8,7 +8,7 @@ import {
   BarChart3,
   Layers3,
 } from "lucide-react";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../../lib/firebase";
 import { BrandMark } from "../branding/BrandMark";
 import { GlassPanel } from "../branding/GlassPanel";
@@ -23,6 +23,20 @@ export type AuthState = {
   geoDistrict: string | null;
   geoBlock: string | null;
 };
+
+const ACCESS_LEVELS: AuthState["level"][] = [
+  "NATIONAL",
+  "STATE",
+  "DISTRICT",
+  "BLOCK",
+];
+
+function parseAccessLevel(value: unknown): AuthState["level"] | null {
+  if (typeof value !== "string") return null;
+  return ACCESS_LEVELS.includes(value as AuthState["level"])
+    ? (value as AuthState["level"])
+    : null;
+}
 
 interface Props {
   onLogin: (auth: AuthState) => void;
@@ -83,12 +97,21 @@ export function LoginPage({ onLogin }: Props) {
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       const tokenResult = await credential.user.getIdTokenResult();
       const claims = tokenResult.claims;
+      const level = parseAccessLevel(claims.level);
+
+      if (!level) {
+        await signOut(auth).catch(() => {});
+        setError(
+          "Your account access profile is incomplete. Ask an administrator to assign a valid access level, then sign in again.",
+        );
+        return;
+      }
 
       onLogin({
         token: tokenResult.token,
         email: credential.user.email!,
         role: claims.role?.toString().toLowerCase() === "admin" ? "admin" : "user",
-        level: (claims.level as AuthState["level"]) ?? "NATIONAL",
+        level,
         geoState: (claims.geoState as string) ?? null,
         geoDistrict: (claims.geoDistrict as string) ?? null,
         geoBlock: (claims.geoBlock as string) ?? null,

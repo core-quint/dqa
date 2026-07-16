@@ -40,6 +40,10 @@ import {
   getPortalForView,
   getPortalGroups,
 } from "./shellConfig";
+import {
+  canUsePcts,
+  isAssignedRajasthanDistrict,
+} from "../../lib/pcts/access";
 
 function initialsFromEmail(email?: string) {
   if (!email) return "DU";
@@ -166,9 +170,8 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
     action();
   };
 
-  const isRajasthanDistrict =
-    auth?.level === "DISTRICT" && auth.geoState?.trim().toLowerCase() === "rajasthan";
-  const canUsePcts = auth?.role === "admin" || isRajasthanDistrict;
+  const isRajasthanDistrict = isAssignedRajasthanDistrict(auth);
+  const hasPctsAccess = canUsePcts(auth);
   const canUseHmis = auth?.role === "admin" || !isRajasthanDistrict;
 
   return (
@@ -281,7 +284,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
                 HMIS Upload
               </CommandItem>
             )}
-            {canUsePcts && (
+            {hasPctsAccess && (
               <CommandItem
                 keywords={["upload", "pcts", "rajasthan", "xlsx"]}
                 onSelect={() => runCommand(() => setAppState("pcts-landing"))}
@@ -329,7 +332,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
                 U-WIN Analysis
               </CommandItem>
             )}
-            {pctsData && (
+            {hasPctsAccess && pctsData && (
               <CommandItem
                 keywords={["analysis", "pcts", "rajasthan", "review"]}
                 onSelect={() => runCommand(() => setAppState("pcts-results"))}
@@ -347,7 +350,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
                 HMIS Trends
               </CommandItem>
             )}
-            {canUsePcts && (
+            {hasPctsAccess && (
               <CommandItem
                 keywords={["trend", "pcts", "rajasthan"]}
                 onSelect={() => runCommand(() => { setTrendSource("PCTS"); setAppState("trend"); })}

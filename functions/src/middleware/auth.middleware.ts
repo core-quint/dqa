@@ -15,6 +15,19 @@ export interface AuthRequest extends Request {
   user?: JwtUser;
 }
 
+const USER_LEVELS: ReadonlySet<NonNullable<JwtUser["level"]>> = new Set([
+  "NATIONAL",
+  "STATE",
+  "DISTRICT",
+  "BLOCK",
+]);
+
+const parseUserLevel = (value: unknown): JwtUser["level"] =>
+  typeof value === "string" &&
+  USER_LEVELS.has(value as NonNullable<JwtUser["level"]>)
+    ? (value as NonNullable<JwtUser["level"]>)
+    : undefined;
+
 export async function authenticate(
   req: AuthRequest,
   res: Response,
@@ -35,7 +48,7 @@ export async function authenticate(
       id: decoded.uid,
       email: decoded.email!,
       role: decoded.role === "ADMIN" ? "ADMIN" : "USER",
-      level: (decoded.level as JwtUser["level"]) ?? "NATIONAL",
+      level: parseUserLevel(decoded.level),
       geoState: (decoded.geoState as string) ?? null,
       geoDistrict: (decoded.geoDistrict as string) ?? null,
       geoBlock: (decoded.geoBlock as string) ?? null,

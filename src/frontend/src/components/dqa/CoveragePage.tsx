@@ -30,6 +30,7 @@ import {
   type MapFeature,
   type Topology,
 } from "../../lib/maps/topology";
+import { canUsePcts } from "../../lib/pcts/access";
 
 type PortalFilter = "ALL" | "HMIS" | "UWIN" | "PCTS";
 type CoverageIndicator =
@@ -105,6 +106,7 @@ const COLOR_SCALE = ["#d7191c", "#fdae61", "#ffffbf", "#abd9e9", "#2c7bb6"];
 const LEGEND_BANDS = ["0–20", "20–40", "40–60", "60–80", "80–100"];
 
 export function CoveragePage({ auth }: { auth: AuthState }) {
+  const hasPctsAccess = canUsePcts(auth);
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
   const [loadingSnapshots, setLoadingSnapshots] = useState(true);
   const [snapshotError, setSnapshotError] = useState("");
@@ -170,6 +172,10 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     void loadBaseData();
     return () => { mounted = false; };
   }, []);
+
+  useEffect(() => {
+    if (!hasPctsAccess && portal === "PCTS") setPortal("ALL");
+  }, [hasPctsAccess, portal]);
 
   useEffect(() => {
     if (level !== "BLOCK" || blocksTopology || blocksLoadingRef.current) return;
@@ -365,6 +371,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
   const filteredSnapshots = useMemo(() => {
     return snapshots.filter((s) => {
+      if (!hasPctsAccess && normalizePortal(s.portal) === "PCTS") return false;
       if (portal !== "ALL" && normalizePortal(s.portal) !== portal) return false;
       if (getSnapshotDqaLevel(s) !== level) return false;
       if (
@@ -382,7 +389,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       if (toMonth && period.start > toMonth) return false;
       return true;
     });
-  }, [fromMonth, level, portal, snapshots, toMonth, visibleDistrictValue, visibleStateValue]);
+  }, [fromMonth, hasPctsAccess, level, portal, snapshots, toMonth, visibleDistrictValue, visibleStateValue]);
 
   const featureLookup = useMemo(
     () => buildFeatureLookup(level, visibleFeatures),
@@ -682,7 +689,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 <option value="ALL">All portals</option>
                 <option value="HMIS">HMIS</option>
                 <option value="UWIN">U-WIN</option>
-                <option value="PCTS">PCTS</option>
+                {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
               </select>
             </Field>
 

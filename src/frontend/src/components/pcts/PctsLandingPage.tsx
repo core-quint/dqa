@@ -18,15 +18,13 @@ import {
 } from "../../lib/dqa/preUploadOptions";
 import { parsePctsFiles } from "../../lib/pcts/parser";
 import type { PctsParsed } from "../../lib/pcts/types";
+import { canUsePcts, getPctsExpectedDistrict } from "../../lib/pcts/access";
 
 interface Props {
   auth: AuthState;
   onBack: () => void;
   onDataReady: (data: PctsParsed, reviewInfo: PreUploadInfo) => void;
 }
-
-const normalizeGeo = (value: string | null | undefined) =>
-  (value ?? "").trim().toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
 export function PctsLandingPage({ auth, onBack, onDataReady }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -43,25 +41,14 @@ export function PctsLandingPage({ auth, onBack, onDataReady }: Props) {
     setParsed(null);
 
     try {
-      if (
-        auth.role !== "admin" &&
-        (auth.level !== "DISTRICT" || normalizeGeo(auth.geoState) !== "rajasthan")
-      ) {
-        throw new Error("PCTS review is available only to Rajasthan district users.");
-      }
-      const result = await parsePctsFiles(files, {
-        expectedDistrictName:
-          auth.role === "admin" ? undefined : (auth.geoDistrict ?? undefined),
-      });
-      if (
-        auth.role !== "admin" &&
-        auth.geoDistrict &&
-        normalizeGeo(result.districtName) !== normalizeGeo(auth.geoDistrict)
-      ) {
+      if (!canUsePcts(auth)) {
         throw new Error(
-          `Access denied: these files are for ${result.districtName}, but your assigned district is ${auth.geoDistrict}.`,
+          "Your access profile is not eligible for Rajasthan PCTS review. National users and Rajasthan state or assigned district users can use PCTS.",
         );
       }
+      const result = await parsePctsFiles(files, {
+        expectedDistrictName: getPctsExpectedDistrict(auth),
+      });
       setParsed(result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to read the PCTS files.");
@@ -90,15 +77,16 @@ export function PctsLandingPage({ auth, onBack, onDataReady }: Props) {
       <GlassPanel className="overflow-hidden">
         <div className="border-b border-slate-200/70 px-6 py-5">
           <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-slate-500">
-            Rajasthan district review
+            Rajasthan PCTS district-report review
           </div>
           <h1 className="mt-2 text-2xl font-extrabold text-slate-950">
             Upload PCTS immunization coverage files
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-            Upload one to twelve monthly facility-wise PCTS Excel reports. The district,
-            reporting month, hierarchy, indicator schema, and published totals are read
-            directly from every workbook.
+            National reviewers and Rajasthan state or assigned district reviewers can upload
+            one to twelve monthly facility-wise PCTS Excel reports. The district, reporting
+            month, hierarchy, indicator schema, and published totals are read directly from
+            every workbook.
           </p>
         </div>
 

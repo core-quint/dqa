@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db, FieldValue } from "../lib/firebase";
 import type { CollectionReference, Query } from "firebase-admin/firestore";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { authorizePctsWrite } from "../lib/pctsAuthorization";
+import { authorizePctsWrite, canAccessPcts } from "../lib/pctsAuthorization";
 
 const snapshotSchema = z.object({
   state: z.string().min(1),
@@ -148,7 +148,12 @@ export const getSnapshots = async (req: AuthRequest, res: Response) => {
 
     const snap = await query.get();
     const snapshots = snap.docs
-      .filter((d) => !geoFilter || geoFilter(d.data()))
+      .filter((d) => {
+        const data = d.data();
+        const isPcts = normalizeGeo(data.portal) === "pcts";
+        if (isPcts && !canAccessPcts(req.user)) return false;
+        return !geoFilter || geoFilter(data);
+      })
       .map((d) => {
         const data = d.data();
         return {
@@ -172,8 +177,13 @@ export const deleteSnapshot = async (req: AuthRequest, res: Response) => {
   try {
     const docRef = db.collection("snapshots").doc(id);
     const doc = await docRef.get();
+    const data = doc.data();
 
-    if (!doc.exists || doc.data()?.userId !== req.user!.id) {
+    if (
+      !doc.exists ||
+      data?.userId !== req.user!.id ||
+      (normalizeGeo(data?.portal) === "pcts" && !canAccessPcts(req.user))
+    ) {
       res.status(404).json({ message: "Snapshot not found" });
       return;
     }

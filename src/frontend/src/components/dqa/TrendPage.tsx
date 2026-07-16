@@ -13,6 +13,8 @@ import {
 import { ArrowLeft, Download, Trash2, TrendingUp } from "lucide-react";
 import { apiFetch } from "../../api";
 import { GlassPanel } from "../branding/GlassPanel";
+import type { AuthState } from "./LoginPage";
+import { canUsePcts } from "../../lib/pcts/access";
 
 ChartJS.register(
   CategoryScale,
@@ -50,9 +52,9 @@ interface Snapshot {
 }
 
 interface Props {
+  auth: AuthState;
   onBack: () => void;
   backLabel?: string;
-  authEmail?: string;
   initialPortal?: TrendPortal;
 }
 
@@ -110,23 +112,33 @@ function portalDisplayName(portal?: string) {
 }
 
 export function TrendPage({
+  auth,
   onBack,
   backLabel = "Back",
   initialPortal = "ALL",
 }: Props) {
+  const hasPctsAccess = canUsePcts(auth);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [componentFilter, setComponentFilter] = useState<
     "overall" | "availability" | "completeness" | "accuracy" | "consistency"
   >("overall");
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [portalFilter, setPortalFilter] = useState<TrendPortal>(initialPortal);
+  const [portalFilter, setPortalFilter] = useState<TrendPortal>(
+    initialPortal === "PCTS" && !hasPctsAccess ? "ALL" : initialPortal,
+  );
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
     fetchSnapshots();
   }, []);
+
+  useEffect(() => {
+    if (!hasPctsAccess && portalFilter === "PCTS") {
+      setPortalFilter("ALL");
+    }
+  }, [hasPctsAccess, portalFilter]);
 
   async function fetchSnapshots() {
     try {
@@ -160,8 +172,9 @@ export function TrendPage({
 
   const filtered = useMemo(() => {
     return snapshots.filter((snapshot) => {
+      const currentPortal = snapshot.portal?.toUpperCase() ?? "HMIS";
+      if (!hasPctsAccess && currentPortal === "PCTS") return false;
       if (portalFilter !== "ALL") {
-        const currentPortal = snapshot.portal?.toUpperCase() ?? "HMIS";
         if (currentPortal !== portalFilter) return false;
       }
       const timeValue = new Date(snapshot.createdAt).getTime();
@@ -173,7 +186,7 @@ export function TrendPage({
       }
       return true;
     });
-  }, [snapshots, portalFilter, dateFrom, dateTo]);
+  }, [snapshots, portalFilter, dateFrom, dateTo, hasPctsAccess]);
 
   function handleDownloadExcel() {
     const headers = [
@@ -347,7 +360,7 @@ export function TrendPage({
                 <option value="ALL">All portals</option>
                 <option value="HMIS">HMIS</option>
                 <option value="UWIN">U-WIN</option>
-                <option value="PCTS">PCTS</option>
+                {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
                 <option value="HMIS_STATE">HMIS State</option>
               </select>
             </label>

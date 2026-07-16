@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { AppProvider, useAppContext } from "./context/AppContext";
 import { AppShell } from "./components/layout/AppShell";
 import { LoginPage } from "./components/dqa/LoginPage";
@@ -14,6 +15,7 @@ import { StateHmisLandingPage } from "./components/stateHmis/StateHmisLandingPag
 import { StateHmisResultsPage } from "./components/stateHmis/StateHmisResultsPage";
 import { PctsLandingPage } from "./components/pcts/PctsLandingPage";
 import { PctsResultsPage } from "./components/pcts/PctsResultsPage";
+import { canUsePcts } from "./lib/pcts/access";
 
 function AppContent() {
   const {
@@ -54,6 +56,15 @@ function AppContent() {
     handleLogout,
   } = useAppContext();
 
+  const isPctsRoute = appState === "pcts-landing" || appState === "pcts-results";
+  const hasPctsAccess = canUsePcts(auth);
+
+  useEffect(() => {
+    if (auth && isPctsRoute && !hasPctsAccess) {
+      setAppState("portal");
+    }
+  }, [auth, hasPctsAccess, isPctsRoute, setAppState]);
+
   if (!auth) {
     return (
       <LoginPage
@@ -64,6 +75,8 @@ function AppContent() {
       />
     );
   }
+
+  if (isPctsRoute && !hasPctsAccess) return null;
 
   if (appState === "portal") {
     return (
@@ -148,6 +161,7 @@ function AppContent() {
     return (
       <AppShell>
         <TrendPage
+          auth={auth}
           onBack={() => {
             if (trendSource === "UWIN" && uwinData) {
               setAppState("uwin-results");
@@ -167,7 +181,6 @@ function AppContent() {
             setAppState("portal");
           }}
           backLabel={trendBackLabel}
-          authEmail={auth.email}
           initialPortal={trendSource}
         />
       </AppShell>

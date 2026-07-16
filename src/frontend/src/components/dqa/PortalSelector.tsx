@@ -1,6 +1,10 @@
 import { ArrowRight } from "lucide-react";
 import type { AuthState } from "./LoginPage";
 import { GlassPanel } from "../branding/GlassPanel";
+import {
+  canUsePcts,
+  isAssignedRajasthanDistrict,
+} from "../../lib/pcts/access";
 
 interface Props {
   auth: AuthState;
@@ -56,11 +60,11 @@ export function PortalSelector({
   onSelectPcts,
 }: Props) {
   const isAdmin = auth.role === "admin";
-  const isRajasthanDistrict =
-    auth.level === "DISTRICT" && auth.geoState?.trim().toLowerCase() === "rajasthan";
+  const isRajasthanDistrict = isAssignedRajasthanDistrict(auth);
+  const hasPctsAccess = canUsePcts(auth);
   const cards = PORTAL_CARDS.filter((card) => {
     if (card.key === "HMIS") return isAdmin || !isRajasthanDistrict;
-    if (card.key === "PCTS") return isAdmin || isRajasthanDistrict;
+    if (card.key === "PCTS") return hasPctsAccess;
     if (card.key === "HMIS-STATE") return auth.level === "STATE" || isAdmin;
     return true;
   });
