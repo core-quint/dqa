@@ -116,7 +116,7 @@ export function buildUploadDatasetContext(parsed: {
 
 /** Fire-and-forget audit log of who uploaded, why, and from where. Never blocks upload flow. */
 export function logUploadSession(
-  portal: 'HMIS' | 'UWIN' | 'HMIS_STATE',
+  portal: 'HMIS' | 'UWIN' | 'HMIS_STATE' | 'PCTS',
   info: PreUploadInfo,
   dataset?: UploadDatasetContext,
 ): Promise<unknown> {

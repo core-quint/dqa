@@ -7,6 +7,7 @@ interface Props {
   onSelectHmis: () => void;
   onSelectUwin: () => void;
   onSelectStateHmis: () => void;
+  onSelectPcts: () => void;
 }
 
 const PORTAL_CARDS = [
@@ -18,6 +19,15 @@ const PORTAL_CARDS = [
     accent: "linear-gradient(135deg, rgba(14,165,233,0.95), rgba(99,102,241,0.92))",
     bulletA: "Single-file monthly workflow",
     bulletB: "Availability, completeness, accuracy, and consistency",
+  },
+  {
+    key: "PCTS",
+    title: "PCTS Review",
+    description:
+      "Upload one to twelve Rajasthan PCTS district reports and assess block- and facility-level immunization data quality across months.",
+    accent: "linear-gradient(135deg, rgba(225,29,72,0.94), rgba(249,115,22,0.92))",
+    bulletA: "Multi-file monthly Excel workflow",
+    bulletB: "Rajasthan PCTS availability, completeness, accuracy, and consistency",
   },
   {
     key: "U-WIN",
@@ -38,8 +48,22 @@ const PORTAL_CARDS = [
   },
 ];
 
-export function PortalSelector({ auth, onSelectHmis, onSelectUwin, onSelectStateHmis }: Props) {
-  const cards = PORTAL_CARDS.filter((card) => card.key !== "HMIS-STATE" || auth.level === "STATE" || auth.role === "admin");
+export function PortalSelector({
+  auth,
+  onSelectHmis,
+  onSelectUwin,
+  onSelectStateHmis,
+  onSelectPcts,
+}: Props) {
+  const isAdmin = auth.role === "admin";
+  const isRajasthanDistrict =
+    auth.level === "DISTRICT" && auth.geoState?.trim().toLowerCase() === "rajasthan";
+  const cards = PORTAL_CARDS.filter((card) => {
+    if (card.key === "HMIS") return isAdmin || !isRajasthanDistrict;
+    if (card.key === "PCTS") return isAdmin || isRajasthanDistrict;
+    if (card.key === "HMIS-STATE") return auth.level === "STATE" || isAdmin;
+    return true;
+  });
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
       <div className="grid gap-5 md:grid-cols-2">
@@ -49,7 +73,15 @@ export function PortalSelector({ auth, onSelectHmis, onSelectUwin, onSelectState
             <button
               key={card.key}
               type="button"
-              onClick={isHmis ? onSelectHmis : card.key === "U-WIN" ? onSelectUwin : onSelectStateHmis}
+              onClick={
+                isHmis
+                  ? onSelectHmis
+                  : card.key === "PCTS"
+                    ? onSelectPcts
+                    : card.key === "U-WIN"
+                      ? onSelectUwin
+                      : onSelectStateHmis
+              }
               className="group text-left"
             >
               <GlassPanel className="h-full overflow-hidden transition duration-300 hover:-translate-y-1.5 hover:shadow-[0_28px_60px_rgba(15,23,42,0.16)]">

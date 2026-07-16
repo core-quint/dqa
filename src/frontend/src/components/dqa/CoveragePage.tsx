@@ -31,7 +31,7 @@ import {
   type Topology,
 } from "../../lib/maps/topology";
 
-type PortalFilter = "ALL" | "HMIS" | "UWIN";
+type PortalFilter = "ALL" | "HMIS" | "UWIN" | "PCTS";
 type CoverageIndicator =
   | "count"
   | "overall"
@@ -95,6 +95,7 @@ const portalLabelMap: Record<PortalFilter, string> = {
   ALL: "All portals",
   HMIS: "HMIS",
   UWIN: "U-WIN",
+  PCTS: "PCTS",
 };
 
 // 5-step discrete diverging scale (ColorBrewer RdYlBu, colorblind-safe):
@@ -681,6 +682,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 <option value="ALL">All portals</option>
                 <option value="HMIS">HMIS</option>
                 <option value="UWIN">U-WIN</option>
+                <option value="PCTS">PCTS</option>
               </select>
             </Field>
 
@@ -1286,7 +1288,7 @@ function getIndicatorValue(snapshot: SnapshotRecord, indicator: CoverageIndicato
     case "availability":
       return snapshot.kpiData?.availabilityScore ?? null;
     case "completeness":
-      return normalizePortal(snapshot.portal) === "HMIS"
+      return normalizePortal(snapshot.portal) !== "UWIN"
         ? (snapshot.kpiData?.completenessScore ?? null)
         : null;
     case "accuracy":

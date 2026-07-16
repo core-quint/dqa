@@ -39,6 +39,7 @@ import {
 // on white). Legends/labels always accompany color.
 const HMIS_COLOR = "#3b82f6";
 const UWIN_COLOR = "#a21caf";
+const PCTS_COLOR = "#e11d48";
 const INK = "#0f172a";
 const GRID = "#e2e8f0";
 const AXIS_TEXT = "#64748b";
@@ -125,12 +126,20 @@ function StatTile({
 }
 
 // ---------------------------------------------------------------
-// Legend (shared by every 2-series chart)
+// Legend shared by portal-series charts
 // ---------------------------------------------------------------
 
-function PortalLegend({ hmis, uwin }: { hmis: boolean; uwin: boolean }) {
+function PortalLegend({
+  hmis,
+  uwin,
+  pcts,
+}: {
+  hmis: boolean;
+  uwin: boolean;
+  pcts: boolean;
+}) {
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
       {hmis ? (
         <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
           <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: HMIS_COLOR }} />
@@ -141,6 +150,12 @@ function PortalLegend({ hmis, uwin }: { hmis: boolean; uwin: boolean }) {
         <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
           <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: UWIN_COLOR }} />
           U-WIN
+        </span>
+      ) : null}
+      {pcts ? (
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
+          <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: PCTS_COLOR }} />
+          PCTS
         </span>
       ) : null}
     </div>
@@ -194,22 +209,32 @@ function MonthlyActivityChart({ months }: { months: MonthBucket[] }) {
           const x0 = cx - barW / 2;
           const hmisH = (m.hmis / maxTotal) * plotH;
           const uwinH = (m.uwin / maxTotal) * plotH;
-          const gap = m.hmis > 0 && m.uwin > 0 ? 2 : 0;
+          const pctsH = (m.pcts / maxTotal) * plotH;
+          const hmisUwinGap = m.hmis > 0 && m.uwin > 0 ? 2 : 0;
+          const pctsGap = m.pcts > 0 && (m.hmis > 0 || m.uwin > 0) ? 2 : 0;
           const hmisY = PAD_T + plotH - hmisH;
-          const uwinY = hmisY - gap - uwinH;
+          const uwinY = hmisY - hmisUwinGap - uwinH;
+          const pctsY = uwinY - pctsGap - pctsH;
           const capR = 4;
           return (
             <g key={m.key}>
               {/* HMIS segment — square at baseline; rounded cap only when topmost */}
               {m.hmis > 0 ? (
-                m.uwin > 0 ? (
+                m.uwin > 0 || m.pcts > 0 ? (
                   <rect x={x0} y={hmisY} width={barW} height={hmisH} fill={HMIS_COLOR} />
                 ) : (
                   <path d={roundedTopBar(x0, hmisY, barW, hmisH, capR)} fill={HMIS_COLOR} />
                 )
               ) : null}
               {m.uwin > 0 ? (
-                <path d={roundedTopBar(x0, uwinY, barW, uwinH, capR)} fill={UWIN_COLOR} />
+                m.pcts > 0 ? (
+                  <rect x={x0} y={uwinY} width={barW} height={uwinH} fill={UWIN_COLOR} />
+                ) : (
+                  <path d={roundedTopBar(x0, uwinY, barW, uwinH, capR)} fill={UWIN_COLOR} />
+                )
+              ) : null}
+              {m.pcts > 0 ? (
+                <path d={roundedTopBar(x0, pctsY, barW, pctsH, capR)} fill={PCTS_COLOR} />
               ) : null}
               {i % labelEvery === 0 ? (
                 <text x={cx} y={H - 8} textAnchor="middle" fontSize={10} fill={AXIS_TEXT}>
@@ -224,7 +249,7 @@ function MonthlyActivityChart({ months }: { months: MonthBucket[] }) {
                 height={plotH}
                 fill="transparent"
                 tabIndex={0}
-                aria-label={`${m.label}: ${m.total} reviews (${m.hmis} HMIS, ${m.uwin} U-WIN)`}
+                aria-label={`${m.label}: ${m.total} reviews (${m.hmis} HMIS, ${m.uwin} U-WIN, ${m.pcts} PCTS)`}
                 onMouseEnter={() => setHover(i)}
                 onMouseLeave={() => setHover(null)}
                 onFocus={() => setHover(i)}
@@ -233,9 +258,9 @@ function MonthlyActivityChart({ months }: { months: MonthBucket[] }) {
               {hover === i ? (
                 <rect
                   x={x0 - 2}
-                  y={Math.min(hmisY, m.uwin > 0 ? uwinY : hmisY) - 2}
+                  y={(m.pcts > 0 ? pctsY : m.uwin > 0 ? uwinY : hmisY) - 2}
                   width={barW + 4}
-                  height={4 + hmisH + uwinH + gap}
+                  height={4 + hmisH + uwinH + pctsH + hmisUwinGap + pctsGap}
                   fill="none"
                   stroke={INK}
                   strokeOpacity={0.25}
@@ -270,6 +295,12 @@ function MonthlyActivityChart({ months }: { months: MonthBucket[] }) {
                 <span className="h-0.5 w-3 rounded" style={{ background: UWIN_COLOR }} /> U-WIN
               </span>
               <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.uwin)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-4 text-sm">
+              <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                <span className="h-0.5 w-3 rounded" style={{ background: PCTS_COLOR }} /> PCTS
+              </span>
+              <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.pcts)}</span>
             </div>
             <div className="flex items-center justify-between gap-4 border-t border-slate-100 pt-0.5 text-sm">
               <span className="text-xs text-slate-500">Total</span>
@@ -398,6 +429,7 @@ interface BarListRow {
   label: string;
   hmis: number;
   uwin: number;
+  pcts: number;
   total: number;
   avgOverall: number | null;
   details?: { label: string; count: number }[];
@@ -429,6 +461,17 @@ function StackedBarList({
       {visible.map((row) => {
         const hmisPct = (row.hmis / max) * 100;
         const uwinPct = (row.uwin / max) * 100;
+        const pctsPct = (row.pcts / max) * 100;
+        const hmisWidth = `max(${hmisPct.toFixed(2)}%, 3px)`;
+        const uwinWidth = `max(${uwinPct.toFixed(2)}%, 3px)`;
+        const precedingPctsSegments = [
+          row.hmis > 0 ? hmisWidth : null,
+          row.uwin > 0 ? uwinWidth : null,
+        ].filter((value): value is string => value !== null);
+        const pctsLeft =
+          precedingPctsSegments.length > 0
+            ? `calc(${precedingPctsSegments.join(" + ")} + ${precedingPctsSegments.length * 2}px)`
+            : 0;
         const isActive = activeKey === row.key;
         const clickable = !!onRowClick;
         return (
@@ -450,16 +493,26 @@ function StackedBarList({
                 {row.hmis > 0 ? (
                   <span
                     className="absolute inset-y-0 left-0 rounded-r-[4px]"
-                    style={{ width: `max(${hmisPct.toFixed(2)}%, 3px)`, background: HMIS_COLOR }}
+                    style={{ width: hmisWidth, background: HMIS_COLOR }}
                   />
                 ) : null}
                 {row.uwin > 0 ? (
                   <span
                     className="absolute inset-y-0 rounded-r-[4px]"
                     style={{
-                      left: row.hmis > 0 ? `calc(max(${hmisPct.toFixed(2)}%, 3px) + 2px)` : 0,
-                      width: `max(${uwinPct.toFixed(2)}%, 3px)`,
+                      left: row.hmis > 0 ? `calc(${hmisWidth} + 2px)` : 0,
+                      width: uwinWidth,
                       background: UWIN_COLOR,
+                    }}
+                  />
+                ) : null}
+                {row.pcts > 0 ? (
+                  <span
+                    className="absolute inset-y-0 rounded-r-[4px]"
+                    style={{
+                      left: pctsLeft,
+                      width: `max(${pctsPct.toFixed(2)}%, 3px)`,
+                      background: PCTS_COLOR,
                     }}
                   />
                 ) : null}
@@ -487,6 +540,12 @@ function StackedBarList({
                   <span className="h-0.5 w-3 rounded" style={{ background: UWIN_COLOR }} /> U-WIN
                 </span>
                 <span className="font-bold tabular-nums text-slate-900">{fmtCount(row.uwin)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                  <span className="h-0.5 w-3 rounded" style={{ background: PCTS_COLOR }} /> PCTS
+                </span>
+                <span className="font-bold tabular-nums text-slate-900">{fmtCount(row.pcts)}</span>
               </div>
               {row.details && row.details.length > 0 ? (
                 <div className="mt-1.5 border-t border-slate-100 pt-1.5">
@@ -526,24 +585,27 @@ function ComponentProfile({
   records,
   showHmis,
   showUwin,
+  showPcts,
 }: {
   records: DashboardRecord[];
   showHmis: boolean;
   showUwin: boolean;
+  showPcts: boolean;
 }) {
   const rows = useMemo(() => {
-    const hmisRecords = records.filter((r) => r.portal !== "UWIN");
+    const hmisRecords = records.filter((r) => r.portal === "HMIS");
     const uwinRecords = records.filter((r) => r.portal === "UWIN");
+    const pctsRecords = records.filter((r) => r.portal === "PCTS");
     const avg = (list: DashboardRecord[], pick: (r: DashboardRecord) => number | null): number | null => {
       const values = list.map(pick).filter((v): v is number => v !== null);
       if (values.length === 0) return null;
       return values.reduce((a, b) => a + b, 0) / values.length;
     };
     return [
-      { label: "Availability", hmis: avg(hmisRecords, (r) => r.availability), uwin: avg(uwinRecords, (r) => r.availability) },
-      { label: "Completeness", hmis: avg(hmisRecords, (r) => r.completeness), uwin: null, uwinNa: true },
-      { label: "Accuracy", hmis: avg(hmisRecords, (r) => r.accuracy), uwin: avg(uwinRecords, (r) => r.accuracy) },
-      { label: "Consistency", hmis: avg(hmisRecords, (r) => r.consistency), uwin: avg(uwinRecords, (r) => r.consistency) },
+      { label: "Availability", hmis: avg(hmisRecords, (r) => r.availability), uwin: avg(uwinRecords, (r) => r.availability), pcts: avg(pctsRecords, (r) => r.availability) },
+      { label: "Completeness", hmis: avg(hmisRecords, (r) => r.completeness), uwin: null, pcts: avg(pctsRecords, (r) => r.completeness), uwinNa: true },
+      { label: "Accuracy", hmis: avg(hmisRecords, (r) => r.accuracy), uwin: avg(uwinRecords, (r) => r.accuracy), pcts: avg(pctsRecords, (r) => r.accuracy) },
+      { label: "Consistency", hmis: avg(hmisRecords, (r) => r.consistency), uwin: avg(uwinRecords, (r) => r.consistency), pcts: avg(pctsRecords, (r) => r.consistency) },
     ];
   }, [records]);
 
@@ -572,6 +634,7 @@ function ComponentProfile({
           <div className="space-y-1">
             {showHmis ? bar(row.hmis, HMIS_COLOR, "HMIS") : null}
             {showUwin ? bar(row.uwin, UWIN_COLOR, "U-WIN", "uwinNa" in row && row.uwinNa) : null}
+            {showPcts ? bar(row.pcts, PCTS_COLOR, "PCTS") : null}
           </div>
         </div>
       ))}
@@ -586,7 +649,7 @@ function ComponentProfile({
 const selectClass =
   "w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200/70";
 
-type SortKey = "label" | "total" | "hmis" | "uwin" | "districts" | "blocks" | "facilities" | "sessionSites" | "avgOverall" | "lastAtMs";
+type SortKey = "label" | "total" | "hmis" | "uwin" | "pcts" | "districts" | "blocks" | "facilities" | "sessionSites" | "avgOverall" | "lastAtMs";
 
 export function DashboardPage({ auth }: Props) {
   const [snapshots, setSnapshots] = useState<SnapshotRecord[] | null>(null);
@@ -702,8 +765,9 @@ export function DashboardPage({ auth }: Props) {
     [filters],
   );
 
-  const showHmis = filters.portal !== "UWIN";
-  const showUwin = filters.portal !== "HMIS";
+  const showHmis = filters.portal === "ALL" || filters.portal === "HMIS";
+  const showUwin = filters.portal === "ALL" || filters.portal === "UWIN";
+  const showPcts = filters.portal === "ALL" || filters.portal === "PCTS";
 
   // ---- summary table ----
   const sortedGeoRows = useMemo(() => {
@@ -731,6 +795,7 @@ export function DashboardPage({ auth }: Props) {
       "Total DQA",
       "HMIS",
       "U-WIN",
+      "PCTS",
       ...(geoLevel === "state" ? ["Districts"] : []),
       ...(geoLevel !== "block" ? ["Blocks (est.)"] : []),
       "Facilities (est.)",
@@ -743,6 +808,7 @@ export function DashboardPage({ auth }: Props) {
       r.total,
       r.hmis,
       r.uwin,
+      r.pcts,
       ...(geoLevel === "state" ? [r.districts] : []),
       ...(geoLevel !== "block" ? [r.blocks] : []),
       r.facilities,
@@ -890,9 +956,10 @@ export function DashboardPage({ auth }: Props) {
                 onChange={(e) => setFilter({ portal: e.target.value as DashboardFilters["portal"] })}
                 className={selectClass}
               >
-                <option value="ALL">HMIS + U-WIN</option>
+                <option value="ALL">All portals</option>
                 <option value="HMIS">HMIS</option>
                 <option value="UWIN">U-WIN</option>
+                <option value="PCTS">PCTS</option>
               </select>
             </label>
             <label className="block">
@@ -1003,16 +1070,17 @@ export function DashboardPage({ auth }: Props) {
           <GlassPanel className="p-12 text-center">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">No DQA records yet</div>
             <div className="mt-2 text-2xl font-extrabold text-slate-950">Save a snapshot after any analysis to populate this dashboard.</div>
-            <div className="mt-2 text-sm text-slate-500">Every "Save snapshot" on an HMIS or U-WIN results page becomes one DQA record here.</div>
+            <div className="mt-2 text-sm text-slate-500">Every saved HMIS, U-WIN, or PCTS analysis snapshot becomes one DQA record here.</div>
           </GlassPanel>
         ) : (
           <div className={loading ? "pointer-events-none opacity-60 transition-opacity" : "transition-opacity"}>
             <div className="space-y-5">
               {/* ── KPI tiles ─────────────────────── */}
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
                 <StatTile label="Total DQA reviews" value={fmtCount(stats.total)} sub={`${fmtCount(stats.reviewers)} reviewer${stats.reviewers !== 1 ? "s" : ""} engaged`} icon={<ClipboardList className="h-4 w-4" />} />
                 <StatTile label="HMIS reviews" value={fmtCount(stats.hmis)} icon={<BarChart3 className="h-4 w-4" />} />
                 <StatTile label="U-WIN reviews" value={fmtCount(stats.uwin)} icon={<Syringe className="h-4 w-4" />} />
+                <StatTile label="PCTS reviews" value={fmtCount(stats.pcts)} icon={<BarChart3 className="h-4 w-4" />} />
                 <StatTile
                   label="Avg overall score"
                   value={stats.avgOverall === null ? "—" : stats.avgOverall.toFixed(1)}
@@ -1034,7 +1102,7 @@ export function DashboardPage({ auth }: Props) {
                       <div className="text-sm font-bold text-slate-900">Reviews per month</div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <PortalLegend hmis={showHmis} uwin={showUwin} />
+                      <PortalLegend hmis={showHmis} uwin={showUwin} pcts={showPcts} />
                       <button
                         type="button"
                         onClick={() => setActivityTable((v) => !v)}
@@ -1054,6 +1122,7 @@ export function DashboardPage({ auth }: Props) {
                             <th className="px-2 py-1.5">Month</th>
                             <th className="px-2 py-1.5 text-right">HMIS</th>
                             <th className="px-2 py-1.5 text-right">U-WIN</th>
+                            <th className="px-2 py-1.5 text-right">PCTS</th>
                             <th className="px-2 py-1.5 text-right">Total</th>
                             <th className="px-2 py-1.5 text-right">Avg score</th>
                           </tr>
@@ -1064,6 +1133,7 @@ export function DashboardPage({ auth }: Props) {
                               <td className="px-2 py-1.5 font-medium text-slate-700">{m.label}</td>
                               <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.hmis)}</td>
                               <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.uwin)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.pcts)}</td>
                               <td className="px-2 py-1.5 text-right font-bold tabular-nums text-slate-900">{fmtCount(m.total)}</td>
                               <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtScore(m.avgOverall)}</td>
                             </tr>
@@ -1122,7 +1192,7 @@ export function DashboardPage({ auth }: Props) {
                         ) : null}
                       </div>
                     </div>
-                    <PortalLegend hmis={showHmis} uwin={showUwin} />
+                    <PortalLegend hmis={showHmis} uwin={showUwin} pcts={showPcts} />
                   </div>
                   <StackedBarList
                     rows={geo.rows}
@@ -1148,12 +1218,17 @@ export function DashboardPage({ auth }: Props) {
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Quality profile</div>
                       <div className="text-sm font-bold text-slate-900">Average component scores</div>
                     </div>
-                    <PortalLegend hmis={showHmis} uwin={showUwin} />
+                    <PortalLegend hmis={showHmis} uwin={showUwin} pcts={showPcts} />
                   </div>
                   {filtered.length === 0 ? (
                     <div className="flex h-24 items-center justify-center text-sm font-medium text-slate-400">No reviews in this slice.</div>
                   ) : (
-                    <ComponentProfile records={filtered} showHmis={showHmis} showUwin={showUwin} />
+                    <ComponentProfile
+                      records={filtered}
+                      showHmis={showHmis}
+                      showUwin={showUwin}
+                      showPcts={showPcts}
+                    />
                   )}
                 </GlassPanel>
               </div>
@@ -1166,7 +1241,7 @@ export function DashboardPage({ auth }: Props) {
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Reviewed by</div>
                       <div className="text-sm font-bold text-slate-900">DQA reviews by designation</div>
                     </div>
-                    <PortalLegend hmis={showHmis} uwin={showUwin} />
+                    <PortalLegend hmis={showHmis} uwin={showUwin} pcts={showPcts} />
                   </div>
                   <StackedBarList
                     rows={designations.map(categoryToRow)}
@@ -1181,7 +1256,7 @@ export function DashboardPage({ auth }: Props) {
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Purpose of DQA</div>
                       <div className="text-sm font-bold text-slate-900">Why reviews were conducted</div>
                     </div>
-                    <PortalLegend hmis={showHmis} uwin={showUwin} />
+                    <PortalLegend hmis={showHmis} uwin={showUwin} pcts={showPcts} />
                   </div>
                   <StackedBarList
                     rows={purposes.map(categoryToRow)}
@@ -1211,6 +1286,7 @@ export function DashboardPage({ auth }: Props) {
                         <SortableTh label="Total DQA" k="total" sort={sort} onSort={toggleSort} right />
                         <SortableTh label="HMIS" k="hmis" sort={sort} onSort={toggleSort} right />
                         <SortableTh label="U-WIN" k="uwin" sort={sort} onSort={toggleSort} right />
+                        <SortableTh label="PCTS" k="pcts" sort={sort} onSort={toggleSort} right />
                         {geoLevel === "state" ? <SortableTh label="Districts" k="districts" sort={sort} onSort={toggleSort} right /> : null}
                         {geoLevel !== "block" ? <SortableTh label="Blocks*" k="blocks" sort={sort} onSort={toggleSort} right /> : null}
                         <SortableTh label="Facilities*" k="facilities" sort={sort} onSort={toggleSort} right />
@@ -1226,6 +1302,7 @@ export function DashboardPage({ auth }: Props) {
                           <td className="px-4 py-2.5 text-right font-bold tabular-nums text-slate-900">{fmtCount(row.total)}</td>
                           <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.hmis)}</td>
                           <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.uwin)}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.pcts)}</td>
                           {geoLevel === "state" ? <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.districts)}</td> : null}
                           {geoLevel !== "block" ? <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.blocks)}</td> : null}
                           <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.facilities)}</td>
@@ -1238,7 +1315,7 @@ export function DashboardPage({ auth }: Props) {
                   </table>
                 </div>
                 <div className="border-t border-slate-200/70 px-5 py-3 text-[11px] font-medium text-slate-500">
-                  * Coverage estimates: snapshots store dataset totals, not facility lists, so each geography counts its single widest review (largest block/facility/session-site count among the filtered reviews) — repeat reviews never double-count. HMIS and U-WIN facility universes are counted separately.
+                  * Coverage estimates: snapshots store dataset totals, not facility lists, so each geography counts its single widest review (largest block/facility/session-site count among the filtered reviews) — repeat reviews never double-count. HMIS, U-WIN, and PCTS facility universes are counted separately.
                 </div>
               </GlassPanel>
             </div>
@@ -1255,6 +1332,7 @@ function categoryToRow(c: CategoryRow): BarListRow {
     label: c.label,
     hmis: c.hmis,
     uwin: c.uwin,
+    pcts: c.pcts,
     total: c.total,
     avgOverall: c.avgOverall,
     details: c.details,

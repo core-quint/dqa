@@ -12,6 +12,8 @@ import { UwinLandingPage } from "./components/uwin/UwinLandingPage";
 import { UwinResultsPage } from "./components/uwin/UwinResultsPage";
 import { StateHmisLandingPage } from "./components/stateHmis/StateHmisLandingPage";
 import { StateHmisResultsPage } from "./components/stateHmis/StateHmisResultsPage";
+import { PctsLandingPage } from "./components/pcts/PctsLandingPage";
+import { PctsResultsPage } from "./components/pcts/PctsResultsPage";
 
 function AppContent() {
   const {
@@ -43,6 +45,12 @@ function AppContent() {
     setStateHmisReviewInfo,
     stateHmisSnapshotSaved,
     setStateHmisSnapshotSaved,
+    pctsData,
+    setPctsData,
+    pctsReviewInfo,
+    setPctsReviewInfo,
+    pctsSnapshotSaved,
+    setPctsSnapshotSaved,
     handleLogout,
   } = useAppContext();
 
@@ -65,6 +73,7 @@ function AppContent() {
           onSelectHmis={() => setAppState("landing")}
           onSelectUwin={() => setAppState("uwin-landing")}
           onSelectStateHmis={() => setAppState("state-hmis-landing")}
+          onSelectPcts={() => setAppState("pcts-landing")}
         />
       </AppShell>
     );
@@ -130,9 +139,11 @@ function AppContent() {
     const trendBackLabel =
       trendSource === "UWIN" && uwinData
         ? "Back to U-WIN analysis"
-        : trendSource === "HMIS" && csvData
-          ? "Back to HMIS analysis"
-          : "Back to portal selection";
+        : trendSource === "PCTS" && pctsData
+          ? "Back to PCTS analysis"
+          : trendSource === "HMIS" && csvData
+            ? "Back to HMIS analysis"
+            : "Back to portal selection";
 
     return (
       <AppShell>
@@ -145,6 +156,11 @@ function AppContent() {
 
             if (trendSource === "HMIS" && csvData) {
               setAppState("results");
+              return;
+            }
+
+            if (trendSource === "PCTS" && pctsData) {
+              setAppState("pcts-results");
               return;
             }
 
@@ -226,6 +242,51 @@ function AppContent() {
     return <AppShell><StateHmisResultsPage data={stateHmisData} auth={auth} reviewInfo={stateHmisReviewInfo} snapshotSaved={stateHmisSnapshotSaved} onSnapshotSaved={() => setStateHmisSnapshotSaved(true)} onReset={() => { setStateHmisData(null); setStateHmisReviewInfo(null); setStateHmisSnapshotSaved(false); setAppState("portal"); }} /></AppShell>;
   }
 
+  if (appState === "pcts-landing" || (appState === "pcts-results" && !pctsData)) {
+    return (
+      <AppShell>
+        <PctsLandingPage
+          auth={auth}
+          onBack={() => setAppState("portal")}
+          onDataReady={(data, reviewInfo) => {
+            setPctsData(data);
+            setPctsReviewInfo(reviewInfo);
+            setPctsSnapshotSaved(false);
+            setActiveGroup("availability");
+            setAppState("pcts-results");
+          }}
+        />
+      </AppShell>
+    );
+  }
+
+  if (appState === "pcts-results" && pctsData) {
+    return (
+      <AppShell>
+        <PctsResultsPage
+          data={pctsData}
+          auth={auth}
+          reviewInfo={pctsReviewInfo}
+          snapshotSaved={pctsSnapshotSaved}
+          onSnapshotSaved={() => setPctsSnapshotSaved(true)}
+          activeGroup={activeGroup || "availability"}
+          onGroupChange={setActiveGroup}
+          onReset={() => {
+            setPctsData(null);
+            setPctsReviewInfo(null);
+            setPctsSnapshotSaved(false);
+            setActiveGroup("availability");
+            setAppState("portal");
+          }}
+          onOpenTrends={() => {
+            setTrendSource("PCTS");
+            setAppState("trend");
+          }}
+        />
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <PortalSelector
@@ -233,6 +294,7 @@ function AppContent() {
         onSelectHmis={() => setAppState("landing")}
         onSelectUwin={() => setAppState("uwin-landing")}
         onSelectStateHmis={() => setAppState("state-hmis-landing")}
+        onSelectPcts={() => setAppState("pcts-landing")}
       />
     </AppShell>
   );

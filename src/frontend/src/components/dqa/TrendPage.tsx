@@ -53,8 +53,10 @@ interface Props {
   onBack: () => void;
   backLabel?: string;
   authEmail?: string;
-  initialPortal?: "ALL" | "HMIS" | "UWIN" | "HMIS_STATE";
+  initialPortal?: TrendPortal;
 }
+
+type TrendPortal = "ALL" | "HMIS" | "UWIN" | "HMIS_STATE" | "PCTS";
 
 function formatDate(date: string) {
   return new Date(date).toLocaleDateString("en-IN", {
@@ -81,15 +83,30 @@ function portalBadge(portal?: string) {
   const normalized = portal?.toUpperCase() ?? "HMIS";
   const isUwin = normalized === "UWIN";
   const isState = normalized === "HMIS_STATE";
+  const isPcts = normalized === "PCTS";
   return (
     <span
       className={`inline-flex rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${
-        isUwin ? "bg-amber-100 text-amber-700" : isState ? "bg-emerald-100 text-emerald-700" : "bg-sky-100 text-sky-700"
+        isUwin
+          ? "bg-amber-100 text-amber-700"
+          : isState
+            ? "bg-emerald-100 text-emerald-700"
+            : isPcts
+              ? "bg-rose-100 text-rose-700"
+              : "bg-sky-100 text-sky-700"
       }`}
     >
-      {isUwin ? "U-WIN" : isState ? "HMIS State" : "HMIS"}
+      {portalDisplayName(normalized)}
     </span>
   );
+}
+
+function portalDisplayName(portal?: string) {
+  const normalized = portal?.toUpperCase() ?? "HMIS";
+  if (normalized === "UWIN") return "U-WIN";
+  if (normalized === "HMIS_STATE") return "HMIS State";
+  if (normalized === "PCTS") return "PCTS";
+  return "HMIS";
 }
 
 export function TrendPage({
@@ -103,9 +120,7 @@ export function TrendPage({
     "overall" | "availability" | "completeness" | "accuracy" | "consistency"
   >("overall");
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [portalFilter, setPortalFilter] = useState<"ALL" | "HMIS" | "UWIN" | "HMIS_STATE">(
-    initialPortal,
-  );
+  const [portalFilter, setPortalFilter] = useState<TrendPortal>(initialPortal);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
@@ -182,7 +197,7 @@ export function TrendPage({
       snapshot.state,
       snapshot.district,
       snapshot.reportingMonth,
-      (snapshot.portal?.toUpperCase() ?? "HMIS") === "UWIN" ? "U-WIN" : (snapshot.portal?.toUpperCase() === "HMIS_STATE" ? "HMIS State" : "HMIS"),
+      portalDisplayName(snapshot.portal),
       snapshot.overallScore.toFixed(1),
       snapshot.kpiData?.availabilityScore?.toFixed(1) ?? "-",
       snapshot.kpiData?.completenessScore !== undefined
@@ -332,6 +347,7 @@ export function TrendPage({
                 <option value="ALL">All portals</option>
                 <option value="HMIS">HMIS</option>
                 <option value="UWIN">U-WIN</option>
+                <option value="PCTS">PCTS</option>
                 <option value="HMIS_STATE">HMIS State</option>
               </select>
             </label>

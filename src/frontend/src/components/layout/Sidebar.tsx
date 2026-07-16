@@ -16,6 +16,8 @@ import { useAppContext } from "../../context/AppContext";
 import { computeKpis } from "../../lib/dqa/computeKpis";
 import { computeUwinKpis } from "../../lib/uwin/computeKpis";
 import { DEFAULT_FILTERS, UWIN_DEFAULT_FILTERS } from "../../lib/dqa/constants";
+import { computePctsKpis } from "../../lib/pcts/computeKpis";
+import { DEFAULT_PCTS_FILTERS } from "../../lib/pcts/types";
 import { BrandMark } from "../branding/BrandMark";
 import {
   getPortalData,
@@ -41,9 +43,22 @@ function uniqueIssueCount(
   return facilities.size;
 }
 
+function uniquePctsIssueCount(
+  cards: { group: string; affectedFacilities: string[] }[],
+  group: string,
+) {
+  const facilities = new Set<string>();
+  for (const card of cards) {
+    if (card.group !== group) continue;
+    for (const key of card.affectedFacilities) facilities.add(key);
+  }
+  return facilities.size;
+}
+
 const PORTAL_ACCENT: Record<string, string> = {
   HMIS: "#3b82f6",
   "U-WIN": "#8b5cf6",
+  PCTS: "#e11d48",
 };
 
 export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
@@ -53,6 +68,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
     setAppState,
     csvData,
     uwinData,
+    pctsData,
     trendSource,
     setTrendSource,
     activeGroup,
@@ -64,11 +80,12 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
 
   const [analysisOpen, setAnalysisOpen] = useState(true);
 
-  const portal = getPortalForView(appState, trendSource, csvData, uwinData);
+  const portal = getPortalForView(appState, trendSource, csvData, uwinData, pctsData);
   const activeData =
-    appState === "coverage" ? null : getPortalData(portal, csvData, uwinData);
+    appState === "coverage" ? null : getPortalData(portal, csvData, uwinData, pctsData);
   const groupItems = getPortalGroups(portal);
-  const isAnalysis = appState === "results" || appState === "uwin-results";
+  const isAnalysis =
+    appState === "results" || appState === "uwin-results" || appState === "pcts-results";
   const currentGroup = portal === "U-WIN" ? uwinActiveGroup : activeGroup;
 
   useEffect(() => {
@@ -99,8 +116,17 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
         consistency: uniqueIssueCount(result.cards, "consistency"),
       };
     }
+    if (portal === "PCTS" && pctsData) {
+      const result = computePctsKpis(pctsData, DEFAULT_PCTS_FILTERS);
+      return {
+        availability: uniquePctsIssueCount(result.cards, "availability"),
+        completeness: uniquePctsIssueCount(result.cards, "completeness"),
+        accuracy: uniquePctsIssueCount(result.cards, "accuracy"),
+        consistency: uniquePctsIssueCount(result.cards, "consistency"),
+      };
+    }
     return {};
-  }, [csvData, portal, uwinData]);
+  }, [csvData, pctsData, portal, uwinData]);
 
   const currentScope =
     auth && auth.level !== "NATIONAL" && auth.role !== "admin"
@@ -114,11 +140,15 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
       key: "upload",
       label: "Upload Data",
       icon: Upload,
-      active: appState === "landing" || appState === "uwin-landing",
+      active:
+        appState === "landing" ||
+        appState === "uwin-landing" ||
+        appState === "pcts-landing",
       disabled: false,
       hasChildren: false,
       onClick: () => {
         if (portal === "U-WIN") { setAppState("uwin-landing"); return; }
+        if (portal === "PCTS") { setAppState("pcts-landing"); return; }
         if (portal === "HMIS") { setAppState("landing"); return; }
         setAppState("portal");
       },
@@ -133,7 +163,13 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
       onClick: () => {
         if (!activeData) return;
         setAnalysisOpen((v) => !v);
-        setAppState(portal === "U-WIN" ? "uwin-results" : "results");
+        setAppState(
+          portal === "U-WIN"
+            ? "uwin-results"
+            : portal === "PCTS"
+              ? "pcts-results"
+              : "results",
+        );
       },
     },
     {
@@ -153,7 +189,11 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
       disabled: false,
       hasChildren: false,
       onClick: () => {
-        if (portal) setTrendSource(portal === "U-WIN" ? "UWIN" : "HMIS");
+        if (portal) {
+          setTrendSource(
+            portal === "U-WIN" ? "UWIN" : portal === "PCTS" ? "PCTS" : "HMIS",
+          );
+        }
         else setTrendSource("ALL");
         setAppState("trend");
       },
@@ -171,6 +211,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
 
   function openGroup(group: (typeof groupItems)[number]) {
     if (portal === "U-WIN") { setUwinActiveGroup(group.id); setAppState("uwin-results"); return; }
+    if (portal === "PCTS") { setActiveGroup(group.id); setAppState("pcts-results"); return; }
     setActiveGroup(group.id);
     setAppState("results");
   }

@@ -33,7 +33,7 @@ const VALUE_PROPS = [
     icon: <BarChart3 className="h-4 w-4" />,
     title: "Single application",
     description:
-      "Use the same application for HMIS and U-WIN review.",
+      "Use the same application for HMIS, U-WIN, and Rajasthan PCTS review.",
   },
   {
     icon: <ShieldCheck className="h-4 w-4" />,

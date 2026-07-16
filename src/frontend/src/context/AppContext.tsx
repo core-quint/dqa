@@ -7,6 +7,7 @@ import type { AuthState } from "../components/dqa/LoginPage";
 import type { ActiveGroup } from "../lib/dqa/types";
 import type { PreUploadInfo } from "../lib/dqa/preUploadOptions";
 import type { StateHmisParsed } from "../lib/stateHmis/types";
+import type { PctsParsed } from "../lib/pcts/types";
 
 export type AppState =
   | "login"
@@ -20,9 +21,11 @@ export type AppState =
   | "uwin-landing"
   | "uwin-results"
   | "state-hmis-landing"
-  | "state-hmis-results";
+  | "state-hmis-results"
+  | "pcts-landing"
+  | "pcts-results";
 
-export type TrendSource = "ALL" | "HMIS" | "UWIN";
+export type TrendSource = "ALL" | "HMIS" | "UWIN" | "PCTS";
 
 interface AppContextValue {
   auth: AuthState | null;
@@ -35,6 +38,8 @@ interface AppContextValue {
   setUwinData: (d: UwinParsedCSV | null) => void;
   stateHmisData: StateHmisParsed | null;
   setStateHmisData: (d: StateHmisParsed | null) => void;
+  pctsData: PctsParsed | null;
+  setPctsData: (d: PctsParsed | null) => void;
   trendSource: TrendSource;
   setTrendSource: (s: TrendSource) => void;
   activeGroup: ActiveGroup | "";
@@ -53,6 +58,10 @@ interface AppContextValue {
   setStateHmisReviewInfo: (v: PreUploadInfo | null) => void;
   stateHmisSnapshotSaved: boolean;
   setStateHmisSnapshotSaved: (v: boolean) => void;
+  pctsReviewInfo: PreUploadInfo | null;
+  setPctsReviewInfo: (v: PreUploadInfo | null) => void;
+  pctsSnapshotSaved: boolean;
+  setPctsSnapshotSaved: (v: boolean) => void;
   handleLogout: () => void;
 }
 
@@ -64,6 +73,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [csvData, setCsvData] = useState<ParsedCSV | null>(null);
   const [uwinData, setUwinData] = useState<UwinParsedCSV | null>(null);
   const [stateHmisData, setStateHmisData] = useState<StateHmisParsed | null>(null);
+  const [pctsData, setPctsData] = useState<PctsParsed | null>(null);
   const [trendSource, setTrendSource] = useState<TrendSource>("ALL");
   const [activeGroup, setActiveGroup] = useState<ActiveGroup | "">(
     "availability",
@@ -77,6 +87,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [uwinReviewInfo, setUwinReviewInfo] = useState<PreUploadInfo | null>(null);
   const [stateHmisReviewInfo, setStateHmisReviewInfo] = useState<PreUploadInfo | null>(null);
   const [stateHmisSnapshotSaved, setStateHmisSnapshotSaved] = useState(false);
+  const [pctsReviewInfo, setPctsReviewInfo] = useState<PreUploadInfo | null>(null);
+  const [pctsSnapshotSaved, setPctsSnapshotSaved] = useState(false);
 
   const handleLogout = useCallback(() => {
     signOut(auth).catch(() => {});
@@ -85,6 +97,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setCsvData(null);
     setUwinData(null);
     setStateHmisData(null);
+    setPctsData(null);
     setTrendSource("ALL");
     setActiveGroup("availability");
     setUwinActiveGroup("availability");
@@ -94,6 +107,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUwinReviewInfo(null);
     setStateHmisReviewInfo(null);
     setStateHmisSnapshotSaved(false);
+    setPctsReviewInfo(null);
+    setPctsSnapshotSaved(false);
   }, []);
 
   return (
@@ -109,6 +124,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setUwinData,
         stateHmisData,
         setStateHmisData,
+        pctsData,
+        setPctsData,
         trendSource,
         setTrendSource,
         activeGroup,
@@ -127,6 +144,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setStateHmisReviewInfo,
         stateHmisSnapshotSaved,
         setStateHmisSnapshotSaved,
+        pctsReviewInfo,
+        setPctsReviewInfo,
+        pctsSnapshotSaved,
+        setPctsSnapshotSaved,
         handleLogout,
       }}
     >

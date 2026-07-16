@@ -2,9 +2,10 @@ import { Response } from "express";
 import { z } from "zod";
 import { db, FieldValue } from "../lib/firebase";
 import { AuthRequest } from "../middleware/auth.middleware";
+import { authorizePctsWrite } from "../lib/pctsAuthorization";
 
 const uploadSessionSchema = z.object({
-  portal: z.enum(["HMIS", "UWIN", "HMIS_STATE"]),
+  portal: z.enum(["HMIS", "UWIN", "HMIS_STATE", "PCTS"]),
   designation: z.string().min(1),
   purpose: z.string().min(1),
   // The frontend always sends these two as strings (defaulting to '' when not
@@ -40,6 +41,14 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
     portal, designation, purpose, purposeSubOption, purposeOtherText, gpsLat, gpsLng, gpsAddress,
     state, district, periodStart, periodEnd, blockCount, facilityCount, sessionSiteCount, districtCount,
   } = parsed.data;
+
+  if (portal === "PCTS") {
+    const authorization = authorizePctsWrite(req.user, { state, district });
+    if (!authorization.authorized) {
+      res.status(403).json({ message: authorization.message });
+      return;
+    }
+  }
 
   try {
     const docRef = db.collection("uploadSessions").doc();

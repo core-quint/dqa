@@ -3,7 +3,16 @@
     {
       "source": "functions",
       "codebase": "default",
-      "ignore": ["node_modules", ".git", "firebase-debug.log", "firebase-debug.*.log"],
+      "ignore": [
+        "node_modules",
+        ".git",
+        ".env",
+        ".env.*",
+        "serviceAccountKey.json",
+        "*-firebase-adminsdk-*.json",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ],
       "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"]
     }
   ],

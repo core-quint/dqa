@@ -27,7 +27,7 @@ export function titleCaseGeo(s: string | null | undefined): string {
 
 export interface DashboardRecord {
   id: string;
-  portal: "HMIS" | "UWIN";
+  portal: "HMIS" | "UWIN" | "PCTS";
   state: string;
   stateKey: string;
   district: string;
@@ -59,7 +59,7 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
   if (Number.isNaN(created.getTime())) return null;
   const portal = normalizePortal(s.portal);
   // State district-wise snapshots have a different entity denominator and are
-  // intentionally kept out of the two-series facility dashboard. They remain
+  // intentionally kept out of the facility-level portal dashboard. They remain
   // available in Trend History under their own portal filter.
   if (portal === "HMIS_STATE") return null;
   const dqaLevel = getSnapshotDqaLevel(s);
@@ -100,7 +100,7 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
 // ---------------------------------------------------------------
 
 export interface DashboardFilters {
-  portal: "ALL" | "HMIS" | "UWIN";
+  portal: "ALL" | "HMIS" | "UWIN" | "PCTS";
   dqaLevel: "ALL" | "DISTRICT" | "BLOCK";
   state: string; // stateKey, "" = all
   district: string; // districtKey, "" = all
@@ -151,18 +151,19 @@ export interface DashboardStats {
   total: number;
   hmis: number;
   uwin: number;
+  pcts: number;
   states: number;
   districts: number;
   /** Estimated blocks covered — see coverage-estimator note below. */
   blocks: number;
-  /** Estimated facilities covered (HMIS and U-WIN universes summed separately). */
+  /** Estimated facilities covered (each portal's facility universe summed separately). */
   facilities: number;
   /** Estimated session sites covered (U-WIN only). */
   sessionSites: number;
   reviewers: number;
   avgOverall: number | null;
   avgAvailability: number | null;
-  avgCompleteness: number | null; // HMIS records only
+  avgCompleteness: number | null; // HMIS and PCTS records only
   avgAccuracy: number | null;
   avgConsistency: number | null;
 }
@@ -191,9 +192,11 @@ export function computeDashboardStats(records: DashboardRecord[]): DashboardStat
 
   let hmis = 0;
   let uwin = 0;
+  let pcts = 0;
 
   for (const r of records) {
     if (r.portal === "UWIN") uwin += 1;
+    else if (r.portal === "PCTS") pcts += 1;
     else hmis += 1;
     if (r.stateKey) states.add(r.stateKey);
     const dKey = `${r.stateKey}|${r.districtKey}`;
@@ -241,6 +244,7 @@ export function computeDashboardStats(records: DashboardRecord[]): DashboardStat
     total: records.length,
     hmis,
     uwin,
+    pcts,
     states: states.size,
     districts: districts.size,
     blocks,
@@ -264,6 +268,7 @@ export interface MonthBucket {
   label: string; // "Jul 26"
   hmis: number;
   uwin: number;
+  pcts: number;
   total: number;
   avgOverall: number | null;
 }
@@ -285,10 +290,14 @@ function nextMonthKey(key: string): string {
 
 export function groupByMonth(records: DashboardRecord[]): MonthBucket[] {
   if (records.length === 0) return [];
-  const byMonth = new Map<string, { hmis: number; uwin: number; scores: number[] }>();
+  const byMonth = new Map<
+    string,
+    { hmis: number; uwin: number; pcts: number; scores: number[] }
+  >();
   for (const r of records) {
-    const bucket = byMonth.get(r.monthKey) ?? { hmis: 0, uwin: 0, scores: [] };
+    const bucket = byMonth.get(r.monthKey) ?? { hmis: 0, uwin: 0, pcts: 0, scores: [] };
     if (r.portal === "UWIN") bucket.uwin += 1;
+    else if (r.portal === "PCTS") bucket.pcts += 1;
     else bucket.hmis += 1;
     bucket.scores.push(r.overall);
     byMonth.set(r.monthKey, bucket);
@@ -306,7 +315,8 @@ export function groupByMonth(records: DashboardRecord[]): MonthBucket[] {
       label: monthLabel(cursor),
       hmis: bucket?.hmis ?? 0,
       uwin: bucket?.uwin ?? 0,
-      total: (bucket?.hmis ?? 0) + (bucket?.uwin ?? 0),
+      pcts: bucket?.pcts ?? 0,
+      total: (bucket?.hmis ?? 0) + (bucket?.uwin ?? 0) + (bucket?.pcts ?? 0),
       avgOverall: bucket ? mean(bucket.scores) : null,
     });
     cursor = nextMonthKey(cursor);
@@ -327,6 +337,7 @@ export interface GeoRow {
   total: number;
   hmis: number;
   uwin: number;
+  pcts: number;
   districts: number; // unique districts under this row
   blocks: number; // coverage estimate, same rule as stats
   facilities: number;
@@ -381,6 +392,7 @@ export function groupByGeo(records: DashboardRecord[], level: GeoLevel): GeoBrea
       total: stats.total,
       hmis: stats.hmis,
       uwin: stats.uwin,
+      pcts: stats.pcts,
       districts: stats.districts,
       blocks: stats.blocks,
       facilities: stats.facilities,
@@ -402,6 +414,7 @@ export interface CategoryRow {
   total: number;
   hmis: number;
   uwin: number;
+  pcts: number;
   avgOverall: number | null;
   /** For purpose rows: sub-option / free-text detail counts. */
   details: { label: string; count: number }[];
@@ -430,8 +443,9 @@ export function groupByCategory(
     return {
       label,
       total: list.length,
-      hmis: list.filter((r) => r.portal !== "UWIN").length,
+      hmis: list.filter((r) => r.portal === "HMIS").length,
       uwin: list.filter((r) => r.portal === "UWIN").length,
+      pcts: list.filter((r) => r.portal === "PCTS").length,
       avgOverall: mean(list.map((r) => r.overall)),
       details: [...detailCounts.entries()]
         .map(([l, count]) => ({ label: l, count }))

@@ -63,6 +63,8 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
     setCsvData,
     uwinData,
     setUwinData,
+    pctsData,
+    setPctsData,
     trendSource,
     setTrendSource,
     activeGroup,
@@ -75,9 +77,9 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
   const [commandOpen, setCommandOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
-  const portal = getPortalForView(appState, trendSource, csvData, uwinData);
+  const portal = getPortalForView(appState, trendSource, csvData, uwinData, pctsData);
   const activeData =
-    appState === "coverage" ? null : getPortalData(portal, csvData, uwinData);
+    appState === "coverage" ? null : getPortalData(portal, csvData, uwinData, pctsData);
   const currentGroup = portal === "U-WIN" ? uwinActiveGroup : activeGroup;
   const groupItems = getPortalGroups(portal);
 
@@ -114,9 +116,17 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
       return items;
     }
     if (portal) items.push({ label: portal, key: "portal-kind" });
-    if (appState === "landing" || appState === "uwin-landing") {
+    if (
+      appState === "landing" ||
+      appState === "uwin-landing" ||
+      appState === "pcts-landing"
+    ) {
       items.push({ label: "Upload", key: "upload" });
-    } else if (appState === "results" || appState === "uwin-results") {
+    } else if (
+      appState === "results" ||
+      appState === "uwin-results" ||
+      appState === "pcts-results"
+    ) {
       items.push({ label: "Analysis", key: "analysis" });
       if (currentGroup) {
         items.push({
@@ -155,6 +165,11 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
     setCommandOpen(false);
     action();
   };
+
+  const isRajasthanDistrict =
+    auth?.level === "DISTRICT" && auth.geoState?.trim().toLowerCase() === "rajasthan";
+  const canUsePcts = auth?.role === "admin" || isRajasthanDistrict;
+  const canUseHmis = auth?.role === "admin" || !isRajasthanDistrict;
 
   return (
     <>
@@ -257,13 +272,24 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               <Upload className="h-4 w-4" />
               Select Program
             </CommandItem>
-            <CommandItem
-              keywords={["upload", "hmis", "csv"]}
-              onSelect={() => runCommand(() => setAppState("landing"))}
-            >
-              <Upload className="h-4 w-4" />
-              HMIS Upload
-            </CommandItem>
+            {canUseHmis && (
+              <CommandItem
+                keywords={["upload", "hmis", "csv"]}
+                onSelect={() => runCommand(() => setAppState("landing"))}
+              >
+                <Upload className="h-4 w-4" />
+                HMIS Upload
+              </CommandItem>
+            )}
+            {canUsePcts && (
+              <CommandItem
+                keywords={["upload", "pcts", "rajasthan", "xlsx"]}
+                onSelect={() => runCommand(() => setAppState("pcts-landing"))}
+              >
+                <Upload className="h-4 w-4" />
+                PCTS Upload
+              </CommandItem>
+            )}
             <CommandItem
               keywords={["upload", "uwin", "u-win", "csv"]}
               onSelect={() => runCommand(() => setAppState("uwin-landing"))}
@@ -303,13 +329,33 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
                 U-WIN Analysis
               </CommandItem>
             )}
-            <CommandItem
-              keywords={["trend", "hmis"]}
-              onSelect={() => runCommand(() => { setTrendSource("HMIS"); setAppState("trend"); })}
-            >
-              <TrendingUp className="h-4 w-4" />
-              HMIS Trends
-            </CommandItem>
+            {pctsData && (
+              <CommandItem
+                keywords={["analysis", "pcts", "rajasthan", "review"]}
+                onSelect={() => runCommand(() => setAppState("pcts-results"))}
+              >
+                <BarChart2 className="h-4 w-4" />
+                PCTS Analysis
+              </CommandItem>
+            )}
+            {canUseHmis && (
+              <CommandItem
+                keywords={["trend", "hmis"]}
+                onSelect={() => runCommand(() => { setTrendSource("HMIS"); setAppState("trend"); })}
+              >
+                <TrendingUp className="h-4 w-4" />
+                HMIS Trends
+              </CommandItem>
+            )}
+            {canUsePcts && (
+              <CommandItem
+                keywords={["trend", "pcts", "rajasthan"]}
+                onSelect={() => runCommand(() => { setTrendSource("PCTS"); setAppState("trend"); })}
+              >
+                <TrendingUp className="h-4 w-4" />
+                PCTS Trends
+              </CommandItem>
+            )}
             <CommandItem
               keywords={["trend", "uwin", "u-win"]}
               onSelect={() => runCommand(() => { setTrendSource("UWIN"); setAppState("trend"); })}
@@ -339,6 +385,9 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
                       if (portal === "U-WIN") {
                         setUwinActiveGroup(group.id);
                         setAppState("uwin-results");
+                      } else if (portal === "PCTS") {
+                        setActiveGroup(group.id);
+                        setAppState("pcts-results");
                       } else {
                         setActiveGroup(group.id);
                         setAppState("results");
@@ -390,6 +439,15 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               >
                 <Trash2 className="h-4 w-4" />
                 Clear U-WIN dataset
+              </CommandItem>
+            )}
+            {pctsData && (
+              <CommandItem
+                keywords={["clear", "remove", "reset", "pcts"]}
+                onSelect={() => runCommand(() => { setPctsData(null); setAppState("portal"); })}
+              >
+                <Trash2 className="h-4 w-4" />
+                Clear PCTS dataset
               </CommandItem>
             )}
             <CommandItem

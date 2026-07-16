@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db, FieldValue } from "../lib/firebase";
 import type { CollectionReference, Query } from "firebase-admin/firestore";
 import { AuthRequest } from "../middleware/auth.middleware";
+import { authorizePctsWrite } from "../lib/pctsAuthorization";
 
 const snapshotSchema = z.object({
   state: z.string().min(1),
@@ -43,6 +44,18 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
     blockCount, facilityCount, sessionSiteCount, districtCount, designation,
     purpose, purposeDetail,
   } = parsed.data;
+
+  if (portal.trim().toUpperCase() === "PCTS") {
+    const authorization = authorizePctsWrite(
+      req.user,
+      { state, district, dqaLevel },
+      { requireDqaLevel: true },
+    );
+    if (!authorization.authorized) {
+      res.status(403).json({ message: authorization.message });
+      return;
+    }
+  }
 
   try {
     const docRef = db.collection("snapshots").doc();
