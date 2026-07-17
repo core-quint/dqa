@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+﻿import * as XLSX from "xlsx";
 import { monthKey, monthShortLabel, normalizeLooseText } from "../dqa/parseUtils";
 import type {
   StateHmisDistrictRecord,
@@ -45,8 +45,8 @@ const CODE_SHORTS: Record<string, string> = {
   "9.6.3.a": "AEFI Deaths",
 };
 
-function cellValue(sheet: XLSX.WorkSheet, col: number): unknown {
-  return sheet[XLSX.utils.encode_cell({ r: 0, c: col })]?.v;
+function cellValue(sheet: XLSX.WorkSheet, col: number, row = 0): unknown {
+  return sheet[XLSX.utils.encode_cell({ r: row, c: col })]?.v;
 }
 
 export function normalizeStateHmisCode(value: unknown): string {
@@ -97,7 +97,7 @@ function parseCount(raw: unknown): { value: number | null; invalid: boolean } {
   return { value, invalid: !Number.isFinite(value) || value < 0 || !Number.isInteger(value) };
 }
 
-export async function parseStateHmisFile(file: File): Promise<ParsedStateFile> {
+export async function parseStateHmisFile(file: File): Promise<ParsedStateFile[]> {
   if (!/\.xlsx?$/i.test(file.name)) {
     throw new Error(`${file.name}: only .xls and .xlsx state HMIS reports are supported.`);
   }
@@ -106,18 +106,41 @@ export async function parseStateHmisFile(file: File): Promise<ParsedStateFile> {
     raw: true,
     cellText: false,
   });
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) throw new Error(`${file.name}: workbook has no readable worksheet.`);
-  const sheet = workbook.Sheets[sheetName];
-  const range = XLSX.utils.decode_range(sheet["!ref"] ?? "A1:A1");
-  if (range.e.r !== 0) {
-    throw new Error(`${file.name}: this is not the expected horizontal Across Districts template.`);
-  }
+  if (!workbook.SheetNames.length) throw new Error(`${file.name}: workbook has no readable worksheet.`);
 
-  const title = String(cellValue(sheet, 0) ?? "").replace(/\s+/g, " ").trim();
-  if (!/Monthly Data Item Wise Report Across Districts/i.test(title)) {
+  // A workbook may hold one report per sheet (one month each). Parse every sheet
+  // that carries the Across Districts title; each may be the horizontal (single-row)
+  // export or the vertical grid template.
+  const entries: { sheetName: string; parsed: ParsedStateFile }[] = [];
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) continue;
+    const title = String(cellValue(sheet, 0) ?? "").replace(/\s+/g, " ").trim();
+    if (!/Monthly Data Item Wise Report Across Districts/i.test(title)) continue;
+    const range = XLSX.utils.decode_range(sheet["!ref"] ?? "A1:A1");
+    const parsed =
+      range.e.r === 0
+        ? parseHorizontalSheet(sheet, range, title, file.name)
+        : parseVerticalSheet(sheet, range, title, file.name);
+    entries.push({ sheetName, parsed });
+  }
+  if (!entries.length) {
     throw new Error(`${file.name}: report type is not Monthly Data Item Wise Report Across Districts.`);
   }
+  if (entries.length > 1) {
+    for (const entry of entries) {
+      entry.parsed.summary.fileName = `${file.name} [${entry.sheetName}]`;
+    }
+  }
+  return entries.map((entry) => entry.parsed);
+}
+
+function parseHorizontalSheet(
+  sheet: XLSX.WorkSheet,
+  range: XLSX.Range,
+  title: string,
+  fileName: string,
+): ParsedStateFile {
   let footerPeriod = "";
   for (let col = range.s.c; col <= range.e.c; col += 1) {
     if (normalizeLooseText(String(cellValue(sheet, col) ?? "")) === "selected period :") {
@@ -130,23 +153,23 @@ export async function parseStateHmisFile(file: File): Promise<ParsedStateFile> {
   const categoryCol = Array.from({ length: range.e.c + 1 }, (_, col) => col).find((col) =>
     /^M\d+\b/i.test(String(cellValue(sheet, col) ?? "").trim()),
   );
-  if (categoryCol === undefined) throw new Error(`${file.name}: no HMIS category blocks were found.`);
+  if (categoryCol === undefined) throw new Error(`${fileName}: no HMIS category blocks were found.`);
 
   const merges = sheet["!merges"] ?? [];
   const stateHeaderCol = Array.from({ length: categoryCol }, (_, col) => col).find(
     (col) => normalizeLooseText(String(cellValue(sheet, col) ?? "")) === normalizeLooseText(stateName),
   );
   if (stateHeaderCol === undefined) {
-    throw new Error(`${file.name}: the state district-header group could not be identified.`);
+    throw new Error(`${fileName}: the state district-header group could not be identified.`);
   }
   const stateMerge = merges.find((merge) => merge.s.r === 0 && merge.s.c === stateHeaderCol);
-  if (!stateMerge) throw new Error(`${file.name}: the merged state district header is missing.`);
+  if (!stateMerge) throw new Error(`${fileName}: the merged state district header is missing.`);
   const districts: string[] = [];
   for (let col = stateMerge.e.c + 1; col < categoryCol; col += 1) {
     const value = String(cellValue(sheet, col) ?? "").trim();
     if (value) districts.push(value);
   }
-  if (districts.length === 0) throw new Error(`${file.name}: no district columns were found.`);
+  if (districts.length === 0) throw new Error(`${fileName}: no district columns were found.`);
 
   const mergeByStart = new Map(merges.map((merge) => [merge.s.c, merge]));
   const items: StateHmisItem[] = [];
@@ -178,11 +201,120 @@ export async function parseStateHmisFile(file: File): Promise<ParsedStateFile> {
     });
   }
   if (!items.some((item) => /^M9\b/i.test(item.category))) {
-    throw new Error(`${file.name}: no M9 Child Immunisation data items were found.`);
+    throw new Error(`${fileName}: no M9 Child Immunisation data items were found.`);
   }
 
   const summary: StateHmisFileSummary = {
-    fileName: file.name,
+    fileName,
+    stateName,
+    month,
+    districtCount: districts.length,
+    itemCount: items.length,
+    m2ItemCount: items.filter((item) => /^M2\b/i.test(item.category)).length,
+    m9ItemCount: items.filter((item) => /^M9\b/i.test(item.category)).length,
+    districts,
+    itemCodes: items.map((item) => item.code),
+  };
+  return { summary, items, valuesByDistrict, invalidByDistrict };
+}
+
+// Vertical grid template: header rows Category / Data Item Code / Data Item Name /
+// Sub Data Item, a merged state group header spanning the value columns, optional
+// grouping rows (e.g. Circles), then the district row directly above the first
+// category block. Data rows follow one item per row; a footer "Selected Parameter"
+// block closes the sheet.
+function parseVerticalSheet(
+  sheet: XLSX.WorkSheet,
+  range: XLSX.Range,
+  title: string,
+  fileName: string,
+): ParsedStateFile {
+  let footerPeriod = "";
+  outer: for (let row = range.e.r; row >= 0; row -= 1) {
+    for (let col = range.s.c; col <= range.e.c; col += 1) {
+      if (normalizeLooseText(String(cellValue(sheet, col, row) ?? "")) === "selected period :") {
+        footerPeriod = String(cellValue(sheet, col + 1, row) ?? "").trim();
+        break outer;
+      }
+    }
+  }
+  const { stateName, month } = parseStateAndMonth(title, footerPeriod);
+
+  let headerRow = -1;
+  for (let row = 0; row <= range.e.r; row += 1) {
+    if (normalizeLooseText(String(cellValue(sheet, 0, row) ?? "")) === "category") {
+      headerRow = row;
+      break;
+    }
+  }
+  if (headerRow < 0) throw new Error(`${fileName}: the Category header row could not be found.`);
+
+  let stateCol = -1;
+  for (let col = 1; col <= range.e.c; col += 1) {
+    if (
+      normalizeLooseText(String(cellValue(sheet, col, headerRow) ?? "")) ===
+      normalizeLooseText(stateName)
+    ) {
+      stateCol = col;
+      break;
+    }
+  }
+  if (stateCol < 0) {
+    throw new Error(`${fileName}: the state district-header group could not be identified.`);
+  }
+  const merges = sheet["!merges"] ?? [];
+  const stateMerge = merges.find((merge) => merge.s.r === headerRow && merge.s.c === stateCol);
+  const lastValueCol = stateMerge ? stateMerge.e.c : range.e.c;
+
+  let dataStart = -1;
+  for (let row = headerRow + 1; row <= range.e.r; row += 1) {
+    if (/^M\d+\b/i.test(String(cellValue(sheet, 0, row) ?? "").trim())) {
+      dataStart = row;
+      break;
+    }
+  }
+  if (dataStart < 0) throw new Error(`${fileName}: no HMIS category blocks were found.`);
+  const districtRow = dataStart - 1;
+  if (districtRow <= headerRow) throw new Error(`${fileName}: no district columns were found.`);
+
+  const districtCols: { name: string; col: number }[] = [];
+  for (let col = stateCol; col <= lastValueCol; col += 1) {
+    const value = String(cellValue(sheet, col, districtRow) ?? "").trim();
+    if (value) districtCols.push({ name: value, col });
+  }
+  if (districtCols.length === 0) throw new Error(`${fileName}: no district columns were found.`);
+
+  const districts = districtCols.map((entry) => entry.name);
+  const items: StateHmisItem[] = [];
+  const valuesByDistrict: Record<string, Record<string, number | null>> = Object.fromEntries(
+    districts.map((district) => [district, {}]),
+  );
+  const invalidByDistrict: Record<string, string[]> = Object.fromEntries(
+    districts.map((district) => [district, []]),
+  );
+  let category = "";
+
+  for (let row = dataStart; row <= range.e.r; row += 1) {
+    const categoryRaw = String(cellValue(sheet, 0, row) ?? "").trim();
+    if (normalizeLooseText(categoryRaw).startsWith("selected parameter")) break;
+    if (/^M\d+\b/i.test(categoryRaw)) category = categoryRaw;
+    const code = normalizeStateHmisCode(cellValue(sheet, 1, row));
+    const name = String(cellValue(sheet, 2, row) ?? "").replace(/\s+/g, " ").trim();
+    if (!categoryRaw && !code && !name) break;
+    if (!/^\d/.test(code) || !name || !category) continue;
+    items.push({ code, name, category, short: itemShort(code, name) });
+    for (const { name: district, col } of districtCols) {
+      const parsed = parseCount(cellValue(sheet, col, row));
+      valuesByDistrict[district][code] = parsed.value;
+      if (parsed.invalid) invalidByDistrict[district].push(code);
+    }
+  }
+  if (!items.some((item) => /^M9\b/i.test(item.category))) {
+    throw new Error(`${fileName}: no M9 Child Immunisation data items were found.`);
+  }
+
+  const summary: StateHmisFileSummary = {
+    fileName,
     stateName,
     month,
     districtCount: districts.length,
@@ -208,7 +340,10 @@ function monthsBetween(start: string, end: string): string[] {
 
 export async function parseStateHmisFiles(files: File[]): Promise<StateHmisParsed> {
   if (files.length < 1 || files.length > 12) throw new Error("Upload between 1 and 12 monthly files.");
-  const parsedFiles = await Promise.all(files.map(parseStateHmisFile));
+  const parsedFiles = (await Promise.all(files.map(parseStateHmisFile))).flat();
+  if (parsedFiles.length > 12) {
+    throw new Error("The uploaded workbooks contain more than 12 monthly reports.");
+  }
   parsedFiles.sort((a, b) => a.summary.month.localeCompare(b.summary.month));
   const stateName = parsedFiles[0].summary.stateName;
   if (parsedFiles.some((entry) => normalizeLooseText(entry.summary.stateName) !== normalizeLooseText(stateName))) {
