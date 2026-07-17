@@ -2,8 +2,8 @@ import { ArrowRight } from "lucide-react";
 import type { AuthState } from "./LoginPage";
 import { GlassPanel } from "../branding/GlassPanel";
 import {
+  canUseHmis,
   canUsePcts,
-  isAssignedRajasthanDistrict,
 } from "../../lib/pcts/access";
 
 interface Props {
@@ -60,10 +60,10 @@ export function PortalSelector({
   onSelectPcts,
 }: Props) {
   const isAdmin = auth.role === "admin";
-  const isRajasthanDistrict = isAssignedRajasthanDistrict(auth);
+  const hasHmisAccess = canUseHmis(auth);
   const hasPctsAccess = canUsePcts(auth);
   const cards = PORTAL_CARDS.filter((card) => {
-    if (card.key === "HMIS") return isAdmin || !isRajasthanDistrict;
+    if (card.key === "HMIS") return hasHmisAccess;
     if (card.key === "PCTS") return hasPctsAccess;
     if (card.key === "HMIS-STATE") return auth.level === "STATE" || isAdmin;
     return true;

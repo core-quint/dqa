@@ -32,7 +32,7 @@ import {
   type GeoLevel,
   type MonthBucket,
 } from "../../lib/dashboard";
-import { canUsePcts } from "../../lib/pcts/access";
+import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
 
 // Chart series colors. HMIS keeps the app's portal blue; the U-WIN mark is
 // shifted from the app's violet (#8b5cf6) to fuchsia because blue+violet is
@@ -176,7 +176,13 @@ function niceMax(n: number): number {
   return n;
 }
 
-function MonthlyActivityChart({ months }: { months: MonthBucket[] }) {
+function MonthlyActivityChart({
+  months,
+  showHmis,
+}: {
+  months: MonthBucket[];
+  showHmis: boolean;
+}) {
   const [hover, setHover] = useState<number | null>(null);
   const W = 720;
   const H = 240;
@@ -250,7 +256,11 @@ function MonthlyActivityChart({ months }: { months: MonthBucket[] }) {
                 height={plotH}
                 fill="transparent"
                 tabIndex={0}
-                aria-label={`${m.label}: ${m.total} reviews (${m.hmis} HMIS, ${m.uwin} U-WIN, ${m.pcts} PCTS)`}
+                aria-label={
+                  showHmis
+                    ? `${m.label}: ${m.total} reviews (${m.hmis} HMIS, ${m.uwin} U-WIN, ${m.pcts} PCTS)`
+                    : `${m.label}: ${m.total} reviews (${m.uwin} U-WIN, ${m.pcts} PCTS)`
+                }
                 onMouseEnter={() => setHover(i)}
                 onMouseLeave={() => setHover(null)}
                 onFocus={() => setHover(i)}
@@ -285,12 +295,14 @@ function MonthlyActivityChart({ months }: { months: MonthBucket[] }) {
         >
           <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{hovered.label}</div>
           <div className="mt-1 space-y-0.5">
-            <div className="flex items-center justify-between gap-4 text-sm">
-              <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
-                <span className="h-0.5 w-3 rounded" style={{ background: HMIS_COLOR }} /> HMIS
-              </span>
-              <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.hmis)}</span>
-            </div>
+            {showHmis ? (
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                  <span className="h-0.5 w-3 rounded" style={{ background: HMIS_COLOR }} /> HMIS
+                </span>
+                <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.hmis)}</span>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between gap-4 text-sm">
               <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
                 <span className="h-0.5 w-3 rounded" style={{ background: UWIN_COLOR }} /> U-WIN
@@ -438,12 +450,14 @@ interface BarListRow {
 
 function StackedBarList({
   rows,
+  showHmis,
   onRowClick,
   activeKey,
   clickHint,
   initialLimit = 12,
 }: {
   rows: BarListRow[];
+  showHmis: boolean;
   onRowClick?: (row: BarListRow) => void;
   activeKey?: string;
   clickHint?: string;
@@ -530,12 +544,14 @@ function StackedBarList({
             </button>
             {/* Hover detail card (values are also visible inline — this only enhances) */}
             <div className="pointer-events-none absolute left-44 top-full z-10 hidden min-w-[170px] rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg group-hover:block">
-              <div className="flex items-center justify-between gap-4 text-sm">
-                <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
-                  <span className="h-0.5 w-3 rounded" style={{ background: HMIS_COLOR }} /> HMIS
-                </span>
-                <span className="font-bold tabular-nums text-slate-900">{fmtCount(row.hmis)}</span>
-              </div>
+              {showHmis ? (
+                <div className="flex items-center justify-between gap-4 text-sm">
+                  <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                    <span className="h-0.5 w-3 rounded" style={{ background: HMIS_COLOR }} /> HMIS
+                  </span>
+                  <span className="font-bold tabular-nums text-slate-900">{fmtCount(row.hmis)}</span>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
                   <span className="h-0.5 w-3 rounded" style={{ background: UWIN_COLOR }} /> U-WIN
@@ -653,6 +669,7 @@ const selectClass =
 type SortKey = "label" | "total" | "hmis" | "uwin" | "pcts" | "districts" | "blocks" | "facilities" | "sessionSites" | "avgOverall" | "lastAtMs";
 
 export function DashboardPage({ auth }: Props) {
+  const hasHmisAccess = canUseHmis(auth);
   const hasPctsAccess = canUsePcts(auth);
   const [snapshots, setSnapshots] = useState<SnapshotRecord[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -680,12 +697,16 @@ export function DashboardPage({ auth }: Props) {
   }, [fetchSnapshots]);
 
   useEffect(() => {
-    if (!hasPctsAccess) {
-      setFilters((current) =>
-        current.portal === "PCTS" ? { ...current, portal: "ALL" } : current,
-      );
-    }
-  }, [hasPctsAccess]);
+    setFilters((current) => {
+      if (!hasHmisAccess && current.portal === "HMIS") {
+        return { ...current, portal: "ALL" };
+      }
+      if (!hasPctsAccess && current.portal === "PCTS") {
+        return { ...current, portal: "ALL" };
+      }
+      return current;
+    });
+  }, [hasHmisAccess, hasPctsAccess]);
 
   const records = useMemo(
     () =>
@@ -693,9 +714,11 @@ export function DashboardPage({ auth }: Props) {
         .map(toDashboardRecord)
         .filter(
           (record): record is DashboardRecord =>
-            record !== null && (hasPctsAccess || record.portal !== "PCTS"),
+            record !== null &&
+            (hasHmisAccess || record.portal !== "HMIS") &&
+            (hasPctsAccess || record.portal !== "PCTS"),
         ),
-    [hasPctsAccess, snapshots],
+    [hasHmisAccess, hasPctsAccess, snapshots],
   );
 
   const filtered = useMemo(() => applyDashboardFilters(records, filters), [records, filters]);
@@ -781,7 +804,7 @@ export function DashboardPage({ auth }: Props) {
     [filters],
   );
 
-  const showHmis = filters.portal === "ALL" || filters.portal === "HMIS";
+  const showHmis = hasHmisAccess && (filters.portal === "ALL" || filters.portal === "HMIS");
   const showUwin = filters.portal === "ALL" || filters.portal === "UWIN";
   const showPcts = filters.portal === "ALL" || filters.portal === "PCTS";
 
@@ -809,7 +832,7 @@ export function DashboardPage({ auth }: Props) {
     const headers = [
       levelNoun,
       "Total DQA",
-      "HMIS",
+      ...(hasHmisAccess ? ["HMIS"] : []),
       "U-WIN",
       "PCTS",
       ...(geoLevel === "state" ? ["Districts"] : []),
@@ -822,7 +845,7 @@ export function DashboardPage({ auth }: Props) {
     const rows = sortedGeoRows.map((r) => [
       r.label,
       r.total,
-      r.hmis,
+      ...(hasHmisAccess ? [r.hmis] : []),
       r.uwin,
       r.pcts,
       ...(geoLevel === "state" ? [r.districts] : []),
@@ -973,7 +996,7 @@ export function DashboardPage({ auth }: Props) {
                 className={selectClass}
               >
                 <option value="ALL">All portals</option>
-                <option value="HMIS">HMIS</option>
+                {hasHmisAccess ? <option value="HMIS">HMIS</option> : null}
                 <option value="UWIN">U-WIN</option>
                 {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
               </select>
@@ -1086,7 +1109,9 @@ export function DashboardPage({ auth }: Props) {
           <GlassPanel className="p-12 text-center">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">No DQA records yet</div>
             <div className="mt-2 text-2xl font-extrabold text-slate-950">Save a snapshot after any analysis to populate this dashboard.</div>
-            <div className="mt-2 text-sm text-slate-500">Every saved HMIS, U-WIN, or PCTS analysis snapshot becomes one DQA record here.</div>
+            <div className="mt-2 text-sm text-slate-500">
+              Every saved {hasHmisAccess ? "HMIS, U-WIN, or PCTS" : "U-WIN or PCTS"} analysis snapshot becomes one DQA record here.
+            </div>
           </GlassPanel>
         ) : (
           <div className={loading ? "pointer-events-none opacity-60 transition-opacity" : "transition-opacity"}>
@@ -1094,7 +1119,7 @@ export function DashboardPage({ auth }: Props) {
               {/* ── KPI tiles ─────────────────────── */}
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
                 <StatTile label="Total DQA reviews" value={fmtCount(stats.total)} sub={`${fmtCount(stats.reviewers)} reviewer${stats.reviewers !== 1 ? "s" : ""} engaged`} icon={<ClipboardList className="h-4 w-4" />} />
-                <StatTile label="HMIS reviews" value={fmtCount(stats.hmis)} icon={<BarChart3 className="h-4 w-4" />} />
+                {hasHmisAccess ? <StatTile label="HMIS reviews" value={fmtCount(stats.hmis)} icon={<BarChart3 className="h-4 w-4" />} /> : null}
                 <StatTile label="U-WIN reviews" value={fmtCount(stats.uwin)} icon={<Syringe className="h-4 w-4" />} />
                 <StatTile label="PCTS reviews" value={fmtCount(stats.pcts)} icon={<BarChart3 className="h-4 w-4" />} />
                 <StatTile
@@ -1136,7 +1161,7 @@ export function DashboardPage({ auth }: Props) {
                         <thead>
                           <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                             <th className="px-2 py-1.5">Month</th>
-                            <th className="px-2 py-1.5 text-right">HMIS</th>
+                            {showHmis ? <th className="px-2 py-1.5 text-right">HMIS</th> : null}
                             <th className="px-2 py-1.5 text-right">U-WIN</th>
                             <th className="px-2 py-1.5 text-right">PCTS</th>
                             <th className="px-2 py-1.5 text-right">Total</th>
@@ -1147,7 +1172,7 @@ export function DashboardPage({ auth }: Props) {
                           {months.map((m) => (
                             <tr key={m.key} className="border-t border-slate-100">
                               <td className="px-2 py-1.5 font-medium text-slate-700">{m.label}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.hmis)}</td>
+                              {showHmis ? <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.hmis)}</td> : null}
                               <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.uwin)}</td>
                               <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.pcts)}</td>
                               <td className="px-2 py-1.5 text-right font-bold tabular-nums text-slate-900">{fmtCount(m.total)}</td>
@@ -1158,7 +1183,7 @@ export function DashboardPage({ auth }: Props) {
                       </table>
                     </div>
                   ) : (
-                    <MonthlyActivityChart months={months} />
+                    <MonthlyActivityChart months={months} showHmis={showHmis} />
                   )}
                 </GlassPanel>
                 <GlassPanel className="p-5">
@@ -1212,6 +1237,7 @@ export function DashboardPage({ auth }: Props) {
                   </div>
                   <StackedBarList
                     rows={geo.rows}
+                    showHmis={showHmis}
                     onRowClick={handleGeoDrill}
                     activeKey={geoLevel === "block" ? filters.block : undefined}
                     clickHint={
@@ -1261,6 +1287,7 @@ export function DashboardPage({ auth }: Props) {
                   </div>
                   <StackedBarList
                     rows={designations.map(categoryToRow)}
+                    showHmis={showHmis}
                     onRowClick={(row) => setFilter({ designation: filters.designation === row.key ? "" : row.key })}
                     activeKey={filters.designation || undefined}
                     clickHint="Click to filter by this designation"
@@ -1276,6 +1303,7 @@ export function DashboardPage({ auth }: Props) {
                   </div>
                   <StackedBarList
                     rows={purposes.map(categoryToRow)}
+                    showHmis={showHmis}
                     onRowClick={(row) => setFilter({ purpose: filters.purpose === row.key ? "" : row.key })}
                     activeKey={filters.purpose || undefined}
                     clickHint="Click to filter by this purpose"
@@ -1300,7 +1328,7 @@ export function DashboardPage({ auth }: Props) {
                       <tr className="bg-white/60 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                         <SortableTh label={levelNoun} k="label" sort={sort} onSort={toggleSort} />
                         <SortableTh label="Total DQA" k="total" sort={sort} onSort={toggleSort} right />
-                        <SortableTh label="HMIS" k="hmis" sort={sort} onSort={toggleSort} right />
+                        {hasHmisAccess ? <SortableTh label="HMIS" k="hmis" sort={sort} onSort={toggleSort} right /> : null}
                         <SortableTh label="U-WIN" k="uwin" sort={sort} onSort={toggleSort} right />
                         <SortableTh label="PCTS" k="pcts" sort={sort} onSort={toggleSort} right />
                         {geoLevel === "state" ? <SortableTh label="Districts" k="districts" sort={sort} onSort={toggleSort} right /> : null}
@@ -1316,7 +1344,7 @@ export function DashboardPage({ auth }: Props) {
                         <tr key={row.key} className="border-t border-slate-200/80 bg-white/50 transition hover:bg-white/80">
                           <td className="px-4 py-2.5 font-semibold text-slate-800">{row.label}</td>
                           <td className="px-4 py-2.5 text-right font-bold tabular-nums text-slate-900">{fmtCount(row.total)}</td>
-                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.hmis)}</td>
+                          {hasHmisAccess ? <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.hmis)}</td> : null}
                           <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.uwin)}</td>
                           <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.pcts)}</td>
                           {geoLevel === "state" ? <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.districts)}</td> : null}
@@ -1331,7 +1359,7 @@ export function DashboardPage({ auth }: Props) {
                   </table>
                 </div>
                 <div className="border-t border-slate-200/70 px-5 py-3 text-[11px] font-medium text-slate-500">
-                  * Coverage estimates: snapshots store dataset totals, not facility lists, so each geography counts its single widest review (largest block/facility/session-site count among the filtered reviews) — repeat reviews never double-count. HMIS, U-WIN, and PCTS facility universes are counted separately.
+                  * Coverage estimates: snapshots store dataset totals, not facility lists, so each geography counts its single widest review (largest block/facility/session-site count among the filtered reviews) — repeat reviews never double-count. {hasHmisAccess ? "HMIS, U-WIN, and PCTS" : "U-WIN and PCTS"} facility universes are counted separately.
                 </div>
               </GlassPanel>
             </div>

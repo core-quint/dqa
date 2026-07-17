@@ -41,8 +41,8 @@ import {
   getPortalGroups,
 } from "./shellConfig";
 import {
+  canUseHmis,
   canUsePcts,
-  isAssignedRajasthanDistrict,
 } from "../../lib/pcts/access";
 
 function initialsFromEmail(email?: string) {
@@ -170,9 +170,8 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
     action();
   };
 
-  const isRajasthanDistrict = isAssignedRajasthanDistrict(auth);
+  const hasHmisAccess = canUseHmis(auth);
   const hasPctsAccess = canUsePcts(auth);
-  const canUseHmis = auth?.role === "admin" || !isRajasthanDistrict;
 
   return (
     <>
@@ -275,7 +274,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               <Upload className="h-4 w-4" />
               Select Program
             </CommandItem>
-            {canUseHmis && (
+            {hasHmisAccess && (
               <CommandItem
                 keywords={["upload", "hmis", "csv"]}
                 onSelect={() => runCommand(() => setAppState("landing"))}
@@ -314,7 +313,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               <MapPinned className="h-4 w-4" />
               DQA Coverage
             </CommandItem>
-            {csvData && (
+            {hasHmisAccess && csvData && (
               <CommandItem
                 keywords={["analysis", "hmis", "review"]}
                 onSelect={() => runCommand(() => setAppState("results"))}
@@ -341,7 +340,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
                 PCTS Analysis
               </CommandItem>
             )}
-            {canUseHmis && (
+            {hasHmisAccess && (
               <CommandItem
                 keywords={["trend", "hmis"]}
                 onSelect={() => runCommand(() => { setTrendSource("HMIS"); setAppState("trend"); })}
@@ -426,7 +425,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               {sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
               <CommandShortcut>Ctrl+B</CommandShortcut>
             </CommandItem>
-            {csvData && (
+            {hasHmisAccess && csvData && (
               <CommandItem
                 keywords={["clear", "remove", "reset", "hmis"]}
                 onSelect={() => runCommand(() => { setCsvData(null); setAppState("portal"); })}

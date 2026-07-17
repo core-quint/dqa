@@ -15,7 +15,7 @@ import { StateHmisLandingPage } from "./components/stateHmis/StateHmisLandingPag
 import { StateHmisResultsPage } from "./components/stateHmis/StateHmisResultsPage";
 import { PctsLandingPage } from "./components/pcts/PctsLandingPage";
 import { PctsResultsPage } from "./components/pcts/PctsResultsPage";
-import { canUsePcts } from "./lib/pcts/access";
+import { canUseHmis, canUsePcts } from "./lib/pcts/access";
 
 function AppContent() {
   const {
@@ -56,14 +56,38 @@ function AppContent() {
     handleLogout,
   } = useAppContext();
 
+  const isHmisRoute = appState === "landing" || appState === "results";
   const isPctsRoute = appState === "pcts-landing" || appState === "pcts-results";
+  const hasHmisAccess = canUseHmis(auth);
   const hasPctsAccess = canUsePcts(auth);
 
   useEffect(() => {
-    if (auth && isPctsRoute && !hasPctsAccess) {
+    if (
+      auth &&
+      ((isHmisRoute && !hasHmisAccess) || (isPctsRoute && !hasPctsAccess))
+    ) {
       setAppState("portal");
     }
-  }, [auth, hasPctsAccess, isPctsRoute, setAppState]);
+  }, [auth, hasHmisAccess, hasPctsAccess, isHmisRoute, isPctsRoute, setAppState]);
+
+  useEffect(() => {
+    if (!auth || hasHmisAccess) return;
+    if (csvData) setCsvData(null);
+    if (hmisReviewInfo) setHmisReviewInfo(null);
+    if (hmisSnapshotSaved) setHmisSnapshotSaved(false);
+    if (trendSource === "HMIS") setTrendSource("ALL");
+  }, [
+    auth,
+    csvData,
+    hasHmisAccess,
+    hmisReviewInfo,
+    hmisSnapshotSaved,
+    setCsvData,
+    setHmisReviewInfo,
+    setHmisSnapshotSaved,
+    setTrendSource,
+    trendSource,
+  ]);
 
   if (!auth) {
     return (
@@ -76,7 +100,9 @@ function AppContent() {
     );
   }
 
-  if (isPctsRoute && !hasPctsAccess) return null;
+  if ((isHmisRoute && !hasHmisAccess) || (isPctsRoute && !hasPctsAccess)) {
+    return null;
+  }
 
   if (appState === "portal") {
     return (

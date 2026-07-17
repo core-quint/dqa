@@ -14,7 +14,7 @@ import { ArrowLeft, Download, Trash2, TrendingUp } from "lucide-react";
 import { apiFetch } from "../../api";
 import { GlassPanel } from "../branding/GlassPanel";
 import type { AuthState } from "./LoginPage";
-import { canUsePcts } from "../../lib/pcts/access";
+import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
 
 ChartJS.register(
   CategoryScale,
@@ -117,6 +117,7 @@ export function TrendPage({
   backLabel = "Back",
   initialPortal = "ALL",
 }: Props) {
+  const hasHmisAccess = canUseHmis(auth);
   const hasPctsAccess = canUsePcts(auth);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -125,7 +126,10 @@ export function TrendPage({
   >("overall");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [portalFilter, setPortalFilter] = useState<TrendPortal>(
-    initialPortal === "PCTS" && !hasPctsAccess ? "ALL" : initialPortal,
+    (initialPortal === "HMIS" && !hasHmisAccess) ||
+      (initialPortal === "PCTS" && !hasPctsAccess)
+      ? "ALL"
+      : initialPortal,
   );
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -135,10 +139,13 @@ export function TrendPage({
   }, []);
 
   useEffect(() => {
-    if (!hasPctsAccess && portalFilter === "PCTS") {
+    if (
+      (!hasHmisAccess && portalFilter === "HMIS") ||
+      (!hasPctsAccess && portalFilter === "PCTS")
+    ) {
       setPortalFilter("ALL");
     }
-  }, [hasPctsAccess, portalFilter]);
+  }, [hasHmisAccess, hasPctsAccess, portalFilter]);
 
   async function fetchSnapshots() {
     try {
@@ -173,6 +180,7 @@ export function TrendPage({
   const filtered = useMemo(() => {
     return snapshots.filter((snapshot) => {
       const currentPortal = snapshot.portal?.toUpperCase() ?? "HMIS";
+      if (!hasHmisAccess && currentPortal === "HMIS") return false;
       if (!hasPctsAccess && currentPortal === "PCTS") return false;
       if (portalFilter !== "ALL") {
         if (currentPortal !== portalFilter) return false;
@@ -186,7 +194,7 @@ export function TrendPage({
       }
       return true;
     });
-  }, [snapshots, portalFilter, dateFrom, dateTo, hasPctsAccess]);
+  }, [snapshots, portalFilter, dateFrom, dateTo, hasHmisAccess, hasPctsAccess]);
 
   function handleDownloadExcel() {
     const headers = [
@@ -358,7 +366,7 @@ export function TrendPage({
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-200/70"
               >
                 <option value="ALL">All portals</option>
-                <option value="HMIS">HMIS</option>
+                {hasHmisAccess ? <option value="HMIS">HMIS</option> : null}
                 <option value="UWIN">U-WIN</option>
                 {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
                 <option value="HMIS_STATE">HMIS State</option>

@@ -31,6 +31,24 @@ export function canUsePcts(
   return isAssignedRajasthanDistrict(auth);
 }
 
+/**
+ * Rajasthan replaces the standard facility-level HMIS workflow with PCTS for
+ * state and district users. National users and administrators retain HMIS,
+ * while block users and users assigned outside Rajasthan are unchanged.
+ * HMIS State is a separate workflow and is intentionally not covered here.
+ */
+export function canUseHmis(
+  auth: PctsAccessProfile | null | undefined,
+): boolean {
+  if (!auth) return false;
+  if (auth.role === "admin" || auth.level === "NATIONAL") return true;
+
+  return !(
+    normalizeGeo(auth.geoState) === "rajasthan" &&
+    (auth.level === "STATE" || auth.level === "DISTRICT")
+  );
+}
+
 export function getPctsExpectedDistrict(
   auth: PctsAccessProfile | null | undefined,
 ): string | undefined {

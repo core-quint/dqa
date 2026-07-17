@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db, FieldValue } from "../lib/firebase";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { authorizePctsWrite } from "../lib/pctsAuthorization";
+import { canAccessPortal } from "../lib/portalAuthorization";
 
 const uploadSessionSchema = z.object({
   portal: z.enum(["HMIS", "UWIN", "HMIS_STATE", "PCTS"]),
@@ -41,6 +42,11 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
     portal, designation, purpose, purposeSubOption, purposeOtherText, gpsLat, gpsLng, gpsAddress,
     state, district, periodStart, periodEnd, blockCount, facilityCount, sessionSiteCount, districtCount,
   } = parsed.data;
+
+  if (!canAccessPortal(req.user, portal)) {
+    res.status(403).json({ message: "You do not have access to this portal" });
+    return;
+  }
 
   if (portal === "PCTS") {
     const authorization = authorizePctsWrite(req.user, { state, district });

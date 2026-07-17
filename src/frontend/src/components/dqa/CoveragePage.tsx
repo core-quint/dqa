@@ -30,7 +30,7 @@ import {
   type MapFeature,
   type Topology,
 } from "../../lib/maps/topology";
-import { canUsePcts } from "../../lib/pcts/access";
+import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
 
 type PortalFilter = "ALL" | "HMIS" | "UWIN" | "PCTS";
 type CoverageIndicator =
@@ -106,6 +106,7 @@ const COLOR_SCALE = ["#d7191c", "#fdae61", "#ffffbf", "#abd9e9", "#2c7bb6"];
 const LEGEND_BANDS = ["0–20", "20–40", "40–60", "60–80", "80–100"];
 
 export function CoveragePage({ auth }: { auth: AuthState }) {
+  const hasHmisAccess = canUseHmis(auth);
   const hasPctsAccess = canUsePcts(auth);
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
   const [loadingSnapshots, setLoadingSnapshots] = useState(true);
@@ -174,8 +175,13 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   }, []);
 
   useEffect(() => {
-    if (!hasPctsAccess && portal === "PCTS") setPortal("ALL");
-  }, [hasPctsAccess, portal]);
+    if (
+      (!hasHmisAccess && portal === "HMIS") ||
+      (!hasPctsAccess && portal === "PCTS")
+    ) {
+      setPortal("ALL");
+    }
+  }, [hasHmisAccess, hasPctsAccess, portal]);
 
   useEffect(() => {
     if (level !== "BLOCK" || blocksTopology || blocksLoadingRef.current) return;
@@ -371,8 +377,10 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
   const filteredSnapshots = useMemo(() => {
     return snapshots.filter((s) => {
-      if (!hasPctsAccess && normalizePortal(s.portal) === "PCTS") return false;
-      if (portal !== "ALL" && normalizePortal(s.portal) !== portal) return false;
+      const snapshotPortal = normalizePortal(s.portal);
+      if (!hasHmisAccess && snapshotPortal === "HMIS") return false;
+      if (!hasPctsAccess && snapshotPortal === "PCTS") return false;
+      if (portal !== "ALL" && snapshotPortal !== portal) return false;
       if (getSnapshotDqaLevel(s) !== level) return false;
       if (
         visibleStateValue !== "ALL" &&
@@ -389,7 +397,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       if (toMonth && period.start > toMonth) return false;
       return true;
     });
-  }, [fromMonth, hasPctsAccess, level, portal, snapshots, toMonth, visibleDistrictValue, visibleStateValue]);
+  }, [fromMonth, hasHmisAccess, hasPctsAccess, level, portal, snapshots, toMonth, visibleDistrictValue, visibleStateValue]);
 
   const featureLookup = useMemo(
     () => buildFeatureLookup(level, visibleFeatures),
@@ -687,7 +695,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 className={selectClassName}
               >
                 <option value="ALL">All portals</option>
-                <option value="HMIS">HMIS</option>
+                {hasHmisAccess ? <option value="HMIS">HMIS</option> : null}
                 <option value="UWIN">U-WIN</option>
                 {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
               </select>

@@ -3,7 +3,8 @@ import { z } from "zod";
 import { db, FieldValue } from "../lib/firebase";
 import type { CollectionReference, Query } from "firebase-admin/firestore";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { authorizePctsWrite, canAccessPcts } from "../lib/pctsAuthorization";
+import { authorizePctsWrite } from "../lib/pctsAuthorization";
+import { canAccessPortal, normalizePortal } from "../lib/portalAuthorization";
 
 const snapshotSchema = z.object({
   state: z.string().min(1),
@@ -45,7 +46,14 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
     purpose, purposeDetail,
   } = parsed.data;
 
-  if (portal.trim().toUpperCase() === "PCTS") {
+  const normalizedPortal = normalizePortal(portal);
+
+  if (!canAccessPortal(req.user, normalizedPortal)) {
+    res.status(403).json({ message: "You do not have access to this portal" });
+    return;
+  }
+
+  if (normalizedPortal === "PCTS") {
     const authorization = authorizePctsWrite(
       req.user,
       { state, district, dqaLevel },
@@ -81,7 +89,7 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
         purpose: purpose?.trim() || null,
         purposeDetail: purposeDetail?.trim() || null,
       },
-      portal,
+      portal: normalizedPortal,
       userId: req.user!.id,
       // Denormalized at write time so the Trend History "Saved by" column doesn't
       // need a per-row user lookup — previously never written at all, so every
@@ -150,8 +158,7 @@ export const getSnapshots = async (req: AuthRequest, res: Response) => {
     const snapshots = snap.docs
       .filter((d) => {
         const data = d.data();
-        const isPcts = normalizeGeo(data.portal) === "pcts";
-        if (isPcts && !canAccessPcts(req.user)) return false;
+        if (!canAccessPortal(req.user, data.portal)) return false;
         return !geoFilter || geoFilter(data);
       })
       .map((d) => {
@@ -182,7 +189,7 @@ export const deleteSnapshot = async (req: AuthRequest, res: Response) => {
     if (
       !doc.exists ||
       data?.userId !== req.user!.id ||
-      (normalizeGeo(data?.portal) === "pcts" && !canAccessPcts(req.user))
+      !canAccessPortal(req.user, data?.portal)
     ) {
       res.status(404).json({ message: "Snapshot not found" });
       return;
