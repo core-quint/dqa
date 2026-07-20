@@ -92,6 +92,7 @@ export interface UploadDatasetContext {
   facilityCount: number | null;
   sessionSiteCount: number | null;
   districtCount?: number | null;
+  analysisGranularity?: 'DISTRICT' | 'BLOCK' | null;
 }
 
 export function buildUploadDatasetContext(parsed: {

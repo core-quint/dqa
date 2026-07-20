@@ -37,6 +37,9 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
   }, [initFilters]);
 
   const allDistricts = data.districts;
+  const selectedDistricts = f.districts.length ? f.districts : allDistricts;
+  const allBlocks = data.blocks.filter((block) => selectedDistricts.includes(block.district));
+  const allBlockIds = allBlocks.map((block) => block.id);
   const allMonths = Object.keys(data.months).sort();
   const singleMonth = allMonths.length === 1;
   const allKeyIndicators = [...STATE_HMIS_KEY_INDICATORS];
@@ -47,6 +50,7 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
   const setAll = (keys: string[], on: boolean): string[] => (on ? [...keys] : []);
 
   const isAllDistricts = f.districts.length === 0 || f.districts.length === allDistricts.length;
+  const isAllBlocks = f.blocks.length === 0 || allBlockIds.every((id) => f.blocks.includes(id));
   const isAllMonths = f.months.length === 0 || f.months.length === allMonths.length;
 
   const handleSubmit = (event: React.FormEvent) => {
@@ -65,7 +69,7 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
             label="Select All"
             checked={isAllDistricts}
             onChange={(value) =>
-              setF((prev) => ({ ...prev, districts: setAll(allDistricts, value) }))
+              setF((prev) => ({ ...prev, districts: setAll(allDistricts, value), blocks: [] }))
             }
           />
           <div className="mt-2 max-h-56 space-y-1 overflow-y-auto border-t border-slate-200/80 pt-2 thin-scroll">
@@ -77,6 +81,7 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
                 onChange={(value) =>
                   setF((prev) => ({
                     ...prev,
+                    blocks: [],
                     districts: toggleSet(
                       prev.districts.length === 0 ? allDistricts : prev.districts,
                       district,
@@ -88,6 +93,37 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
             ))}
           </div>
         </Dropdown>
+
+        {data.reportLevel === "block" ? (
+          <Dropdown label="Health Block" fullWidth>
+            <CheckAll
+              label="Select All"
+              checked={isAllBlocks}
+              onChange={(value) =>
+                setF((prev) => ({ ...prev, blocks: setAll(allBlockIds, value) }))
+              }
+            />
+            <div className="mt-2 max-h-64 space-y-1 overflow-y-auto border-t border-slate-200/80 pt-2 thin-scroll">
+              {allBlocks.map((block) => (
+                <CheckItem
+                  key={block.id}
+                  label={`${block.block} · ${block.district}`}
+                  checked={f.blocks.length === 0 || f.blocks.includes(block.id)}
+                  onChange={(value) =>
+                    setF((prev) => ({
+                      ...prev,
+                      blocks: toggleSet(
+                        prev.blocks.length === 0 ? allBlockIds : prev.blocks,
+                        block.id,
+                        value,
+                      ),
+                    }))
+                  }
+                />
+              ))}
+            </div>
+          </Dropdown>
+        ) : null}
 
         {!singleMonth ? (
           <Dropdown label="Months" fullWidth>

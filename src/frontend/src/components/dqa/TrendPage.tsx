@@ -48,6 +48,7 @@ interface Snapshot {
     accuracyScore: number;
     consistencyScore: number;
     designation?: string | null;
+    analysisGranularity?: "DISTRICT" | "BLOCK" | null;
   };
 }
 
@@ -204,6 +205,7 @@ export function TrendPage({
       "District",
       "Duration",
       "Portal",
+      "Granularity",
       "Overall",
       "Availability",
       "Completeness",
@@ -219,6 +221,7 @@ export function TrendPage({
       snapshot.district,
       snapshot.reportingMonth,
       portalDisplayName(snapshot.portal),
+      snapshot.kpiData?.analysisGranularity ?? "-",
       snapshot.overallScore.toFixed(1),
       snapshot.kpiData?.availabilityScore?.toFixed(1) ?? "-",
       snapshot.kpiData?.completenessScore !== undefined
@@ -508,6 +511,7 @@ export function TrendPage({
                     <tr className="bg-white/60 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                       <th className="px-4 py-3">Date</th>
                       <th className="px-4 py-3">Portal</th>
+                      <th className="px-4 py-3">Granularity</th>
                       <th className="px-4 py-3">Reviewed by</th>
                       <th className="px-4 py-3">State</th>
                       <th className="px-4 py-3">District</th>
@@ -531,6 +535,9 @@ export function TrendPage({
                           {formatDate(snapshot.createdAt)}
                         </td>
                         <td className="px-4 py-3">{portalBadge(snapshot.portal)}</td>
+                        <td className="px-4 py-3 text-xs font-semibold text-slate-600">
+                          {snapshot.kpiData?.analysisGranularity ?? "-"}
+                        </td>
                         <td className="px-4 py-3 font-medium text-slate-700">
                           {snapshot.kpiData?.designation ?? "-"}
                         </td>

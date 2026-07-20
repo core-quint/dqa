@@ -24,6 +24,7 @@ const snapshotSchema = z.object({
   facilityCount: z.number().optional().nullable(),
   sessionSiteCount: z.number().optional().nullable(),
   districtCount: z.number().optional().nullable(),
+  analysisGranularity: z.enum(["DISTRICT", "BLOCK"]).optional().nullable(),
   designation: z.string().trim().optional().nullable(),
   // Pre-upload "Purpose of DQA" — like designation, the frontend sends '' when
   // unset, so these must accept empty strings (normalized to null on write).
@@ -42,7 +43,7 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
     state, district, duration, overallScore,
     availabilityScore, completenessScore, accuracyScore, consistencyScore,
     portal, dqaLevel, block, periodStart, periodEnd,
-    blockCount, facilityCount, sessionSiteCount, districtCount, designation,
+    blockCount, facilityCount, sessionSiteCount, districtCount, analysisGranularity, designation,
     purpose, purposeDetail,
   } = parsed.data;
 
@@ -85,6 +86,7 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
         facilityCount: facilityCount ?? null,
         sessionSiteCount: sessionSiteCount ?? null,
         districtCount: districtCount ?? null,
+        analysisGranularity: analysisGranularity ?? null,
         designation: designation ?? null,
         purpose: purpose?.trim() || null,
         purposeDetail: purposeDetail?.trim() || null,

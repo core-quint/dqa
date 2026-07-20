@@ -13,7 +13,7 @@ const GROUPS: StateHmisGroup[] = ["availability", "completeness", "accuracy", "c
 
 function valueByShort(data: StateHmisParsed, district: string, month: string, short: string) {
   const code = data.orderedItemCodes.find((itemCode) => data.items[itemCode]?.short === short);
-  return code ? data.districtData[district]?.months[month]?.values[code] ?? null : null;
+  return code ? data.unitData[district]?.months[month]?.values[code] ?? null : null;
 }
 
 function codeByShort(data: StateHmisParsed, short: string): string | null {
@@ -56,15 +56,26 @@ function makeCard(
     if (evaluated.length > 0 && evaluated.every((hit) => hit.flag)) all += 1;
   }
   const total = affectedDistricts.length;
-  return { id, name, description, group, total, any: total - all, all, affectedDistricts, hits };
+  return {
+    id, name, description, group, total, any: total - all, all,
+    affectedDistricts,
+    affectedUnits: affectedDistricts,
+    hits,
+  };
 }
 
 export function computeStateHmisKpis(
   data: StateHmisParsed,
   filters: StateHmisFilters,
 ): StateHmisComputed {
-  const selectedDistricts = (filters.districts.length ? filters.districts : data.districts)
+  const filteredDistricts = (filters.districts.length ? filters.districts : data.districts)
     .filter((district) => data.districts.includes(district));
+  const eligibleUnits = data.reportLevel === "block"
+    ? filteredDistricts.flatMap((district) => data.blocksByDistrict[district] ?? [])
+    : filteredDistricts;
+  const selectedDistricts = (data.reportLevel === "block" && filters.blocks.length
+    ? filters.blocks
+    : eligibleUnits).filter((id) => eligibleUnits.includes(id) && data.unitData[id]);
   const allMonths = Object.keys(data.months).sort();
   const selectedMonths = (filters.months.length ? filters.months : allMonths)
     .filter((month) => data.months[month])
@@ -73,17 +84,18 @@ export function computeStateHmisKpis(
   const keyShorts = filters.keyIndicators.filter((short) => codeByShort(data, short));
   const keyCodes = keyShorts.map((short) => codeByShort(data, short)!).filter(Boolean);
   const cards: StateHmisCard[] = [];
-  const record = (district: string, month: string) => data.districtData[district]?.months[month];
+  const record = (district: string, month: string) => data.unitData[district]?.months[month];
+  const unitLabel = data.reportLevel === "block" ? "Block" : "District";
 
   cards.push(makeCard("all_m9_blank", "All M9 Indicators Blank", "Every M9 data item is blank.", "availability", selectedDistricts, selectedMonths, (d, m) => {
     const rec = record(d, m);
-    if (!rec) return { flag: false, detail: "District report is missing" };
+    if (!rec) return { flag: false, detail: `${unitLabel} report is missing` };
     const flag = m9Codes.length > 0 && m9Codes.every((code) => rec.values[code] === null);
     return { flag, detail: flag ? "All M9 values are blank" : "M9 data reported" };
   }));
 
   cards.push(makeCard("key_all_zero", "Key Indicators All Zero", "All selected key indicators are reported as zero.", "availability", selectedDistricts, selectedMonths, (d, m) => {
-    const rec = record(d, m); if (!rec) return { flag: false, detail: "District report is missing" };
+    const rec = record(d, m); if (!rec) return { flag: false, detail: `${unitLabel} report is missing` };
     const vals = keyCodes.map((code) => rec.values[code]);
     const flag = vals.length > 0 && vals.every((value) => value !== null && value === 0);
     return { flag, detail: flag ? "All selected key indicators are zero" : "Not all zero" };
@@ -93,7 +105,7 @@ export function computeStateHmisKpis(
     const index = selectedMonths.indexOf(m); if (index <= 0) return null;
     const previousMonth = selectedMonths[index - 1];
     const current = record(d, m); const previous = record(d, previousMonth);
-    if (!current || !previous) return { flag: false, detail: "One of the compared district reports is missing" };
+    if (!current || !previous) return { flag: false, detail: `One of the compared ${unitLabel.toLowerCase()} reports is missing` };
     const comparable = m9Codes.filter((code) => current.values[code] !== undefined && previous.values[code] !== undefined);
     const flag = comparable.length > 0 && comparable.every((code) => current.values[code] === previous.values[code]);
     return { flag, detail: flag ? `Profile exactly matches ${previousMonth}` : `Profile differs from ${previousMonth}` };
@@ -106,8 +118,8 @@ export function computeStateHmisKpis(
     return { flag, detail: flag ? `Zero sessions; positive: ${positive.join(", ")}` : "No contradiction" };
   }));
 
-  cards.push(makeCard("missing_district", "Missing District Report", "The district is absent from a monthly workbook.", "completeness", selectedDistricts, selectedMonths, (d, m) => {
-    const flag = !record(d, m); return { flag, detail: flag ? "District is absent from this file" : "District report present" };
+  cards.push(makeCard("missing_unit", `Missing ${unitLabel} Report`, `The ${unitLabel.toLowerCase()} is absent from a monthly workbook.`, "completeness", selectedDistricts, selectedMonths, (d, m) => {
+    const flag = !record(d, m); return { flag, detail: flag ? `${unitLabel} is absent from this file` : `${unitLabel} report present` };
   }));
   cards.push(makeCard("key_missing", "Key Missing Indicators", "One or more selected key indicators are blank or absent.", "completeness", selectedDistricts, selectedMonths, (d, m) => {
     const rec = record(d, m);
@@ -115,12 +127,12 @@ export function computeStateHmisKpis(
     return { flag: missing.length > 0, detail: missing.length ? `Missing: ${missing.join(", ")}` : "All selected key indicators present" };
   }));
   cards.push(makeCard("partial_m9", "Partial M9 Reporting", "At least one M9 value is blank.", "completeness", selectedDistricts, selectedMonths, (d, m) => {
-    const rec = record(d, m); if (!rec) return { flag: true, detail: "District report is missing" };
+    const rec = record(d, m); if (!rec) return { flag: true, detail: `${unitLabel} report is missing` };
     const blank = m9Codes.filter((code) => rec.values[code] === null);
     return { flag: blank.length > 0, detail: blank.length ? `${blank.length} blank M9 item(s)` : "All M9 values populated" };
   }));
   cards.push(makeCard("missing_items", "Missing Data Items", "Expected M9 codes are absent from the monthly schema.", "completeness", selectedDistricts, selectedMonths, (d, m) => {
-    const rec = record(d, m); if (!rec) return { flag: true, detail: "District report is missing" };
+    const rec = record(d, m); if (!rec) return { flag: true, detail: `${unitLabel} report is missing` };
     const missing = m9Codes.filter((code) => rec.values[code] === undefined);
     return { flag: missing.length > 0, detail: missing.length ? `${missing.length} M9 item(s) absent from schema` : "M9 schema complete" };
   }));
@@ -221,5 +233,28 @@ export function computeStateHmisKpis(
   const issueNamesByDistrict: Record<string, string[]> = Object.fromEntries(selectedDistricts.map((district) => [district, []]));
   for (const card of cards) for (const district of card.affectedDistricts) issueNamesByDistrict[district].push(card.name);
   const issueCountByDistrict = Object.fromEntries(selectedDistricts.map((district) => [district, issueNamesByDistrict[district].length]));
-  return { cards, selectedDistricts, selectedMonths, denominator, componentScores, overallScore, issueCountByDistrict, issueNamesByDistrict };
+  const districtRollups = Object.fromEntries(filteredDistricts.map((district) => {
+    const units = selectedDistricts.filter((id) => data.unitData[id]?.district === district);
+    const issueNames = [...new Set(units.flatMap((id) => issueNamesByDistrict[id] ?? []))];
+    return [district, {
+      unitCount: units.length,
+      affectedUnitCount: units.filter((id) => (issueCountByDistrict[id] ?? 0) > 0).length,
+      issueCount: units.reduce((sum, id) => sum + (issueCountByDistrict[id] ?? 0), 0),
+      issueNames,
+    }];
+  }));
+  return {
+    cards,
+    selectedUnits: selectedDistricts,
+    selectedDistricts,
+    selectedMonths,
+    denominator,
+    componentScores,
+    overallScore,
+    issueCountByUnit: issueCountByDistrict,
+    issueNamesByUnit: issueNamesByDistrict,
+    issueCountByDistrict,
+    issueNamesByDistrict,
+    districtRollups,
+  };
 }

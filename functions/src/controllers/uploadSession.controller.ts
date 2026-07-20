@@ -29,6 +29,7 @@ const uploadSessionSchema = z.object({
   facilityCount: z.number().optional().nullable(),
   sessionSiteCount: z.number().optional().nullable(),
   districtCount: z.number().optional().nullable(),
+  analysisGranularity: z.enum(["DISTRICT", "BLOCK"]).optional().nullable(),
 });
 
 export const createUploadSession = async (req: AuthRequest, res: Response) => {
@@ -41,6 +42,7 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
   const {
     portal, designation, purpose, purposeSubOption, purposeOtherText, gpsLat, gpsLng, gpsAddress,
     state, district, periodStart, periodEnd, blockCount, facilityCount, sessionSiteCount, districtCount,
+    analysisGranularity,
   } = parsed.data;
 
   if (!canAccessPortal(req.user, portal)) {
@@ -75,6 +77,7 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
       facilityCount: facilityCount ?? null,
       sessionSiteCount: sessionSiteCount ?? null,
       districtCount: districtCount ?? null,
+      analysisGranularity: analysisGranularity ?? null,
       userId: req.user!.id,
       createdAt: FieldValue.serverTimestamp(),
     });

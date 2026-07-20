@@ -23,15 +23,27 @@ export interface StateHmisDistrictRecord {
   months: Record<string, StateHmisMonthRecord>;
 }
 
+export type StateHmisReportLevel = "district" | "block";
+
+export interface StateHmisUnitRecord {
+  id: string;
+  district: string;
+  block: string | null;
+  months: Record<string, StateHmisMonthRecord>;
+}
+
 export interface StateHmisFileSummary {
   fileName: string;
   stateName: string;
   month: string;
   districtCount: number;
+  blockCount: number;
+  reportLevel: StateHmisReportLevel;
   itemCount: number;
   m2ItemCount: number;
   m9ItemCount: number;
   districts: string[];
+  unitIds: string[];
   itemCodes: string[];
 }
 
@@ -45,18 +57,23 @@ export interface StateHmisValidationIssue {
 export interface StateHmisParsed {
   portal: "HMIS_STATE";
   stateName: string;
+  reportLevel: StateHmisReportLevel;
   fileNames: string[];
   districts: string[];
+  blocks: { id: string; district: string; block: string }[];
+  blocksByDistrict: Record<string, string[]>;
   months: Record<string, string>;
   items: Record<string, StateHmisItem>;
   orderedItemCodes: string[];
   districtData: Record<string, StateHmisDistrictRecord>;
+  unitData: Record<string, StateHmisUnitRecord>;
   fileSummaries: StateHmisFileSummary[];
   validationIssues: StateHmisValidationIssue[];
 }
 
 export interface StateHmisFilters {
   districts: string[];
+  blocks: string[];
   months: string[];
   keyIndicators: string[];
   outlierSeverity: "low" | "moderate" | "extreme";
@@ -79,7 +96,9 @@ export interface StateHmisCard {
   total: number;
   any: number;
   all: number;
+  /** Analysis-unit ids; retained name keeps older district reports compatible. */
   affectedDistricts: string[];
+  affectedUnits: string[];
   hits: Record<string, Record<string, StateHmisHit>>;
 }
 
@@ -91,13 +110,23 @@ export interface StateHmisComponentScore {
 
 export interface StateHmisComputed {
   cards: StateHmisCard[];
+  selectedUnits: string[];
   selectedDistricts: string[];
   selectedMonths: string[];
   denominator: number;
   componentScores: Record<StateHmisGroup, StateHmisComponentScore>;
   overallScore: number;
+  issueCountByUnit: Record<string, number>;
+  issueNamesByUnit: Record<string, string[]>;
+  /** Analysis-unit keyed compatibility aliases. */
   issueCountByDistrict: Record<string, number>;
   issueNamesByDistrict: Record<string, string[]>;
+  districtRollups: Record<string, {
+    unitCount: number;
+    affectedUnitCount: number;
+    issueCount: number;
+    issueNames: string[];
+  }>;
 }
 
 export const STATE_HMIS_KEY_INDICATORS = [
@@ -112,6 +141,7 @@ export const STATE_HMIS_KEY_INDICATORS = [
 
 export const DEFAULT_STATE_HMIS_FILTERS: StateHmisFilters = {
   districts: [],
+  blocks: [],
   months: [],
   keyIndicators: [...STATE_HMIS_KEY_INDICATORS],
   outlierSeverity: "extreme",

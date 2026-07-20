@@ -48,10 +48,11 @@ export function StateHmisLandingPage({ auth, onBack, onDataReady }: Props) {
       district: null,
       periodStart: months[0] ?? null,
       periodEnd: months[months.length - 1] ?? null,
-      blockCount: null,
+      blockCount: parsed.reportLevel === "block" ? parsed.blocks.length : null,
       facilityCount: null,
       sessionSiteCount: null,
       districtCount: parsed.districts.length,
+      analysisGranularity: parsed.reportLevel.toUpperCase() as "DISTRICT" | "BLOCK",
     }).catch((err) => console.error("Upload session log failed:", err));
     onDataReady(parsed, preInfo);
   };
@@ -67,7 +68,7 @@ export function StateHmisLandingPage({ auth, onBack, onDataReady }: Props) {
             Upload HMIS State files
           </div>
           <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-            Upload the monthly Data Item Wise (across districts) Excel exports for the review period. State, month, district roster, and M9 schema are detected from each workbook.
+            Upload monthly Data Item Wise Excel exports across districts or across health blocks. State, month, geographic hierarchy, and M9 schema are detected from each workbook.
           </p>
         </div>
         <div className="px-6 pt-6"><PreUploadInfoForm auth={auth} value={preInfo} onChange={setPreInfo} /></div>
@@ -100,8 +101,8 @@ export function StateHmisLandingPage({ auth, onBack, onDataReady }: Props) {
               <div className="flex items-center gap-2 text-sm font-bold text-emerald-700"><CheckCircle2 className="h-5 w-5" />Files passed structural validation</div>
               <div className="overflow-auto rounded-2xl border border-slate-200 bg-white">
                 <table className="w-full min-w-[760px] text-left text-sm">
-                  <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500"><tr><th className="px-4 py-3">File</th><th className="px-4 py-3">Month</th><th className="px-4 py-3">State</th><th className="px-4 py-3">Districts</th><th className="px-4 py-3">M2</th><th className="px-4 py-3">M9</th></tr></thead>
-                  <tbody>{parsed.fileSummaries.map((summary) => <tr key={summary.fileName} className="border-t border-slate-100"><td className="px-4 py-2.5 font-medium">{summary.fileName}</td><td className="px-4 py-2.5">{summary.month}</td><td className="px-4 py-2.5">{summary.stateName}</td><td className="px-4 py-2.5">{summary.districtCount}</td><td className="px-4 py-2.5">{summary.m2ItemCount}</td><td className="px-4 py-2.5">{summary.m9ItemCount}</td></tr>)}</tbody>
+                  <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500"><tr><th className="px-4 py-3">File</th><th className="px-4 py-3">Month</th><th className="px-4 py-3">Level</th><th className="px-4 py-3">State</th><th className="px-4 py-3">Districts</th><th className="px-4 py-3">Blocks</th><th className="px-4 py-3">M2</th><th className="px-4 py-3">M9</th></tr></thead>
+                  <tbody>{parsed.fileSummaries.map((summary) => <tr key={summary.fileName} className="border-t border-slate-100"><td className="px-4 py-2.5 font-medium">{summary.fileName}</td><td className="px-4 py-2.5">{summary.month}</td><td className="px-4 py-2.5 capitalize">{summary.reportLevel}</td><td className="px-4 py-2.5">{summary.stateName}</td><td className="px-4 py-2.5">{summary.districtCount}</td><td className="px-4 py-2.5">{summary.blockCount || "—"}</td><td className="px-4 py-2.5">{summary.m2ItemCount}</td><td className="px-4 py-2.5">{summary.m9ItemCount}</td></tr>)}</tbody>
                 </table>
               </div>
               {parsed.validationIssues.map((issue, index) => <div key={`${issue.code}-${index}`} className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{issue.message}</div>)}

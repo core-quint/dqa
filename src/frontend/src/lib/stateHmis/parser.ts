@@ -6,14 +6,23 @@ import type {
   StateHmisItem,
   StateHmisMonthRecord,
   StateHmisParsed,
+  StateHmisReportLevel,
+  StateHmisUnitRecord,
   StateHmisValidationIssue,
 } from "./types";
+
+interface ParsedStateUnit {
+  id: string;
+  district: string;
+  block: string | null;
+}
 
 interface ParsedStateFile {
   summary: StateHmisFileSummary;
   items: StateHmisItem[];
-  valuesByDistrict: Record<string, Record<string, number | null>>;
-  invalidByDistrict: Record<string, string[]>;
+  units: ParsedStateUnit[];
+  valuesByUnit: Record<string, Record<string, number | null>>;
+  invalidByUnit: Record<string, string[]>;
 }
 
 const CODE_SHORTS: Record<string, string> = {
@@ -66,6 +75,11 @@ function itemShort(code: string, name: string): string {
   return code;
 }
 
+function unitId(district: string, block: string | null): string {
+  if (!block) return district;
+  return `${normalizeLooseText(district)}::${normalizeLooseText(block)}`;
+}
+
 function parseStateAndMonth(title: string, footerPeriod: string): {
   stateName: string;
   month: string;
@@ -108,24 +122,27 @@ export async function parseStateHmisFile(file: File): Promise<ParsedStateFile[]>
   });
   if (!workbook.SheetNames.length) throw new Error(`${file.name}: workbook has no readable worksheet.`);
 
-  // A workbook may hold one report per sheet (one month each). Parse every sheet
-  // that carries the Across Districts title; each may be the horizontal (single-row)
-  // export or the vertical grid template.
+  // A workbook may hold one report per sheet (one month each). Across-district
+  // reports retain both existing layouts; Across Health Blocks is the flattened
+  // single-row export supplied by HMIS.
   const entries: { sheetName: string; parsed: ParsedStateFile }[] = [];
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) continue;
     const title = String(cellValue(sheet, 0) ?? "").replace(/\s+/g, " ").trim();
-    if (!/Monthly Data Item Wise Report Across Districts/i.test(title)) continue;
+    const acrossDistricts = /Monthly Data Item Wise Report Across Districts/i.test(title);
+    const acrossBlocks = /Monthly Data Item Wise Report Across Health Blocks/i.test(title);
+    if (!acrossDistricts && !acrossBlocks) continue;
     const range = XLSX.utils.decode_range(sheet["!ref"] ?? "A1:A1");
-    const parsed =
-      range.e.r === 0
+    const parsed = acrossBlocks
+      ? parseHorizontalBlockSheet(sheet, range, title, file.name)
+      : range.e.r === 0
         ? parseHorizontalSheet(sheet, range, title, file.name)
         : parseVerticalSheet(sheet, range, title, file.name);
     entries.push({ sheetName, parsed });
   }
   if (!entries.length) {
-    throw new Error(`${file.name}: report type is not Monthly Data Item Wise Report Across Districts.`);
+    throw new Error(`${file.name}: expected an HMIS report Across Districts or Across Health Blocks.`);
   }
   if (entries.length > 1) {
     for (const entry of entries) {
@@ -208,14 +225,23 @@ function parseHorizontalSheet(
     fileName,
     stateName,
     month,
+    reportLevel: "district",
     districtCount: districts.length,
+    blockCount: 0,
     itemCount: items.length,
     m2ItemCount: items.filter((item) => /^M2\b/i.test(item.category)).length,
     m9ItemCount: items.filter((item) => /^M9\b/i.test(item.category)).length,
     districts,
+    unitIds: districts,
     itemCodes: items.map((item) => item.code),
   };
-  return { summary, items, valuesByDistrict, invalidByDistrict };
+  return {
+    summary,
+    items,
+    units: districts.map((district) => ({ id: district, district, block: null })),
+    valuesByUnit: valuesByDistrict,
+    invalidByUnit: invalidByDistrict,
+  };
 }
 
 // Vertical grid template: header rows Category / Data Item Code / Data Item Name /
@@ -317,14 +343,152 @@ function parseVerticalSheet(
     fileName,
     stateName,
     month,
+    reportLevel: "district",
     districtCount: districts.length,
+    blockCount: 0,
     itemCount: items.length,
     m2ItemCount: items.filter((item) => /^M2\b/i.test(item.category)).length,
     m9ItemCount: items.filter((item) => /^M9\b/i.test(item.category)).length,
     districts,
+    unitIds: districts,
     itemCodes: items.map((item) => item.code),
   };
-  return { summary, items, valuesByDistrict, invalidByDistrict };
+  return {
+    summary,
+    items,
+    units: districts.map((district) => ({ id: district, district, block: null })),
+    valuesByUnit: valuesByDistrict,
+    invalidByUnit: invalidByDistrict,
+  };
+}
+
+function parseHorizontalBlockSheet(
+  sheet: XLSX.WorkSheet,
+  range: XLSX.Range,
+  title: string,
+  fileName: string,
+): ParsedStateFile {
+  if (range.e.r !== 0) {
+    throw new Error(`${fileName}: the Across Health Blocks worksheet layout is not supported.`);
+  }
+
+  let footerPeriod = "";
+  for (let col = range.s.c; col <= range.e.c; col += 1) {
+    if (normalizeLooseText(String(cellValue(sheet, col) ?? "")) === "selected period :") {
+      footerPeriod = String(cellValue(sheet, col + 1) ?? "").trim();
+      break;
+    }
+  }
+  const { stateName, month } = parseStateAndMonth(title, footerPeriod);
+  const categoryCol = Array.from({ length: range.e.c + 1 }, (_, col) => col).find((col) =>
+    /^M\d+\b/i.test(String(cellValue(sheet, col) ?? "").trim()),
+  );
+  if (categoryCol === undefined) throw new Error(`${fileName}: no HMIS category blocks were found.`);
+
+  const merges = sheet["!merges"] ?? [];
+  const stateHeaderCol = Array.from({ length: categoryCol }, (_, col) => col).find(
+    (col) => normalizeLooseText(String(cellValue(sheet, col) ?? "")) === normalizeLooseText(stateName),
+  );
+  if (stateHeaderCol === undefined) {
+    throw new Error(`${fileName}: the state block-header group could not be identified.`);
+  }
+  const stateMerge = merges.find((merge) => merge.s.r === 0 && merge.s.c === stateHeaderCol);
+  if (!stateMerge) throw new Error(`${fileName}: the merged state block header is missing.`);
+
+  const blockCount = stateMerge.e.c - stateMerge.s.c + 1;
+  const blockStartCol = categoryCol - blockCount;
+  if (blockStartCol <= stateMerge.e.c) {
+    throw new Error(`${fileName}: the health block header section is malformed.`);
+  }
+
+  const blockNames: string[] = [];
+  for (let col = blockStartCol; col < categoryCol; col += 1) {
+    const block = String(cellValue(sheet, col) ?? "").replace(/\s+/g, " ").trim();
+    if (!block) throw new Error(`${fileName}: a health block name is blank in the header.`);
+    blockNames.push(block);
+  }
+
+  const districtHeaders: { name: string; width: number }[] = [];
+  for (let col = stateMerge.e.c + 1; col < blockStartCol; col += 1) {
+    const name = String(cellValue(sheet, col) ?? "").replace(/\s+/g, " ").trim();
+    if (!name) continue;
+    const merge = merges.find((candidate) => candidate.s.r === 0 && candidate.s.c === col);
+    districtHeaders.push({ name, width: merge ? merge.e.c - merge.s.c + 1 : 1 });
+  }
+  if (!districtHeaders.length) throw new Error(`${fileName}: no district groups were found.`);
+
+  // HMIS's flattened XLS export writes the first district as an unmerged cell,
+  // while subsequent district spans retain their block-count width. Reconcile
+  // the first span from the state total so this remains state/roster agnostic.
+  const representedWidth = districtHeaders.reduce((sum, entry) => sum + entry.width, 0);
+  districtHeaders[0].width += blockCount - representedWidth;
+  if (districtHeaders.some((entry) => entry.width <= 0)) {
+    throw new Error(`${fileName}: district-to-block grouping could not be reconciled.`);
+  }
+
+  const units: ParsedStateUnit[] = [];
+  let blockIndex = 0;
+  for (const district of districtHeaders) {
+    for (let index = 0; index < district.width; index += 1) {
+      const block = blockNames[blockIndex];
+      if (!block) throw new Error(`${fileName}: district block spans exceed the block roster.`);
+      units.push({ id: unitId(district.name, block), district: district.name, block });
+      blockIndex += 1;
+    }
+  }
+  if (blockIndex !== blockNames.length || new Set(units.map((unit) => unit.id)).size !== units.length) {
+    throw new Error(`${fileName}: district and health block headers are inconsistent or duplicated.`);
+  }
+
+  const items: StateHmisItem[] = [];
+  const valuesByUnit: Record<string, Record<string, number | null>> = Object.fromEntries(
+    units.map((unit) => [unit.id, {}]),
+  );
+  const invalidByUnit: Record<string, string[]> = Object.fromEntries(
+    units.map((unit) => [unit.id, []]),
+  );
+  let category = "";
+  for (const nameMerge of merges) {
+    if (
+      nameMerge.s.r !== 0 ||
+      nameMerge.e.r !== 0 ||
+      nameMerge.s.c < categoryCol ||
+      nameMerge.e.c - nameMerge.s.c + 1 !== 5
+    ) continue;
+    const codeCol = nameMerge.s.c - 1;
+    const possibleCategory = String(cellValue(sheet, codeCol - 1) ?? "").trim();
+    if (/^M\d+\b/i.test(possibleCategory)) category = possibleCategory;
+    const code = normalizeStateHmisCode(cellValue(sheet, codeCol));
+    const name = String(cellValue(sheet, nameMerge.s.c) ?? "").replace(/\s+/g, " ").trim();
+    if (!/^\d/.test(code) || !name || !category) continue;
+    items.push({ code, name, category, short: itemShort(code, name) });
+    const valuesStart = nameMerge.e.c + 1;
+    units.forEach((unit, index) => {
+      const parsed = parseCount(cellValue(sheet, valuesStart + index));
+      valuesByUnit[unit.id][code] = parsed.value;
+      if (parsed.invalid) invalidByUnit[unit.id].push(code);
+    });
+  }
+  if (!items.some((item) => /^M9\b/i.test(item.category))) {
+    throw new Error(`${fileName}: no M9 Child Immunisation data items were found.`);
+  }
+
+  const districts = districtHeaders.map((entry) => entry.name);
+  const summary: StateHmisFileSummary = {
+    fileName,
+    stateName,
+    month,
+    reportLevel: "block",
+    districtCount: districts.length,
+    blockCount: units.length,
+    itemCount: items.length,
+    m2ItemCount: items.filter((item) => /^M2\b/i.test(item.category)).length,
+    m9ItemCount: items.filter((item) => /^M9\b/i.test(item.category)).length,
+    districts,
+    unitIds: units.map((unit) => unit.id),
+    itemCodes: items.map((item) => item.code),
+  };
+  return { summary, items, units, valuesByUnit, invalidByUnit };
 }
 
 function monthsBetween(start: string, end: string): string[] {
@@ -349,6 +513,10 @@ export async function parseStateHmisFiles(files: File[]): Promise<StateHmisParse
   if (parsedFiles.some((entry) => normalizeLooseText(entry.summary.stateName) !== normalizeLooseText(stateName))) {
     throw new Error("All uploaded state HMIS files must belong to the same state.");
   }
+  const reportLevel: StateHmisReportLevel = parsedFiles[0].summary.reportLevel;
+  if (parsedFiles.some((entry) => entry.summary.reportLevel !== reportLevel)) {
+    throw new Error("Across Districts and Across Health Blocks reports cannot be mixed in one analysis.");
+  }
   const duplicateMonth = parsedFiles.find(
     (entry, index) => parsedFiles.findIndex((candidate) => candidate.summary.month === entry.summary.month) !== index,
   );
@@ -356,6 +524,12 @@ export async function parseStateHmisFiles(files: File[]): Promise<StateHmisParse
 
   const validationIssues: StateHmisValidationIssue[] = [];
   const districts = [...new Set(parsedFiles.flatMap((entry) => entry.summary.districts))].sort((a, b) => a.localeCompare(b));
+  const unitMeta = new Map<string, ParsedStateUnit>();
+  for (const entry of parsedFiles) for (const unit of entry.units) unitMeta.set(unit.id, unitMeta.get(unit.id) ?? unit);
+  const unitIds = [...unitMeta.keys()].sort((a, b) => {
+    const left = unitMeta.get(a)!; const right = unitMeta.get(b)!;
+    return left.district.localeCompare(right.district) || (left.block ?? "").localeCompare(right.block ?? "");
+  });
   const items: Record<string, StateHmisItem> = {};
   const orderedItemCodes: string[] = [];
   for (const entry of parsedFiles) {
@@ -373,6 +547,14 @@ export async function parseStateHmisFiles(files: File[]): Promise<StateHmisParse
       code: "MISSING_DISTRICTS",
       fileName: entry.summary.fileName,
       message: `${missingDistricts.length} district(s) missing in ${entry.summary.month}: ${missingDistricts.join(", ")}.`,
+    });
+    const presentUnits = new Set(entry.summary.unitIds);
+    const missingUnits = unitIds.filter((id) => !presentUnits.has(id));
+    if (reportLevel === "block" && missingUnits.length) validationIssues.push({
+      severity: "warning",
+      code: "MISSING_BLOCKS",
+      fileName: entry.summary.fileName,
+      message: `${missingUnits.length} health block(s) are missing in ${entry.summary.month}.`,
     });
     const codeSet = new Set(entry.summary.itemCodes);
     const missingCodes = [...allItemCodes].filter((code) => !codeSet.has(code));
@@ -392,29 +574,50 @@ export async function parseStateHmisFiles(files: File[]): Promise<StateHmisParse
     message: `The uploaded period has missing month(s): ${missingMonths.join(", ")}.`,
   });
 
-  const districtData: Record<string, StateHmisDistrictRecord> = Object.fromEntries(
-    districts.map((district) => [district, { district, months: {} }]),
+  const unitData: Record<string, StateHmisUnitRecord> = Object.fromEntries(
+    unitIds.map((id) => {
+      const unit = unitMeta.get(id)!;
+      return [id, { ...unit, months: {} }];
+    }),
   );
   for (const entry of parsedFiles) {
-    for (const district of entry.summary.districts) {
+    for (const unit of entry.units) {
       const monthRecord: StateHmisMonthRecord = {
         month: entry.summary.month,
-        values: entry.valuesByDistrict[district],
-        invalidCodes: entry.invalidByDistrict[district],
+        values: entry.valuesByUnit[unit.id],
+        invalidCodes: entry.invalidByUnit[unit.id],
         sourceFile: entry.summary.fileName,
       };
-      districtData[district].months[entry.summary.month] = monthRecord;
+      unitData[unit.id].months[entry.summary.month] = monthRecord;
     }
   }
+  const districtData: Record<string, StateHmisDistrictRecord> = reportLevel === "district"
+    ? Object.fromEntries(districts.map((district) => [district, {
+        district,
+        months: unitData[district]?.months ?? {},
+      }]))
+    : {};
+  const blocks = unitIds
+    .map((id) => unitMeta.get(id)!)
+    .filter((unit): unit is ParsedStateUnit & { block: string } => Boolean(unit.block))
+    .map((unit) => ({ id: unit.id, district: unit.district, block: unit.block }));
+  const blocksByDistrict = Object.fromEntries(districts.map((district) => [
+    district,
+    blocks.filter((block) => block.district === district).map((block) => block.id),
+  ]));
   return {
     portal: "HMIS_STATE",
     stateName,
+    reportLevel,
     fileNames: parsedFiles.map((entry) => entry.summary.fileName),
     districts,
+    blocks,
+    blocksByDistrict,
     months: Object.fromEntries(uploadedMonths.map((month) => [month, monthShortLabel(month)])),
     items,
     orderedItemCodes,
     districtData,
+    unitData,
     fileSummaries: parsedFiles.map((entry) => entry.summary),
     validationIssues,
   };
