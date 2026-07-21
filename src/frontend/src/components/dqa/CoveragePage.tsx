@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarRange,
+  ChevronRight,
   Download,
   Layers3,
   MapPinned,
+  MousePointer2,
   RefreshCcw,
   RotateCcw,
   Route,
@@ -32,7 +34,7 @@ import {
 } from "../../lib/maps/topology";
 import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
 
-type PortalFilter = "ALL" | "HMIS" | "UWIN" | "PCTS";
+type PortalFilter = "ALL" | "HMIS" | "UWIN" | "HMIS_STATE" | "PCTS";
 type CoverageIndicator =
   | "count"
   | "overall"
@@ -79,6 +81,7 @@ interface HoverState {
 }
 
 const LEVEL_OPTIONS: Array<{ value: SnapshotDqaLevel; label: string }> = [
+  { value: "STATE", label: "State" },
   { value: "DISTRICT", label: "District" },
   { value: "BLOCK", label: "Block" },
 ];
@@ -95,6 +98,7 @@ const INDICATOR_OPTIONS: Array<{ value: CoverageIndicator; label: string }> = [
 const portalLabelMap: Record<PortalFilter, string> = {
   ALL: "All portals",
   HMIS: "HMIS",
+  HMIS_STATE: "State DQA",
   UWIN: "U-WIN",
   PCTS: "PCTS",
 };
@@ -129,6 +133,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
   const svgRef = useRef<SVGSVGElement>(null);
   const boundsRef = useRef<Bounds | null>(null);
+  const homeBoundsRef = useRef<Bounds | null>(null);
   const blocksLoadingRef = useRef(false);
   const dragRef = useRef<{
     startX: number;
@@ -184,7 +189,13 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   }, [hasHmisAccess, hasPctsAccess, portal]);
 
   useEffect(() => {
-    if (level !== "BLOCK" || blocksTopology || blocksLoadingRef.current) return;
+    if (
+      level !== "BLOCK" ||
+      selectedState === "ALL" ||
+      selectedDistrict === "ALL" ||
+      blocksTopology ||
+      blocksLoadingRef.current
+    ) return;
     blocksLoadingRef.current = true;
     let mounted = true;
     setLoadingBlocks(true);
@@ -209,7 +220,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       });
 
     return () => { mounted = false; };
-  }, [blocksTopology, level]);
+  }, [blocksTopology, level, selectedDistrict, selectedState]);
 
   // Reset zoom when geography scope changes
   useEffect(() => {
@@ -229,6 +240,13 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       const [bMinX, bMinY, bMaxX, bMaxY] = b;
       const bW = bMaxX - bMinX;
       const bH = bMaxY - bMinY;
+      const home = homeBoundsRef.current;
+      const homeW = home ? home[2] - home[0] : bW;
+      if (e.deltaY > 0 && bW >= homeW) {
+        setZoomBounds(null);
+        return;
+      }
+      if (e.deltaY < 0 && bW <= homeW / 24) return;
       const mouseX = bMinX + ((e.clientX - rect.left) / rect.width) * bW;
       const mouseY = bMinY + ((e.clientY - rect.top) / rect.height) * bH;
       const factor = e.deltaY < 0 ? 0.78 : 1.28;
@@ -239,7 +257,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
     svgEl.addEventListener("wheel", onWheel, { passive: false });
     return () => svgEl.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [blocksTopology, districtsTopology, level, loadingSnapshots, selectedDistrict, selectedState, statesTopology]);
 
   const stateFeatures = useMemo(
     () => (statesTopology ? topologyToFeatures(statesTopology, "states") : []),
@@ -338,8 +356,23 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       ? (resolveOptionValue(selectedDistrict, districtOptions) ?? selectedDistrict)
       : selectedDistrict;
 
+  // Progressive navigation keeps national maps legible: national users first
+  // see states, then districts after choosing a state, and blocks only after a
+  // district is chosen. The selected DQA level still controls the data being
+  // aggregated into those shapes.
+  const displayGrain: SnapshotDqaLevel =
+    level === "STATE" || visibleStateValue === "ALL"
+      ? "STATE"
+      : level === "BLOCK" && visibleDistrictValue !== "ALL"
+        ? "BLOCK"
+        : "DISTRICT";
+
   const visibleFeatures = useMemo(() => {
-    const pool = level === "BLOCK" ? blockFeatures : districtFeatures;
+    const pool = displayGrain === "STATE"
+      ? stateFeatures
+      : displayGrain === "BLOCK"
+        ? blockFeatures
+        : districtFeatures;
     return pool.filter((f) => {
       if (
         visibleStateValue !== "ALL" &&
@@ -348,15 +381,17 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
         return false;
       if (
         visibleDistrictValue !== "ALL" &&
+        "district_name" in f.properties &&
         normalizeGeoName(f.properties.district_name) !== normalizeGeoName(visibleDistrictValue)
       )
         return false;
       return true;
     });
-  }, [blockFeatures, districtFeatures, level, visibleDistrictValue, visibleStateValue]);
+  }, [blockFeatures, displayGrain, districtFeatures, stateFeatures, visibleDistrictValue, visibleStateValue]);
 
   const outlineFeatures = useMemo(() => {
-    const pool = level === "BLOCK" ? districtFeatures : stateFeatures;
+    if (displayGrain === "STATE") return [];
+    const pool = displayGrain === "BLOCK" ? districtFeatures : stateFeatures;
     return pool.filter((f) => {
       if (
         visibleStateValue !== "ALL" &&
@@ -364,7 +399,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       )
         return false;
       if (
-        level === "BLOCK" &&
+        displayGrain === "BLOCK" &&
         visibleDistrictValue !== "ALL" &&
         "district_name" in f.properties &&
         normalizeGeoName((f.properties as DistrictShapeProps).district_name) !==
@@ -373,7 +408,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
         return false;
       return true;
     });
-  }, [districtFeatures, level, stateFeatures, visibleDistrictValue, visibleStateValue]);
+  }, [displayGrain, districtFeatures, stateFeatures, visibleDistrictValue, visibleStateValue]);
 
   const filteredSnapshots = useMemo(() => {
     return snapshots.filter((s) => {
@@ -400,15 +435,15 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   }, [fromMonth, hasHmisAccess, hasPctsAccess, level, portal, snapshots, toMonth, visibleDistrictValue, visibleStateValue]);
 
   const featureLookup = useMemo(
-    () => buildFeatureLookup(level, visibleFeatures),
-    [level, visibleFeatures],
+    () => buildFeatureLookup(displayGrain, visibleFeatures),
+    [displayGrain, visibleFeatures],
   );
 
   const metricsByFeature = useMemo(() => {
     const buckets = new Map<string, { count: number; sum: number; valueCount: number }>();
 
     for (const snapshot of filteredSnapshots) {
-      const match = matchFeature(featureLookup, snapshot, level);
+      const match = matchFeature(featureLookup, snapshot, displayGrain);
       if (!match) continue;
       const current = buckets.get(match.id) ?? { count: 0, sum: 0, valueCount: 0 };
       current.count += 1;
@@ -436,7 +471,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       });
     }
     return metrics;
-  }, [featureLookup, filteredSnapshots, indicator, level, visibleFeatures]);
+  }, [displayGrain, featureLookup, filteredSnapshots, indicator, visibleFeatures]);
 
   const valueExtent = useMemo(() => {
     const values = [...metricsByFeature.values()]
@@ -451,6 +486,20 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     () => [...metricsByFeature.values()].filter((m) => m.snapshots > 0).length,
     [metricsByFeature],
   );
+  const uncoveredRegions = useMemo(
+    () => visibleFeatures
+      .filter((feature) => (metricsByFeature.get(feature.id)?.snapshots ?? 0) === 0)
+      .map((feature) => featurePrimaryLabel(feature, displayGrain))
+      .sort((a, b) => a.localeCompare(b)),
+    [displayGrain, metricsByFeature, visibleFeatures],
+  );
+  const coveragePercent = visibleFeatures.length
+    ? (regionsWithData / visibleFeatures.length) * 100
+    : 0;
+  const mappedSnapshotCount = [...metricsByFeature.values()].reduce(
+    (sum, metric) => sum + metric.snapshots,
+    0,
+  );
 
   const averageValue = useMemo(() => {
     const values = [...metricsByFeature.values()]
@@ -462,7 +511,11 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
   const mapBounds = useMemo(() => {
     const fallback =
-      level === "BLOCK"
+      displayGrain === "STATE"
+        ? statesTopology
+          ? topologyBounds(statesTopology)
+          : undefined
+        : displayGrain === "BLOCK"
         ? blocksTopology
           ? topologyBounds(blocksTopology)
           : undefined
@@ -470,9 +523,10 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
           ? topologyBounds(districtsTopology)
           : undefined;
     return padBounds(combineBounds(visibleFeatures, fallback), 0.025);
-  }, [blocksTopology, districtsTopology, level, visibleFeatures]);
+  }, [blocksTopology, displayGrain, districtsTopology, statesTopology, visibleFeatures]);
 
   const effectiveBounds = zoomBounds ?? mapBounds;
+  homeBoundsRef.current = mapBounds;
   boundsRef.current = effectiveBounds;
 
   const showLabels = visibleFeatures.length > 0 && visibleFeatures.length <= 55;
@@ -492,7 +546,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       .slice(0, 6)
       .map(mapEntry)
       .filter(
-        (r): r is { feature: MapFeature<DistrictShapeProps | BlockShapeProps>; metric: CoverageMetric } =>
+        (r): r is { feature: MapFeature<StateShapeProps | DistrictShapeProps | BlockShapeProps>; metric: CoverageMetric } =>
           r !== null,
       );
     const bottom =
@@ -504,7 +558,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
             .map(mapEntry)
             .filter(
               (r): r is {
-                feature: MapFeature<DistrictShapeProps | BlockShapeProps>;
+                feature: MapFeature<StateShapeProps | DistrictShapeProps | BlockShapeProps>;
                 metric: CoverageMetric;
               } => r !== null,
             );
@@ -524,6 +578,10 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
   function zoomOutStep() {
     const b = boundsRef.current ?? mapBounds;
+    if (b[2] - b[0] >= mapBounds[2] - mapBounds[0]) {
+      setZoomBounds(null);
+      return;
+    }
     const cx = (b[0] + b[2]) / 2;
     const cy = (b[1] + b[3]) / 2;
     const hw = (b[2] - b[0]) * 0.64;
@@ -636,37 +694,65 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     loadingSnapshots ||
     !statesTopology ||
     !districtsTopology ||
-    (level === "BLOCK" && !blocksTopology);
+    (displayGrain === "BLOCK" && !blocksTopology);
   const canChangeState = auth.role === "admin" || auth.level === "NATIONAL";
   const canChangeDistrict =
     (auth.role === "admin" || auth.level === "NATIONAL" || auth.level === "STATE") &&
     visibleStateValue !== "ALL";
 
   const isZoomed = zoomBounds !== null;
+  const canNavigateUp =
+    visibleDistrictValue !== "ALL" ||
+    (visibleStateValue !== "ALL" && canChangeState);
+
+  function navigateUp() {
+    if (visibleDistrictValue !== "ALL") {
+      setSelectedDistrict("ALL");
+    } else if (canChangeState) {
+      setSelectedState("ALL");
+      setSelectedDistrict("ALL");
+    }
+    setHovered(null);
+    setZoomBounds(null);
+  }
+
+  function drillIntoFeature(
+    feature: MapFeature<StateShapeProps | DistrictShapeProps | BlockShapeProps>,
+  ) {
+    setSelectedState(feature.properties.state_name);
+    if ("district_name" in feature.properties) {
+      setSelectedDistrict(feature.properties.district_name);
+    }
+    setHovered(null);
+    setZoomBounds(null);
+  }
 
   return (
     <div className="mx-auto max-w-[1440px] px-4 py-6 md:px-6 md:py-8">
       <div className="space-y-5">
         {/* Header */}
-        <div className="border-b border-slate-200 bg-white px-6 py-4">
-          <h1 className="text-lg font-semibold text-slate-900">DQA Coverage</h1>
+        <div className="overflow-hidden rounded-3xl bg-[linear-gradient(135deg,#0f172a_0%,#172554_58%,#0f766e_100%)] px-6 py-5 text-white shadow-[0_24px_60px_rgba(15,23,42,0.18)]">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15"><MapPinned className="h-5 w-5" /></div>
+            <div><div className="text-[10px] font-bold uppercase tracking-[0.24em] text-white/55">Geographic intelligence</div><h1 className="mt-1 text-2xl font-bold">DQA Coverage Explorer</h1><p className="mt-1 text-xs leading-5 text-white/65">Navigate from national coverage to state, district and block priorities without losing programme context.</p></div>
+          </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-5 gap-y-1">
-            <span className="text-xs text-slate-500">
-              Records: <strong className="font-semibold text-slate-700">{filteredSnapshots.length}</strong>
+            <span className="text-xs text-white/60">
+              Records: <strong className="font-semibold text-white">{filteredSnapshots.length}</strong>
             </span>
-            <span className="text-xs text-slate-500">
-              Regions: <strong className="font-semibold text-slate-700">{regionsWithData}</strong>
+            <span className="text-xs text-white/60">
+              Regions covered: <strong className="font-semibold text-white">{regionsWithData} / {visibleFeatures.length}</strong>
             </span>
-            <span className="text-xs text-slate-500">
-              Indicator: <strong className="font-semibold text-slate-700">{INDICATOR_OPTIONS.find((o) => o.value === indicator)?.label ?? "Number of DQA"}</strong>
+            <span className="text-xs text-white/60">
+              Indicator: <strong className="font-semibold text-white">{INDICATOR_OPTIONS.find((o) => o.value === indicator)?.label ?? "Number of DQA"}</strong>
             </span>
             {averageValue !== null ? (
-              <span className="text-xs text-slate-500">
-                Avg: <strong className="font-semibold text-slate-700">{formatMetric(averageValue, indicator)}</strong>
+              <span className="text-xs text-white/60">
+                Average: <strong className="font-semibold text-white">{formatMetric(averageValue, indicator)}</strong>
               </span>
             ) : null}
-            <span className="text-xs text-slate-500">
-              {scopeLabel} · {portalLabelMap[portal]} · {level === "DISTRICT" ? "District DQA" : "Block DQA"}
+            <span className="text-xs text-white/60">
+              {scopeLabel} · {portalLabelMap[portal]} · {level === "STATE" ? "State DQA" : level === "DISTRICT" ? "District DQA" : "Block DQA"}
             </span>
           </div>
         </div>
@@ -677,7 +763,16 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
             <Field label="Level of DQA">
               <select
                 value={level}
-                onChange={(e) => setLevel(e.target.value as SnapshotDqaLevel)}
+                onChange={(e) => {
+                  const next = e.target.value as SnapshotDqaLevel;
+                  setLevel(next);
+                  if (next === "STATE") {
+                    setPortal("HMIS_STATE");
+                    setSelectedDistrict("ALL");
+                  } else if (portal === "HMIS_STATE") {
+                    setPortal("ALL");
+                  }
+                }}
                 className={selectClassName}
               >
                 {LEVEL_OPTIONS.map((o) => (
@@ -691,11 +786,21 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
             <Field label="Portal">
               <select
                 value={portal}
-                onChange={(e) => setPortal(e.target.value as PortalFilter)}
+                onChange={(e) => {
+                  const next = e.target.value as PortalFilter;
+                  setPortal(next);
+                  if (next === "HMIS_STATE") {
+                    setLevel("STATE");
+                    setSelectedDistrict("ALL");
+                  } else if (level === "STATE") {
+                    setLevel("DISTRICT");
+                  }
+                }}
                 className={selectClassName}
               >
                 <option value="ALL">All portals</option>
                 {hasHmisAccess ? <option value="HMIS">HMIS</option> : null}
+                <option value="HMIS_STATE">State DQA</option>
                 <option value="UWIN">U-WIN</option>
                 {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
               </select>
@@ -724,7 +829,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
               <select
                 value={visibleDistrictValue}
                 onChange={(e) => setSelectedDistrict(e.target.value)}
-                disabled={!canChangeDistrict}
+                disabled={!canChangeDistrict || level === "STATE"}
                 className={selectClassName}
               >
                 <option value="ALL">All districts</option>
@@ -803,7 +908,14 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                   Interactive map
                 </div>
                 <div className="mt-1 text-lg font-bold text-slate-950">
-                  {level === "DISTRICT" ? "District coverage" : "Block coverage"}
+                  {displayGrain === "STATE" ? "State overview" : displayGrain === "DISTRICT" ? "District overview" : "Block overview"}
+                </div>
+                <div className="mt-0.5 text-[11px] font-medium text-slate-500">{level.charAt(0) + level.slice(1).toLowerCase()} DQA reviews aggregated to the visible {displayGrain.toLowerCase()} boundaries</div>
+                <div className="mt-2 flex flex-wrap items-center gap-1 text-xs font-semibold">
+                  <button type="button" onClick={() => { if (canChangeState) { setSelectedState("ALL"); setSelectedDistrict("ALL"); } }} disabled={!canChangeState} className="rounded-lg px-1.5 py-1 text-sky-700 transition hover:bg-sky-50 disabled:text-slate-400">India</button>
+                  {visibleStateValue !== "ALL" ? <><ChevronRight className="h-3 w-3 text-slate-300" /><button type="button" onClick={() => setSelectedDistrict("ALL")} className="rounded-lg px-1.5 py-1 text-sky-700 transition hover:bg-sky-50">{visibleStateValue}</button></> : null}
+                  {visibleDistrictValue !== "ALL" ? <><ChevronRight className="h-3 w-3 text-slate-300" /><span className="rounded-lg px-1.5 py-1 text-slate-700">{visibleDistrictValue}</span></> : null}
+                  {canNavigateUp ? <button type="button" onClick={navigateUp} className="ml-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-600 transition hover:bg-slate-50">Back one level</button> : null}
                 </div>
               </div>
 
@@ -921,15 +1033,19 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
                 {/* Interaction hint */}
                 <div className="absolute left-4 top-4 z-10 rounded-xl border border-slate-200/80 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-slate-400 shadow-sm backdrop-blur-sm">
-                  {isZoomed
-                    ? "Scroll to zoom · drag to pan · click region"
-                    : "Scroll or +/− to zoom · drag to pan"}
+                  <span className="inline-flex items-center gap-1.5"><MousePointer2 className="h-3 w-3" />{
+                    displayGrain === "STATE" && level !== "STATE"
+                      ? "Select a state to open districts"
+                      : displayGrain === "DISTRICT" && level === "BLOCK"
+                        ? "Select a district to open blocks"
+                        : "Select a region to focus · drag to pan"
+                  }</span>
                 </div>
 
                 <svg
                   ref={svgRef}
                   viewBox={viewBoxFromBounds(effectiveBounds)}
-                  className={`h-[72vh] min-h-[520px] w-full select-none ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+                  className={`h-[62vh] min-h-[420px] w-full select-none md:h-[68vh] md:min-h-[540px] ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
                   preserveAspectRatio="xMidYMid meet"
                   onMouseDown={handleMouseDown}
                   onMouseMove={handleSVGMouseMove}
@@ -955,6 +1071,9 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                       return (
                         <path
                           key={feature.id}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`${featurePrimaryLabel(feature, displayGrain)}: ${metric?.value !== null && metric?.value !== undefined ? formatMetric(metric.value, indicator) : "No data"}`}
                           d={feature.path}
                           fill={fill}
                           fillRule="evenodd"
@@ -968,8 +1087,8 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                               x: e.clientX,
                               y: e.clientY,
                               featureId: feature.id,
-                              label: featurePrimaryLabel(feature, level),
-                              sublabel: featureSecondaryLabel(feature, level),
+                              label: featurePrimaryLabel(feature, displayGrain),
+                              sublabel: featureSecondaryLabel(feature, displayGrain),
                               valueLabel:
                                 metric?.value !== null && metric?.value !== undefined
                                   ? formatMetric(metric.value, indicator)
@@ -982,11 +1101,12 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                           }}
                           onClick={() => {
                             if (wasDragRef.current) return;
-                            setSelectedState(feature.properties.state_name);
-                            if ("district_name" in feature.properties) {
-                              setSelectedDistrict(
-                                (feature.properties as DistrictShapeProps).district_name,
-                              );
+                            drillIntoFeature(feature);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              drillIntoFeature(feature);
                             }
                           }}
                         />
@@ -1002,9 +1122,9 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                         d={feature.path}
                         fill="none"
                         stroke={
-                          level === "BLOCK" ? "rgba(15,23,42,0.32)" : "rgba(15,23,42,0.42)"
+                          displayGrain === "BLOCK" ? "rgba(15,23,42,0.32)" : "rgba(15,23,42,0.42)"
                         }
-                        strokeWidth={level === "BLOCK" ? 1.5 : 2}
+                        strokeWidth={displayGrain === "BLOCK" ? 1.5 : 2}
                         vectorEffect="non-scaling-stroke"
                       />
                     ))}
@@ -1019,7 +1139,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                       const viewW = effectiveBounds[2] - effectiveBounds[0];
                       if (featureW < viewW * 0.035) return null;
 
-                      const raw = featurePrimaryLabel(feature, level);
+                      const raw = featurePrimaryLabel(feature, displayGrain);
                       const label = raw.length > 14 ? raw.slice(0, 12) + "…" : raw;
 
                       return (
@@ -1076,6 +1196,20 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 </div>
               </div>
             ) : null}
+
+            {!loadingMap && visibleFeatures.length > 0 ? (
+              <div className="mt-4 grid gap-3 rounded-2xl border border-slate-200/70 bg-white/75 p-4 lg:grid-cols-[260px_1fr]">
+                <div>
+                  <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500"><span>Geographic coverage</span><span>{coveragePercent.toFixed(0)}%</span></div>
+                  <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-[linear-gradient(90deg,#0f766e,#2563eb)]" style={{ width: `${coveragePercent}%` }} /></div>
+                  <div className="mt-2 text-[11px] text-slate-500">{regionsWithData} of {visibleFeatures.length} {displayGrain.toLowerCase()}s · {mappedSnapshotCount} mapped review{mappedSnapshotCount !== 1 ? "s" : ""}</div>
+                </div>
+                <div className="lg:border-l lg:border-slate-200 lg:pl-4">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Coverage gaps</div>
+                  {uncoveredRegions.length ? <div className="mt-2 flex flex-wrap gap-1.5">{uncoveredRegions.slice(0, 10).map((region) => <span key={region} className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-600">{region}</span>)}{uncoveredRegions.length > 10 ? <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-bold text-white">+{uncoveredRegions.length - 10} more</span> : null}</div> : <div className="mt-2 text-xs font-semibold text-emerald-700">Every visible region has at least one mapped review.</div>}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {/* Ranked regions table */}
@@ -1092,10 +1226,11 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                         <RegionRow
                           key={feature.id}
                           rank={i + 1}
-                          label={featurePrimaryLabel(feature, level)}
-                          sublabel={featureSecondaryLabel(feature, level)}
+                          label={featurePrimaryLabel(feature, displayGrain)}
+                          sublabel={featureSecondaryLabel(feature, displayGrain)}
                           value={formatMetric(metric.value!, indicator)}
                           color={heatColor(metric.value, valueExtent[1])}
+                          onClick={() => drillIntoFeature(feature)}
                         />
                       ))}
                     </div>
@@ -1112,10 +1247,11 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                         <RegionRow
                           key={feature.id}
                           rank={i + 1}
-                          label={featurePrimaryLabel(feature, level)}
-                          sublabel={featureSecondaryLabel(feature, level)}
+                          label={featurePrimaryLabel(feature, displayGrain)}
+                          sublabel={featureSecondaryLabel(feature, displayGrain)}
                           value={formatMetric(metric.value!, indicator)}
                           color={heatColor(metric.value, valueExtent[1])}
+                          onClick={() => drillIntoFeature(feature)}
                         />
                       ))}
                     </div>
@@ -1169,15 +1305,17 @@ function RegionRow({
   sublabel,
   value,
   color,
+  onClick,
 }: {
   rank: number;
   label: string;
   sublabel: string;
   value: string;
   color: string;
+  onClick: () => void;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white/70 px-3 py-2.5">
+    <button type="button" onClick={onClick} className="group flex w-full items-center gap-3 rounded-xl border border-slate-100 bg-white/70 px-3 py-2.5 text-left transition hover:border-slate-200 hover:bg-white hover:shadow-sm">
       <div className="min-w-[20px] text-[11px] font-bold text-slate-400">#{rank}</div>
       <div className="h-3 w-3 flex-none rounded-full" style={{ backgroundColor: color }} />
       <div className="min-w-0 flex-1">
@@ -1185,7 +1323,8 @@ function RegionRow({
         <div className="truncate text-[10px] text-slate-400">{sublabel}</div>
       </div>
       <div className="text-sm font-bold text-slate-900">{value}</div>
-    </div>
+      <ChevronRight className="h-3.5 w-3.5 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
+    </button>
   );
 }
 
@@ -1205,9 +1344,10 @@ function initialDistrictValue(auth: AuthState) {
 }
 
 function featurePrimaryLabel(
-  feature: MapFeature<DistrictShapeProps | BlockShapeProps>,
+  feature: MapFeature<StateShapeProps | DistrictShapeProps | BlockShapeProps>,
   level: SnapshotDqaLevel,
 ) {
+  if (level === "STATE") return feature.properties.state_name;
   if (level === "BLOCK" && "block_name" in feature.properties)
     return feature.properties.block_name;
   return (feature.properties as DistrictShapeProps).district_name;
@@ -1217,6 +1357,7 @@ function featureSecondaryLabel(
   feature: MapFeature<StateShapeProps | DistrictShapeProps | BlockShapeProps>,
   level: SnapshotDqaLevel,
 ) {
+  if (level === "STATE") return "State";
   if (level === "BLOCK" && "block_name" in feature.properties) {
     const p = feature.properties as BlockShapeProps;
     return `${p.district_name}, ${p.state_name}`;
@@ -1230,31 +1371,35 @@ function viewBoxFromBounds([minX, minY, maxX, maxY]: Bounds) {
 
 function buildFeatureLookup(
   level: SnapshotDqaLevel,
-  features: Array<MapFeature<DistrictShapeProps> | MapFeature<BlockShapeProps>>,
+  features: Array<MapFeature<StateShapeProps> | MapFeature<DistrictShapeProps> | MapFeature<BlockShapeProps>>,
 ) {
-  const exact = new Map<string, MapFeature<DistrictShapeProps> | MapFeature<BlockShapeProps>>();
+  const exact = new Map<string, MapFeature<StateShapeProps | DistrictShapeProps | BlockShapeProps>>();
   const byState = new Map<
     string,
-    Array<MapFeature<DistrictShapeProps> | MapFeature<BlockShapeProps>>
+    Array<MapFeature<StateShapeProps | DistrictShapeProps | BlockShapeProps>>
   >();
   const byDistrict = new Map<
     string,
-    Array<MapFeature<DistrictShapeProps> | MapFeature<BlockShapeProps>>
+    Array<MapFeature<StateShapeProps | DistrictShapeProps | BlockShapeProps>>
   >();
 
   for (const feature of features) {
     const stateKey = normalizeGeoName(feature.properties.state_name);
-    const districtKey = normalizeGeoName(feature.properties.district_name);
+    const districtKey = "district_name" in feature.properties
+      ? normalizeGeoName(feature.properties.district_name)
+      : "";
     const sd = `${stateKey}|${districtKey}`;
 
-    if (level === "BLOCK" && "block_name" in feature.properties) {
+    if (level === "STATE") {
+      exact.set(stateKey, feature);
+    } else if (level === "BLOCK" && "block_name" in feature.properties) {
       exact.set(`${sd}|${normalizeGeoName(feature.properties.block_name)}`, feature);
     } else {
       exact.set(sd, feature);
     }
 
     byState.set(stateKey, [...(byState.get(stateKey) ?? []), feature]);
-    byDistrict.set(sd, [...(byDistrict.get(sd) ?? []), feature]);
+    if (districtKey) byDistrict.set(sd, [...(byDistrict.get(sd) ?? []), feature]);
   }
 
   return { exact, byState, byDistrict, features };
@@ -1268,6 +1413,10 @@ function matchFeature(
   const stateKey = normalizeGeoName(snapshot.state);
   const districtKey = normalizeGeoName(snapshot.district);
   const sd = `${stateKey}|${districtKey}`;
+
+  if (level === "STATE") {
+    return lookup.exact.get(stateKey) as MapFeature<StateShapeProps> | undefined ?? null;
+  }
 
   if (level === "BLOCK") {
     const blockName = getSnapshotBlock(snapshot);
@@ -1289,8 +1438,8 @@ function matchFeature(
   if (exact) return exact as MapFeature<DistrictShapeProps>;
   const stateMatches = lookup.byState.get(stateKey) ?? [];
   const fuzzy =
-    fuzzyMatch(snapshot.district, stateMatches, (f) => f.properties.district_name) ??
-    fuzzyMatch(snapshot.district, lookup.features, (f) => f.properties.district_name);
+    fuzzyMatch(snapshot.district, stateMatches, (f) => "district_name" in f.properties ? f.properties.district_name : "") ??
+    fuzzyMatch(snapshot.district, lookup.features, (f) => "district_name" in f.properties ? f.properties.district_name : "");
   return (fuzzy as MapFeature<DistrictShapeProps> | null) ?? null;
 }
 
