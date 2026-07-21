@@ -27,14 +27,15 @@ export function titleCaseGeo(s: string | null | undefined): string {
 
 export interface DashboardRecord {
   id: string;
-  portal: "HMIS" | "UWIN" | "PCTS";
+  portal: "HMIS" | "UWIN" | "HMIS_STATE" | "PCTS";
   state: string;
   stateKey: string;
   district: string;
   districtKey: string;
   block: string | null;
   blockKey: string | null;
-  dqaLevel: "DISTRICT" | "BLOCK";
+  dqaLevel: "STATE" | "DISTRICT" | "BLOCK";
+  analysisGranularity: "DISTRICT" | "BLOCK" | null;
   createdAtMs: number;
   monthKey: string; // YYYY-MM of the review date (local time)
   periodStart: string | null;
@@ -51,6 +52,7 @@ export interface DashboardRecord {
   blockCount: number | null;
   facilityCount: number | null;
   sessionSiteCount: number | null;
+  districtCount: number | null;
 }
 
 export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
@@ -58,24 +60,21 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
   const created = new Date(s.createdAt);
   if (Number.isNaN(created.getTime())) return null;
   const portal = normalizePortal(s.portal);
-  // State district-wise snapshots have a different entity denominator and are
-  // intentionally kept out of the facility-level portal dashboard. They remain
-  // available in Trend History under their own portal filter.
-  if (portal === "HMIS_STATE") return null;
   const dqaLevel = getSnapshotDqaLevel(s);
-  if (dqaLevel === "STATE") return null;
   const block = getSnapshotBlock(s);
+  const isStateDqa = portal === "HMIS_STATE" || dqaLevel === "STATE";
   const monthKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}`;
   return {
     id: s.id,
     portal,
     state: titleCaseGeo(s.state),
     stateKey: geoKey(s.state),
-    district: titleCaseGeo(s.district),
-    districtKey: geoKey(s.district),
+    district: isStateDqa ? "" : titleCaseGeo(s.district),
+    districtKey: isStateDqa ? "" : geoKey(s.district),
     block: block ? titleCaseGeo(block) : null,
     blockKey: block ? geoKey(block) : null,
     dqaLevel,
+    analysisGranularity: s.kpiData?.analysisGranularity ?? null,
     createdAtMs: created.getTime(),
     monthKey,
     periodStart: s.kpiData?.periodStart ?? null,
@@ -92,6 +91,7 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
     blockCount: s.kpiData?.blockCount ?? null,
     facilityCount: s.kpiData?.facilityCount ?? null,
     sessionSiteCount: s.kpiData?.sessionSiteCount ?? null,
+    districtCount: s.kpiData?.districtCount ?? null,
   };
 }
 
@@ -100,8 +100,9 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
 // ---------------------------------------------------------------
 
 export interface DashboardFilters {
-  portal: "ALL" | "HMIS" | "UWIN" | "PCTS";
-  dqaLevel: "ALL" | "DISTRICT" | "BLOCK";
+  portal: "ALL" | "HMIS" | "UWIN" | "HMIS_STATE" | "PCTS";
+  dqaLevel: "ALL" | "STATE" | "DISTRICT" | "BLOCK";
+  granularity: "ALL" | "DISTRICT" | "BLOCK";
   state: string; // stateKey, "" = all
   district: string; // districtKey, "" = all
   block: string; // blockKey, "" = all
@@ -114,6 +115,7 @@ export interface DashboardFilters {
 export const EMPTY_DASHBOARD_FILTERS: DashboardFilters = {
   portal: "ALL",
   dqaLevel: "ALL",
+  granularity: "ALL",
   state: "",
   district: "",
   block: "",
@@ -132,6 +134,7 @@ export function applyDashboardFilters(
   return records.filter((r) => {
     if (f.portal !== "ALL" && r.portal !== f.portal) return false;
     if (f.dqaLevel !== "ALL" && r.dqaLevel !== f.dqaLevel) return false;
+    if (f.granularity !== "ALL" && r.analysisGranularity !== f.granularity) return false;
     if (f.state && r.stateKey !== f.state) return false;
     if (f.district && r.districtKey !== f.district) return false;
     if (f.block && r.blockKey !== f.block) return false;
@@ -152,6 +155,7 @@ export interface DashboardStats {
   hmis: number;
   uwin: number;
   pcts: number;
+  stateHmis: number;
   states: number;
   districts: number;
   /** Estimated blocks covered — see coverage-estimator note below. */
@@ -182,29 +186,44 @@ function mean(values: number[]): number | null {
 // Repeat reviews of the same district therefore never double-count.
 export function computeDashboardStats(records: DashboardRecord[]): DashboardStats {
   const states = new Set<string>();
-  const districts = new Set<string>();
   const reviewers = new Set<string>();
 
   const maxBlockCount = new Map<string, number>(); // state|district -> max blockCount
   const blockNames = new Map<string, Set<string>>(); // state|district -> unique block names
   const maxFacility = new Map<string, number>(); // portal|state|district -> max facilityCount
   const maxSessionSites = new Map<string, number>(); // state|district (UWIN) -> max sessionSiteCount
+  const explicitDistrictsByState = new Map<string, Set<string>>();
+  const maxStateDistrictCount = new Map<string, number>();
+  const maxStateBlockCount = new Map<string, number>();
 
   let hmis = 0;
   let uwin = 0;
   let pcts = 0;
+  let stateHmis = 0;
 
   for (const r of records) {
-    if (r.portal === "UWIN") uwin += 1;
+    if (r.portal === "HMIS_STATE") stateHmis += 1;
+    else if (r.portal === "UWIN") uwin += 1;
     else if (r.portal === "PCTS") pcts += 1;
     else hmis += 1;
     if (r.stateKey) states.add(r.stateKey);
     const dKey = `${r.stateKey}|${r.districtKey}`;
-    if (r.districtKey) districts.add(dKey);
+    if (r.districtKey) {
+      const set = explicitDistrictsByState.get(r.stateKey) ?? new Set<string>();
+      set.add(r.districtKey);
+      explicitDistrictsByState.set(r.stateKey, set);
+    }
+    if (r.portal === "HMIS_STATE" && r.districtCount !== null) {
+      maxStateDistrictCount.set(r.stateKey, Math.max(maxStateDistrictCount.get(r.stateKey) ?? 0, r.districtCount));
+    }
     if (r.savedBy) reviewers.add(r.savedBy);
 
-    if (r.blockCount !== null && r.blockCount > (maxBlockCount.get(dKey) ?? 0)) {
-      maxBlockCount.set(dKey, r.blockCount);
+    if (r.blockCount !== null) {
+      if (r.portal === "HMIS_STATE") {
+        maxStateBlockCount.set(r.stateKey, Math.max(maxStateBlockCount.get(r.stateKey) ?? 0, r.blockCount));
+      } else if (r.blockCount > (maxBlockCount.get(dKey) ?? 0)) {
+        maxBlockCount.set(dKey, r.blockCount);
+      }
     }
     if (r.blockKey) {
       const set = blockNames.get(dKey) ?? new Set<string>();
@@ -226,10 +245,16 @@ export function computeDashboardStats(records: DashboardRecord[]): DashboardStat
 
   // Blocks per district: the wider of "blocks in the dataset" (district-level
   // reviews) and "distinct blocks explicitly reviewed" (block-level reviews).
-  let blocks = 0;
+  const districtBlocksByState = new Map<string, number>();
   const districtKeys = new Set([...maxBlockCount.keys(), ...blockNames.keys()]);
   for (const key of districtKeys) {
-    blocks += Math.max(maxBlockCount.get(key) ?? 0, blockNames.get(key)?.size ?? 0);
+    const stateKey = key.split("|")[0];
+    const estimate = Math.max(maxBlockCount.get(key) ?? 0, blockNames.get(key)?.size ?? 0);
+    districtBlocksByState.set(stateKey, (districtBlocksByState.get(stateKey) ?? 0) + estimate);
+  }
+  let blocks = 0;
+  for (const stateKey of new Set([...districtBlocksByState.keys(), ...maxStateBlockCount.keys()])) {
+    blocks += Math.max(districtBlocksByState.get(stateKey) ?? 0, maxStateBlockCount.get(stateKey) ?? 0);
   }
 
   let facilities = 0;
@@ -245,8 +270,10 @@ export function computeDashboardStats(records: DashboardRecord[]): DashboardStat
     hmis,
     uwin,
     pcts,
+    stateHmis,
     states: states.size,
-    districts: districts.size,
+    districts: [...new Set([...explicitDistrictsByState.keys(), ...maxStateDistrictCount.keys()])]
+      .reduce((sum, state) => sum + Math.max(explicitDistrictsByState.get(state)?.size ?? 0, maxStateDistrictCount.get(state) ?? 0), 0),
     blocks,
     facilities,
     sessionSites,
@@ -269,6 +296,7 @@ export interface MonthBucket {
   hmis: number;
   uwin: number;
   pcts: number;
+  stateHmis: number;
   total: number;
   avgOverall: number | null;
 }
@@ -292,11 +320,12 @@ export function groupByMonth(records: DashboardRecord[]): MonthBucket[] {
   if (records.length === 0) return [];
   const byMonth = new Map<
     string,
-    { hmis: number; uwin: number; pcts: number; scores: number[] }
+    { hmis: number; uwin: number; pcts: number; stateHmis: number; scores: number[] }
   >();
   for (const r of records) {
-    const bucket = byMonth.get(r.monthKey) ?? { hmis: 0, uwin: 0, pcts: 0, scores: [] };
-    if (r.portal === "UWIN") bucket.uwin += 1;
+    const bucket = byMonth.get(r.monthKey) ?? { hmis: 0, uwin: 0, pcts: 0, stateHmis: 0, scores: [] };
+    if (r.portal === "HMIS_STATE") bucket.stateHmis += 1;
+    else if (r.portal === "UWIN") bucket.uwin += 1;
     else if (r.portal === "PCTS") bucket.pcts += 1;
     else bucket.hmis += 1;
     bucket.scores.push(r.overall);
@@ -316,7 +345,8 @@ export function groupByMonth(records: DashboardRecord[]): MonthBucket[] {
       hmis: bucket?.hmis ?? 0,
       uwin: bucket?.uwin ?? 0,
       pcts: bucket?.pcts ?? 0,
-      total: (bucket?.hmis ?? 0) + (bucket?.uwin ?? 0) + (bucket?.pcts ?? 0),
+      stateHmis: bucket?.stateHmis ?? 0,
+      total: (bucket?.hmis ?? 0) + (bucket?.uwin ?? 0) + (bucket?.pcts ?? 0) + (bucket?.stateHmis ?? 0),
       avgOverall: bucket ? mean(bucket.scores) : null,
     });
     cursor = nextMonthKey(cursor);
@@ -338,6 +368,7 @@ export interface GeoRow {
   hmis: number;
   uwin: number;
   pcts: number;
+  stateHmis: number;
   districts: number; // unique districts under this row
   blocks: number; // coverage estimate, same rule as stats
   facilities: number;
@@ -368,12 +399,11 @@ export function groupByGeo(records: DashboardRecord[], level: GeoLevel): GeoBrea
     } else {
       key = r.blockKey ?? "";
       hasKey = !!r.blockKey;
-      if (!hasKey) {
-        unattributed += 1;
-        continue;
-      }
     }
-    if (!hasKey) key = "(unspecified)";
+    if (!hasKey) {
+      unattributed += 1;
+      continue;
+    }
     const list = groups.get(key) ?? [];
     list.push(r);
     groups.set(key, list);
@@ -393,6 +423,7 @@ export function groupByGeo(records: DashboardRecord[], level: GeoLevel): GeoBrea
       hmis: stats.hmis,
       uwin: stats.uwin,
       pcts: stats.pcts,
+      stateHmis: stats.stateHmis,
       districts: stats.districts,
       blocks: stats.blocks,
       facilities: stats.facilities,
@@ -415,6 +446,7 @@ export interface CategoryRow {
   hmis: number;
   uwin: number;
   pcts: number;
+  stateHmis: number;
   avgOverall: number | null;
   /** For purpose rows: sub-option / free-text detail counts. */
   details: { label: string; count: number }[];
@@ -446,6 +478,7 @@ export function groupByCategory(
       hmis: list.filter((r) => r.portal === "HMIS").length,
       uwin: list.filter((r) => r.portal === "UWIN").length,
       pcts: list.filter((r) => r.portal === "PCTS").length,
+      stateHmis: list.filter((r) => r.portal === "HMIS_STATE").length,
       avgOverall: mean(list.map((r) => r.overall)),
       details: [...detailCounts.entries()]
         .map(([l, count]) => ({ label: l, count }))

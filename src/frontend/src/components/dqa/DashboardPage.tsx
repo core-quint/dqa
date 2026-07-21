@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
+  AlertTriangle,
   Building2,
+  CalendarClock,
   ChevronRight,
   ClipboardList,
   Download,
   Landmark,
   LayoutDashboard,
   MapPin,
+  Radar,
   RefreshCw,
   Syringe,
   Users,
@@ -41,6 +44,7 @@ import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
 const HMIS_COLOR = "#3b82f6";
 const UWIN_COLOR = "#a21caf";
 const PCTS_COLOR = "#e11d48";
+const STATE_HMIS_COLOR = "#059669";
 const INK = "#0f172a";
 const GRID = "#e2e8f0";
 const AXIS_TEXT = "#64748b";
@@ -132,10 +136,12 @@ function StatTile({
 
 function PortalLegend({
   hmis,
+  stateHmis,
   uwin,
   pcts,
 }: {
   hmis: boolean;
+  stateHmis: boolean;
   uwin: boolean;
   pcts: boolean;
 }) {
@@ -145,6 +151,12 @@ function PortalLegend({
         <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
           <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: HMIS_COLOR }} />
           HMIS
+        </span>
+      ) : null}
+      {stateHmis ? (
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
+          <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: STATE_HMIS_COLOR }} />
+          State DQA
         </span>
       ) : null}
       {uwin ? (
@@ -179,9 +191,11 @@ function niceMax(n: number): number {
 function MonthlyActivityChart({
   months,
   showHmis,
+  showStateHmis,
 }: {
   months: MonthBucket[];
   showHmis: boolean;
+  showStateHmis: boolean;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const W = 720;
@@ -217,32 +231,37 @@ function MonthlyActivityChart({
           const hmisH = (m.hmis / maxTotal) * plotH;
           const uwinH = (m.uwin / maxTotal) * plotH;
           const pctsH = (m.pcts / maxTotal) * plotH;
+          const stateHmisH = (m.stateHmis / maxTotal) * plotH;
           const hmisUwinGap = m.hmis > 0 && m.uwin > 0 ? 2 : 0;
           const pctsGap = m.pcts > 0 && (m.hmis > 0 || m.uwin > 0) ? 2 : 0;
+          const stateHmisGap = m.stateHmis > 0 && (m.hmis > 0 || m.uwin > 0 || m.pcts > 0) ? 2 : 0;
           const hmisY = PAD_T + plotH - hmisH;
           const uwinY = hmisY - hmisUwinGap - uwinH;
           const pctsY = uwinY - pctsGap - pctsH;
+          const stateHmisY = pctsY - stateHmisGap - stateHmisH;
           const capR = 4;
           return (
             <g key={m.key}>
               {/* HMIS segment — square at baseline; rounded cap only when topmost */}
               {m.hmis > 0 ? (
-                m.uwin > 0 || m.pcts > 0 ? (
+                m.uwin > 0 || m.pcts > 0 || m.stateHmis > 0 ? (
                   <rect x={x0} y={hmisY} width={barW} height={hmisH} fill={HMIS_COLOR} />
                 ) : (
                   <path d={roundedTopBar(x0, hmisY, barW, hmisH, capR)} fill={HMIS_COLOR} />
                 )
               ) : null}
               {m.uwin > 0 ? (
-                m.pcts > 0 ? (
+                m.pcts > 0 || m.stateHmis > 0 ? (
                   <rect x={x0} y={uwinY} width={barW} height={uwinH} fill={UWIN_COLOR} />
                 ) : (
                   <path d={roundedTopBar(x0, uwinY, barW, uwinH, capR)} fill={UWIN_COLOR} />
                 )
               ) : null}
               {m.pcts > 0 ? (
+                m.stateHmis > 0 ? <rect x={x0} y={pctsY} width={barW} height={pctsH} fill={PCTS_COLOR} /> :
                 <path d={roundedTopBar(x0, pctsY, barW, pctsH, capR)} fill={PCTS_COLOR} />
               ) : null}
+              {m.stateHmis > 0 ? <path d={roundedTopBar(x0, stateHmisY, barW, stateHmisH, capR)} fill={STATE_HMIS_COLOR} /> : null}
               {i % labelEvery === 0 ? (
                 <text x={cx} y={H - 8} textAnchor="middle" fontSize={10} fill={AXIS_TEXT}>
                   {m.label}
@@ -258,8 +277,8 @@ function MonthlyActivityChart({
                 tabIndex={0}
                 aria-label={
                   showHmis
-                    ? `${m.label}: ${m.total} reviews (${m.hmis} HMIS, ${m.uwin} U-WIN, ${m.pcts} PCTS)`
-                    : `${m.label}: ${m.total} reviews (${m.uwin} U-WIN, ${m.pcts} PCTS)`
+                    ? `${m.label}: ${m.total} reviews (${m.hmis} HMIS, ${m.stateHmis} State DQA, ${m.uwin} U-WIN, ${m.pcts} PCTS)`
+                    : `${m.label}: ${m.total} reviews (${m.stateHmis} State DQA, ${m.uwin} U-WIN, ${m.pcts} PCTS)`
                 }
                 onMouseEnter={() => setHover(i)}
                 onMouseLeave={() => setHover(null)}
@@ -269,9 +288,9 @@ function MonthlyActivityChart({
               {hover === i ? (
                 <rect
                   x={x0 - 2}
-                  y={(m.pcts > 0 ? pctsY : m.uwin > 0 ? uwinY : hmisY) - 2}
+                  y={(m.stateHmis > 0 ? stateHmisY : m.pcts > 0 ? pctsY : m.uwin > 0 ? uwinY : hmisY) - 2}
                   width={barW + 4}
-                  height={4 + hmisH + uwinH + pctsH + hmisUwinGap + pctsGap}
+                  height={4 + hmisH + uwinH + pctsH + stateHmisH + hmisUwinGap + pctsGap + stateHmisGap}
                   fill="none"
                   stroke={INK}
                   strokeOpacity={0.25}
@@ -301,6 +320,14 @@ function MonthlyActivityChart({
                   <span className="h-0.5 w-3 rounded" style={{ background: HMIS_COLOR }} /> HMIS
                 </span>
                 <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.hmis)}</span>
+              </div>
+            ) : null}
+            {showStateHmis ? (
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                  <span className="h-0.5 w-3 rounded" style={{ background: STATE_HMIS_COLOR }} /> State DQA
+                </span>
+                <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.stateHmis)}</span>
               </div>
             ) : null}
             <div className="flex items-center justify-between gap-4 text-sm">
@@ -443,6 +470,7 @@ interface BarListRow {
   hmis: number;
   uwin: number;
   pcts: number;
+  stateHmis: number;
   total: number;
   avgOverall: number | null;
   details?: { label: string; count: number }[];
@@ -451,6 +479,7 @@ interface BarListRow {
 function StackedBarList({
   rows,
   showHmis,
+  showStateHmis,
   onRowClick,
   activeKey,
   clickHint,
@@ -458,6 +487,7 @@ function StackedBarList({
 }: {
   rows: BarListRow[];
   showHmis: boolean;
+  showStateHmis: boolean;
   onRowClick?: (row: BarListRow) => void;
   activeKey?: string;
   clickHint?: string;
@@ -477,6 +507,7 @@ function StackedBarList({
         const hmisPct = (row.hmis / max) * 100;
         const uwinPct = (row.uwin / max) * 100;
         const pctsPct = (row.pcts / max) * 100;
+        const stateHmisPct = (row.stateHmis / max) * 100;
         const hmisWidth = `max(${hmisPct.toFixed(2)}%, 3px)`;
         const uwinWidth = `max(${uwinPct.toFixed(2)}%, 3px)`;
         const precedingPctsSegments = [
@@ -487,6 +518,14 @@ function StackedBarList({
           precedingPctsSegments.length > 0
             ? `calc(${precedingPctsSegments.join(" + ")} + ${precedingPctsSegments.length * 2}px)`
             : 0;
+        const stateHmisLeftParts = [
+          row.hmis > 0 ? hmisWidth : null,
+          row.uwin > 0 ? uwinWidth : null,
+          row.pcts > 0 ? `max(${pctsPct.toFixed(2)}%, 3px)` : null,
+        ].filter((value): value is string => value !== null);
+        const stateHmisLeft = stateHmisLeftParts.length > 0
+          ? `calc(${stateHmisLeftParts.join(" + ")} + ${stateHmisLeftParts.length * 2}px)`
+          : 0;
         const isActive = activeKey === row.key;
         const clickable = !!onRowClick;
         return (
@@ -531,6 +570,9 @@ function StackedBarList({
                     }}
                   />
                 ) : null}
+                {row.stateHmis > 0 ? (
+                  <span className="absolute inset-y-0 rounded-r-[4px]" style={{ left: stateHmisLeft, width: `max(${stateHmisPct.toFixed(2)}%, 3px)`, background: STATE_HMIS_COLOR }} />
+                ) : null}
               </span>
               <span className="w-10 shrink-0 text-right text-xs font-bold tabular-nums text-slate-900">
                 {fmtCount(row.total)}
@@ -550,6 +592,12 @@ function StackedBarList({
                     <span className="h-0.5 w-3 rounded" style={{ background: HMIS_COLOR }} /> HMIS
                   </span>
                   <span className="font-bold tabular-nums text-slate-900">{fmtCount(row.hmis)}</span>
+                </div>
+              ) : null}
+              {showStateHmis ? (
+                <div className="flex items-center justify-between gap-4 text-sm">
+                  <span className="inline-flex items-center gap-1.5 text-xs text-slate-500"><span className="h-0.5 w-3 rounded" style={{ background: STATE_HMIS_COLOR }} /> State DQA</span>
+                  <span className="font-bold tabular-nums text-slate-900">{fmtCount(row.stateHmis)}</span>
                 </div>
               ) : null}
               <div className="flex items-center justify-between gap-4 text-sm">
@@ -601,11 +649,13 @@ function StackedBarList({
 function ComponentProfile({
   records,
   showHmis,
+  showStateHmis,
   showUwin,
   showPcts,
 }: {
   records: DashboardRecord[];
   showHmis: boolean;
+  showStateHmis: boolean;
   showUwin: boolean;
   showPcts: boolean;
 }) {
@@ -613,16 +663,17 @@ function ComponentProfile({
     const hmisRecords = records.filter((r) => r.portal === "HMIS");
     const uwinRecords = records.filter((r) => r.portal === "UWIN");
     const pctsRecords = records.filter((r) => r.portal === "PCTS");
+    const stateHmisRecords = records.filter((r) => r.portal === "HMIS_STATE");
     const avg = (list: DashboardRecord[], pick: (r: DashboardRecord) => number | null): number | null => {
       const values = list.map(pick).filter((v): v is number => v !== null);
       if (values.length === 0) return null;
       return values.reduce((a, b) => a + b, 0) / values.length;
     };
     return [
-      { label: "Availability", hmis: avg(hmisRecords, (r) => r.availability), uwin: avg(uwinRecords, (r) => r.availability), pcts: avg(pctsRecords, (r) => r.availability) },
-      { label: "Completeness", hmis: avg(hmisRecords, (r) => r.completeness), uwin: null, pcts: avg(pctsRecords, (r) => r.completeness), uwinNa: true },
-      { label: "Accuracy", hmis: avg(hmisRecords, (r) => r.accuracy), uwin: avg(uwinRecords, (r) => r.accuracy), pcts: avg(pctsRecords, (r) => r.accuracy) },
-      { label: "Consistency", hmis: avg(hmisRecords, (r) => r.consistency), uwin: avg(uwinRecords, (r) => r.consistency), pcts: avg(pctsRecords, (r) => r.consistency) },
+      { label: "Availability", hmis: avg(hmisRecords, (r) => r.availability), stateHmis: avg(stateHmisRecords, (r) => r.availability), uwin: avg(uwinRecords, (r) => r.availability), pcts: avg(pctsRecords, (r) => r.availability) },
+      { label: "Completeness", hmis: avg(hmisRecords, (r) => r.completeness), stateHmis: avg(stateHmisRecords, (r) => r.completeness), uwin: null, pcts: avg(pctsRecords, (r) => r.completeness), uwinNa: true },
+      { label: "Accuracy", hmis: avg(hmisRecords, (r) => r.accuracy), stateHmis: avg(stateHmisRecords, (r) => r.accuracy), uwin: avg(uwinRecords, (r) => r.accuracy), pcts: avg(pctsRecords, (r) => r.accuracy) },
+      { label: "Consistency", hmis: avg(hmisRecords, (r) => r.consistency), stateHmis: avg(stateHmisRecords, (r) => r.consistency), uwin: avg(uwinRecords, (r) => r.consistency), pcts: avg(pctsRecords, (r) => r.consistency) },
     ];
   }, [records]);
 
@@ -650,9 +701,36 @@ function ComponentProfile({
           <div className="mb-1 text-xs font-semibold text-slate-600">{row.label}</div>
           <div className="space-y-1">
             {showHmis ? bar(row.hmis, HMIS_COLOR, "HMIS") : null}
+            {showStateHmis ? bar(row.stateHmis, STATE_HMIS_COLOR, "State DQA") : null}
             {showUwin ? bar(row.uwin, UWIN_COLOR, "U-WIN", "uwinNa" in row && row.uwinNa) : null}
             {showPcts ? bar(row.pcts, PCTS_COLOR, "PCTS") : null}
           </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ScoreDistribution({ records }: { records: DashboardRecord[] }) {
+  const bands = [
+    { label: "Excellent", range: "85–100", color: "#059669", count: records.filter((r) => r.overall >= 85).length },
+    { label: "Good", range: "70–84", color: "#0284c7", count: records.filter((r) => r.overall >= 70 && r.overall < 85).length },
+    { label: "Moderate", range: "50–69", color: "#d97706", count: records.filter((r) => r.overall >= 50 && r.overall < 70).length },
+    { label: "Critical", range: "Below 50", color: "#dc2626", count: records.filter((r) => r.overall < 50).length },
+  ];
+  const max = Math.max(1, ...bands.map((band) => band.count));
+  return (
+    <div className="space-y-3">
+      {bands.map((band) => (
+        <div key={band.label} className="grid grid-cols-[76px_1fr_34px] items-center gap-2">
+          <div>
+            <div className="text-xs font-bold text-slate-700">{band.label}</div>
+            <div className="text-[10px] font-medium text-slate-400">{band.range}</div>
+          </div>
+          <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+            <div className="h-full rounded-full" style={{ width: `${(band.count / max) * 100}%`, background: band.color }} />
+          </div>
+          <div className="text-right text-xs font-extrabold tabular-nums text-slate-900">{fmtCount(band.count)}</div>
         </div>
       ))}
     </div>
@@ -666,7 +744,7 @@ function ComponentProfile({
 const selectClass =
   "w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200/70";
 
-type SortKey = "label" | "total" | "hmis" | "uwin" | "pcts" | "districts" | "blocks" | "facilities" | "sessionSites" | "avgOverall" | "lastAtMs";
+type SortKey = "label" | "total" | "hmis" | "stateHmis" | "uwin" | "pcts" | "districts" | "blocks" | "facilities" | "sessionSites" | "avgOverall" | "lastAtMs";
 
 export function DashboardPage({ auth }: Props) {
   const hasHmisAccess = canUseHmis(auth);
@@ -805,8 +883,33 @@ export function DashboardPage({ auth }: Props) {
   );
 
   const showHmis = hasHmisAccess && (filters.portal === "ALL" || filters.portal === "HMIS");
+  const showStateHmis = filters.portal === "ALL" || filters.portal === "HMIS_STATE";
   const showUwin = filters.portal === "ALL" || filters.portal === "UWIN";
   const showPcts = filters.portal === "ALL" || filters.portal === "PCTS";
+
+  const managementSignals = useMemo(() => {
+    const components = [
+      { label: "Availability", value: stats.avgAvailability },
+      { label: "Completeness", value: stats.avgCompleteness },
+      { label: "Accuracy", value: stats.avgAccuracy },
+      { label: "Consistency", value: stats.avgConsistency },
+    ].filter((item): item is { label: string; value: number } => item.value !== null);
+    const weakest = [...components].sort((a, b) => a.value - b.value)[0] ?? null;
+    const now = Date.now();
+    const recent30 = filtered.filter((record) => now - record.createdAtMs <= 30 * 86_400_000).length;
+    const previous30 = filtered.filter((record) => {
+      const age = now - record.createdAtMs;
+      return age > 30 * 86_400_000 && age <= 60 * 86_400_000;
+    }).length;
+    const critical = filtered.filter((record) => record.overall < 50).length;
+    const stateDqaStates = new Set(filtered.filter((record) => record.portal === "HMIS_STATE").map((record) => record.stateKey)).size;
+    return { weakest, recent30, previous30, critical, stateDqaStates };
+  }, [filtered, stats]);
+
+  const priorityRows = useMemo(() => [...geo.rows]
+    .filter((row) => row.avgOverall !== null)
+    .sort((a, b) => (a.avgOverall ?? 101) - (b.avgOverall ?? 101) || a.lastAtMs - b.lastAtMs)
+    .slice(0, 5), [geo.rows]);
 
   // ---- summary table ----
   const sortedGeoRows = useMemo(() => {
@@ -833,6 +936,7 @@ export function DashboardPage({ auth }: Props) {
       levelNoun,
       "Total DQA",
       ...(hasHmisAccess ? ["HMIS"] : []),
+      "State DQA",
       "U-WIN",
       "PCTS",
       ...(geoLevel === "state" ? ["Districts"] : []),
@@ -846,6 +950,7 @@ export function DashboardPage({ auth }: Props) {
       r.label,
       r.total,
       ...(hasHmisAccess ? [r.hmis] : []),
+      r.stateHmis,
       r.uwin,
       r.pcts,
       ...(geoLevel === "state" ? [r.districts] : []),
@@ -858,6 +963,7 @@ export function DashboardPage({ auth }: Props) {
     const filterLine = [
       `Source: ${filters.portal}`,
       `DQA type: ${filters.dqaLevel}`,
+      filters.granularity !== "ALL" ? `State analysis grain: ${filters.granularity}` : "",
       filters.state ? `State: ${stateLabel}` : "All states",
       filters.district ? `District: ${districtLabel}` : "",
       filters.designation ? `Designation: ${filters.designation}` : "",
@@ -992,11 +1098,15 @@ export function DashboardPage({ auth }: Props) {
               <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Data source</span>
               <select
                 value={filters.portal}
-                onChange={(e) => setFilter({ portal: e.target.value as DashboardFilters["portal"] })}
+                onChange={(e) => {
+                  const portal = e.target.value as DashboardFilters["portal"];
+                  setFilter({ portal, district: portal === "HMIS_STATE" ? "" : filters.district, block: portal === "HMIS_STATE" ? "" : filters.block });
+                }}
                 className={selectClass}
               >
                 <option value="ALL">All portals</option>
                 {hasHmisAccess ? <option value="HMIS">HMIS</option> : null}
+                <option value="HMIS_STATE">State DQA (HMIS)</option>
                 <option value="UWIN">U-WIN</option>
                 {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
               </select>
@@ -1005,12 +1115,28 @@ export function DashboardPage({ auth }: Props) {
               <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Type of DQA</span>
               <select
                 value={filters.dqaLevel}
-                onChange={(e) => setFilter({ dqaLevel: e.target.value as DashboardFilters["dqaLevel"] })}
+                onChange={(e) => {
+                  const dqaLevel = e.target.value as DashboardFilters["dqaLevel"];
+                  setFilter({ dqaLevel, district: dqaLevel === "STATE" ? "" : filters.district, block: dqaLevel === "STATE" ? "" : filters.block });
+                }}
                 className={selectClass}
               >
                 <option value="ALL">All types</option>
+                <option value="STATE">State DQA</option>
                 <option value="DISTRICT">District DQA</option>
                 <option value="BLOCK">Block DQA</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">State analysis grain</span>
+              <select
+                value={filters.granularity}
+                onChange={(e) => setFilter({ granularity: e.target.value as DashboardFilters["granularity"] })}
+                className={selectClass}
+              >
+                <option value="ALL">District & block-wise</option>
+                <option value="DISTRICT">District-wise files</option>
+                <option value="BLOCK">Block-wise files</option>
               </select>
             </label>
             <label className="block">
@@ -1110,7 +1236,7 @@ export function DashboardPage({ auth }: Props) {
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">No DQA records yet</div>
             <div className="mt-2 text-2xl font-extrabold text-slate-950">Save a snapshot after any analysis to populate this dashboard.</div>
             <div className="mt-2 text-sm text-slate-500">
-              Every saved {hasHmisAccess ? "HMIS, U-WIN, or PCTS" : "U-WIN or PCTS"} analysis snapshot becomes one DQA record here.
+              Every saved {hasHmisAccess ? "HMIS, State DQA, U-WIN, or PCTS" : "State DQA, U-WIN, or PCTS"} analysis snapshot becomes one DQA record here.
             </div>
           </GlassPanel>
         ) : (
@@ -1120,6 +1246,7 @@ export function DashboardPage({ auth }: Props) {
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
                 <StatTile label="Total DQA reviews" value={fmtCount(stats.total)} sub={`${fmtCount(stats.reviewers)} reviewer${stats.reviewers !== 1 ? "s" : ""} engaged`} icon={<ClipboardList className="h-4 w-4" />} />
                 {hasHmisAccess ? <StatTile label="HMIS reviews" value={fmtCount(stats.hmis)} icon={<BarChart3 className="h-4 w-4" />} /> : null}
+                <StatTile label="State DQA reviews" value={fmtCount(stats.stateHmis)} sub="District / block-wise state files" icon={<Radar className="h-4 w-4" />} />
                 <StatTile label="U-WIN reviews" value={fmtCount(stats.uwin)} icon={<Syringe className="h-4 w-4" />} />
                 <StatTile label="PCTS reviews" value={fmtCount(stats.pcts)} icon={<BarChart3 className="h-4 w-4" />} />
                 <StatTile
@@ -1134,6 +1261,33 @@ export function DashboardPage({ auth }: Props) {
                 <StatTile label="Session sites covered" value={fmtCount(stats.sessionSites)} sub="U-WIN datasets only" icon={<Users className="h-4 w-4" />} />
               </div>
 
+              <div className="grid gap-4 lg:grid-cols-12">
+                <GlassPanel className="overflow-hidden p-5 lg:col-span-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div><div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Programme pulse</div><div className="mt-1 text-lg font-bold text-slate-950">Quality at a glance</div></div>
+                    <div className="relative flex h-20 w-20 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(${stats.avgOverall !== null && stats.avgOverall >= 70 ? "#059669" : "#d97706"} ${(stats.avgOverall ?? 0) * 3.6}deg, #e2e8f0 0deg)` }}><div className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-lg font-extrabold tabular-nums text-slate-950">{fmtScore(stats.avgOverall)}</div></div>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <div className="rounded-2xl bg-red-50 px-3 py-3"><div className="text-2xl font-extrabold tabular-nums text-red-700">{fmtCount(managementSignals.critical)}</div><div className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-600">Critical reviews</div></div>
+                    <div className="rounded-2xl bg-emerald-50 px-3 py-3"><div className="text-2xl font-extrabold tabular-nums text-emerald-700">{fmtCount(managementSignals.stateDqaStates)}</div><div className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-600">States with State DQA</div></div>
+                  </div>
+                  <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" /><div className="text-xs text-amber-900"><span className="font-bold">Primary quality gap:</span> {managementSignals.weakest ? `${managementSignals.weakest.label} (${managementSignals.weakest.value.toFixed(1)})` : "Not enough scored data"}</div></div>
+                </GlassPanel>
+
+                <GlassPanel className="p-5 lg:col-span-4">
+                  <div className="mb-4 flex items-center justify-between gap-2"><div><div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Score mix</div><div className="mt-1 text-lg font-bold text-slate-950">Performance distribution</div></div><BarChart3 className="h-5 w-5 text-slate-400" /></div>
+                  <ScoreDistribution records={filtered} />
+                </GlassPanel>
+
+                <GlassPanel className="p-5 lg:col-span-4">
+                  <div className="flex items-center justify-between gap-2"><div><div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Review cadence</div><div className="mt-1 text-lg font-bold text-slate-950">Last 30 days</div></div><CalendarClock className="h-5 w-5 text-slate-400" /></div>
+                  <div className="mt-4 flex items-end gap-2"><span className="text-4xl font-extrabold tabular-nums text-slate-950">{fmtCount(managementSignals.recent30)}</span><span className="pb-1 text-xs font-semibold text-slate-500">reviews completed</span></div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-slate-900" style={{ width: `${Math.min(100, managementSignals.recent30 / Math.max(1, managementSignals.recent30 + managementSignals.previous30) * 100)}%` }} /></div>
+                  <div className="mt-2 flex justify-between text-[11px] font-medium text-slate-500"><span>Previous 30 days: {fmtCount(managementSignals.previous30)}</span><span className={managementSignals.recent30 >= managementSignals.previous30 ? "text-emerald-700" : "text-amber-700"}>{managementSignals.previous30 === 0 ? "New activity" : `${managementSignals.recent30 >= managementSignals.previous30 ? "+" : ""}${Math.round((managementSignals.recent30 - managementSignals.previous30) / managementSignals.previous30 * 100)}%`}</span></div>
+                  <div className="mt-5 border-t border-slate-100 pt-3 text-xs leading-5 text-slate-600">Prioritise supportive supervision where scores are lowest, then monitor whether review cadence improves.</div>
+                </GlassPanel>
+              </div>
+
               {/* ── Time charts ───────────────────── */}
               <div className="grid gap-4 lg:grid-cols-3">
                 <GlassPanel className="p-5 lg:col-span-2">
@@ -1143,7 +1297,7 @@ export function DashboardPage({ auth }: Props) {
                       <div className="text-sm font-bold text-slate-900">Reviews per month</div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <PortalLegend hmis={showHmis} uwin={showUwin} pcts={showPcts} />
+                      <PortalLegend hmis={showHmis} stateHmis={showStateHmis} uwin={showUwin} pcts={showPcts} />
                       <button
                         type="button"
                         onClick={() => setActivityTable((v) => !v)}
@@ -1162,6 +1316,7 @@ export function DashboardPage({ auth }: Props) {
                           <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                             <th className="px-2 py-1.5">Month</th>
                             {showHmis ? <th className="px-2 py-1.5 text-right">HMIS</th> : null}
+                            {showStateHmis ? <th className="px-2 py-1.5 text-right">State DQA</th> : null}
                             <th className="px-2 py-1.5 text-right">U-WIN</th>
                             <th className="px-2 py-1.5 text-right">PCTS</th>
                             <th className="px-2 py-1.5 text-right">Total</th>
@@ -1173,6 +1328,7 @@ export function DashboardPage({ auth }: Props) {
                             <tr key={m.key} className="border-t border-slate-100">
                               <td className="px-2 py-1.5 font-medium text-slate-700">{m.label}</td>
                               {showHmis ? <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.hmis)}</td> : null}
+                              {showStateHmis ? <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.stateHmis)}</td> : null}
                               <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.uwin)}</td>
                               <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.pcts)}</td>
                               <td className="px-2 py-1.5 text-right font-bold tabular-nums text-slate-900">{fmtCount(m.total)}</td>
@@ -1183,7 +1339,7 @@ export function DashboardPage({ auth }: Props) {
                       </table>
                     </div>
                   ) : (
-                    <MonthlyActivityChart months={months} showHmis={showHmis} />
+                    <MonthlyActivityChart months={months} showHmis={showHmis} showStateHmis={showStateHmis} />
                   )}
                 </GlassPanel>
                 <GlassPanel className="p-5">
@@ -1233,11 +1389,12 @@ export function DashboardPage({ auth }: Props) {
                         ) : null}
                       </div>
                     </div>
-                    <PortalLegend hmis={showHmis} uwin={showUwin} pcts={showPcts} />
+                    <PortalLegend hmis={showHmis} stateHmis={showStateHmis} uwin={showUwin} pcts={showPcts} />
                   </div>
                   <StackedBarList
                     rows={geo.rows}
                     showHmis={showHmis}
+                    showStateHmis={showStateHmis}
                     onRowClick={handleGeoDrill}
                     activeKey={geoLevel === "block" ? filters.block : undefined}
                     clickHint={
@@ -1248,9 +1405,9 @@ export function DashboardPage({ auth }: Props) {
                           : "Click to filter this block"
                     }
                   />
-                  {geoLevel === "block" && geo.unattributed > 0 ? (
+                  {geoLevel !== "state" && geo.unattributed > 0 ? (
                     <div className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-[11px] font-medium text-slate-500">
-                      {fmtCount(geo.unattributed)} district-level review{geo.unattributed !== 1 ? "s are" : " is"} not tied to a single block and {geo.unattributed !== 1 ? "are" : "is"} not shown as bars here.
+                      {fmtCount(geo.unattributed)} higher-level review{geo.unattributed !== 1 ? "s are" : " is"} not tied to a single {geoLevel} and {geo.unattributed !== 1 ? "are" : "is"} retained in totals but not shown as {geoLevel} bars.
                     </div>
                   ) : null}
                 </GlassPanel>
@@ -1260,7 +1417,7 @@ export function DashboardPage({ auth }: Props) {
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Quality profile</div>
                       <div className="text-sm font-bold text-slate-900">Average component scores</div>
                     </div>
-                    <PortalLegend hmis={showHmis} uwin={showUwin} pcts={showPcts} />
+                    <PortalLegend hmis={showHmis} stateHmis={showStateHmis} uwin={showUwin} pcts={showPcts} />
                   </div>
                   {filtered.length === 0 ? (
                     <div className="flex h-24 items-center justify-center text-sm font-medium text-slate-400">No reviews in this slice.</div>
@@ -1268,6 +1425,7 @@ export function DashboardPage({ auth }: Props) {
                     <ComponentProfile
                       records={filtered}
                       showHmis={showHmis}
+                      showStateHmis={showStateHmis}
                       showUwin={showUwin}
                       showPcts={showPcts}
                     />
@@ -1276,6 +1434,24 @@ export function DashboardPage({ auth }: Props) {
               </div>
 
               {/* ── Who & why ─────────────────────── */}
+              <GlassPanel className="overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4">
+                  <div><div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Management action queue</div><div className="mt-1 text-lg font-bold text-slate-950">Lowest-scoring {levelNoun.toLowerCase()}s in this view</div></div>
+                  <div className="rounded-full bg-amber-50 px-3 py-1 text-[11px] font-bold text-amber-700">Supportive supervision priority</div>
+                </div>
+                <div className="grid divide-y divide-slate-100 md:grid-cols-5 md:divide-x md:divide-y-0">
+                  {priorityRows.map((row, index) => (
+                    <button key={row.key} type="button" onClick={() => handleGeoDrill(row)} className="group p-4 text-left transition hover:bg-slate-50">
+                      <div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Priority {index + 1}</span><ScoreChip score={row.avgOverall} /></div>
+                      <div className="mt-3 truncate text-sm font-bold text-slate-900" title={row.label}>{row.label}</div>
+                      <div className="mt-1 text-[11px] text-slate-500">{fmtCount(row.total)} review{row.total !== 1 ? "s" : ""} · last {fmtDay(row.lastAtMs)}</div>
+                      <div className="mt-3 inline-flex items-center gap-1 text-[11px] font-bold text-sky-700">Drill down <ChevronRight className="h-3 w-3 transition group-hover:translate-x-0.5" /></div>
+                    </button>
+                  ))}
+                  {priorityRows.length === 0 ? <div className="p-6 text-sm font-medium text-slate-400 md:col-span-5">No scored geographies in this slice.</div> : null}
+                </div>
+              </GlassPanel>
+
               <div className="grid gap-4 lg:grid-cols-2">
                 <GlassPanel className="p-5">
                   <div className="mb-3 flex items-center justify-between gap-2">
@@ -1283,11 +1459,12 @@ export function DashboardPage({ auth }: Props) {
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Reviewed by</div>
                       <div className="text-sm font-bold text-slate-900">DQA reviews by designation</div>
                     </div>
-                    <PortalLegend hmis={showHmis} uwin={showUwin} pcts={showPcts} />
+                    <PortalLegend hmis={showHmis} stateHmis={showStateHmis} uwin={showUwin} pcts={showPcts} />
                   </div>
                   <StackedBarList
                     rows={designations.map(categoryToRow)}
                     showHmis={showHmis}
+                    showStateHmis={showStateHmis}
                     onRowClick={(row) => setFilter({ designation: filters.designation === row.key ? "" : row.key })}
                     activeKey={filters.designation || undefined}
                     clickHint="Click to filter by this designation"
@@ -1299,11 +1476,12 @@ export function DashboardPage({ auth }: Props) {
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Purpose of DQA</div>
                       <div className="text-sm font-bold text-slate-900">Why reviews were conducted</div>
                     </div>
-                    <PortalLegend hmis={showHmis} uwin={showUwin} pcts={showPcts} />
+                    <PortalLegend hmis={showHmis} stateHmis={showStateHmis} uwin={showUwin} pcts={showPcts} />
                   </div>
                   <StackedBarList
                     rows={purposes.map(categoryToRow)}
                     showHmis={showHmis}
+                    showStateHmis={showStateHmis}
                     onRowClick={(row) => setFilter({ purpose: filters.purpose === row.key ? "" : row.key })}
                     activeKey={filters.purpose || undefined}
                     clickHint="Click to filter by this purpose"
@@ -1329,6 +1507,7 @@ export function DashboardPage({ auth }: Props) {
                         <SortableTh label={levelNoun} k="label" sort={sort} onSort={toggleSort} />
                         <SortableTh label="Total DQA" k="total" sort={sort} onSort={toggleSort} right />
                         {hasHmisAccess ? <SortableTh label="HMIS" k="hmis" sort={sort} onSort={toggleSort} right /> : null}
+                        <SortableTh label="State DQA" k="stateHmis" sort={sort} onSort={toggleSort} right />
                         <SortableTh label="U-WIN" k="uwin" sort={sort} onSort={toggleSort} right />
                         <SortableTh label="PCTS" k="pcts" sort={sort} onSort={toggleSort} right />
                         {geoLevel === "state" ? <SortableTh label="Districts" k="districts" sort={sort} onSort={toggleSort} right /> : null}
@@ -1345,6 +1524,7 @@ export function DashboardPage({ auth }: Props) {
                           <td className="px-4 py-2.5 font-semibold text-slate-800">{row.label}</td>
                           <td className="px-4 py-2.5 text-right font-bold tabular-nums text-slate-900">{fmtCount(row.total)}</td>
                           {hasHmisAccess ? <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.hmis)}</td> : null}
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.stateHmis)}</td>
                           <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.uwin)}</td>
                           <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.pcts)}</td>
                           {geoLevel === "state" ? <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{fmtCount(row.districts)}</td> : null}
@@ -1377,6 +1557,7 @@ function categoryToRow(c: CategoryRow): BarListRow {
     hmis: c.hmis,
     uwin: c.uwin,
     pcts: c.pcts,
+    stateHmis: c.stateHmis,
     total: c.total,
     avgOverall: c.avgOverall,
     details: c.details,

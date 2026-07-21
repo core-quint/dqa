@@ -17,6 +17,7 @@ export interface SnapshotKpiData {
   facilityCount?: number | null;
   sessionSiteCount?: number | null;
   districtCount?: number | null;
+  analysisGranularity?: "DISTRICT" | "BLOCK" | null;
   designation?: string | null;
   purpose?: string | null;
   purposeDetail?: string | null;
