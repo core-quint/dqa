@@ -1,6 +1,6 @@
 # U-WIN State report configuration
 
-The U-WIN State report workflow works without AI. It stores an immutable evidence pack, a three-page PDF, report history, progress comparisons, and action tracking.
+The U-WIN State report workflow works without AI. It stores an immutable evidence pack, a three-page PDF, report history, progress comparisons, and action tracking. PDF artifacts default to a private backend-only Firestore document (maximum 750 KB), because this Firebase project does not currently have a provisioned Cloud Storage bucket. Set `UWIN_STATE_REPORT_STORAGE=GCS` only after a bucket exists.
 
 ## Optional Vertex AI narrative
 

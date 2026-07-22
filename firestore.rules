@@ -46,6 +46,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /uwinStateReportArtifacts/{artifactId} {
+      allow read, write: if false;
+    }
+
     // Geo entries: any authenticated user can read; only backend writes
     match /geoEntries/{entryId} {
       allow read: if request.auth != null;

@@ -137,7 +137,7 @@ export const generateUwinStateNarrative = async (req: AuthRequest, res: Response
       res.status(409).json({ message: "AI narrative can only be generated while the report is a draft" });
       return;
     }
-    if (data?.artifacts?.pdf?.storagePath && !data?.aiNarrative?.validated) {
+    if ((data?.artifacts?.pdf?.storagePath || data?.artifacts?.pdf?.artifactId) && !data?.aiNarrative?.validated) {
       res.status(409).json({ message: "This immutable report version already has a deterministic PDF" });
       return;
     }

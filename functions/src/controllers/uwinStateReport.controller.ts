@@ -91,7 +91,7 @@ function serializeReport(doc: FirebaseFirestore.DocumentSnapshot, includeDetails
     ...summary,
     ...(includeDetails ? { factPack } : {}),
     hasFactPack: Boolean(factPack),
-    pdfAvailable: Boolean(data.artifacts?.pdf?.storagePath),
+    pdfAvailable: Boolean(data.artifacts?.pdf?.storagePath || data.artifacts?.pdf?.artifactId),
     pdfFileName: data.artifacts?.pdf?.fileName ?? null,
     createdAt: data.createdAt?.toDate?.()?.toISOString() ?? null,
     updatedAt: data.updatedAt?.toDate?.()?.toISOString() ?? null,
@@ -299,6 +299,10 @@ export const uploadUwinStateReportPdf = async (req: AuthRequest, res: Response) 
     res.status(400).json({ message: "A valid PDF report is required" });
     return;
   }
+  if (bytes.length > 750_000) {
+    res.status(413).json({ message: "The three-page PDF exceeds the 750 KB storage limit" });
+    return;
+  }
 
   try {
     const reportRef = db.collection("uwinStateReports").doc(req.params.id as string);
@@ -328,20 +332,36 @@ export const uploadUwinStateReportPdf = async (req: AuthRequest, res: Response) 
       return;
     }
 
-    const stateSegment = String(data?.stateKey || "state").replace(/[^a-z0-9]+/g, "-");
-    const storagePath = `reports/uwin-state/${stateSegment}/${data?.periodStart}_${data?.periodEnd}/v${data?.version}/${report.id}.pdf`;
     const fileName = `${data?.reportNumber || report.id}.pdf`;
-    await storageBucket.file(storagePath).save(bytes, {
-      resumable: false,
-      contentType: "application/pdf",
-      metadata: {
-        cacheControl: "private, max-age=0, no-store",
-        metadata: { reportId: report.id, reportNumber: data?.reportNumber || "" },
-      },
-    });
+    const useCloudStorage = process.env.UWIN_STATE_REPORT_STORAGE === "GCS";
+    let storageDescriptor: Record<string, unknown>;
+    if (useCloudStorage) {
+      const stateSegment = String(data?.stateKey || "state").replace(/[^a-z0-9]+/g, "-");
+      const storagePath = `reports/uwin-state/${stateSegment}/${data?.periodStart}_${data?.periodEnd}/v${data?.version}/${report.id}.pdf`;
+      await storageBucket.file(storagePath).save(bytes, {
+        resumable: false,
+        contentType: "application/pdf",
+        metadata: {
+          cacheControl: "private, max-age=0, no-store",
+          metadata: { reportId: report.id, reportNumber: data?.reportNumber || "" },
+        },
+      });
+      storageDescriptor = { storageBackend: "GCS", storagePath };
+    } else {
+      const artifactId = report.id;
+      await db.collection("uwinStateReportArtifacts").doc(artifactId).set({
+        reportId: report.id,
+        contentType: "application/pdf",
+        pdfBytes: bytes,
+        hash: pdfHash,
+        size: bytes.length,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      storageDescriptor = { storageBackend: "FIRESTORE", artifactId };
+    }
     await reportRef.update({
       "artifacts.pdf": {
-        storagePath,
+        ...storageDescriptor,
         fileName,
         hash: pdfHash,
         size: bytes.length,
@@ -365,11 +385,26 @@ export const downloadUwinStateReportPdf = async (req: AuthRequest, res: Response
       return;
     }
     const pdf = data?.artifacts?.pdf;
-    if (!pdf?.storagePath) {
+    if (!pdf?.storagePath && !pdf?.artifactId) {
       res.status(404).json({ message: "The PDF has not been generated for this report" });
       return;
     }
-    const [bytes] = await storageBucket.file(pdf.storagePath).download();
+    let bytes: Buffer;
+    if (pdf.storageBackend === "FIRESTORE" || pdf.artifactId) {
+      const artifact = await db.collection("uwinStateReportArtifacts").doc(pdf.artifactId || report.id).get();
+      const stored = artifact.data()?.pdfBytes;
+      if (!artifact.exists || !stored) {
+        res.status(404).json({ message: "The saved PDF artifact was not found" });
+        return;
+      }
+      bytes = Buffer.isBuffer(stored)
+        ? stored
+        : typeof stored.toUint8Array === "function"
+          ? Buffer.from(stored.toUint8Array())
+          : Buffer.from(stored);
+    } else {
+      [bytes] = await storageBucket.file(pdf.storagePath).download();
+    }
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${String(pdf.fileName).replace(/["\r\n]/g, "")}"`);
     res.setHeader("Cache-Control", "private, no-store");

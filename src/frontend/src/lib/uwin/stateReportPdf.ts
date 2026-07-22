@@ -181,9 +181,14 @@ export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
       district.mainFindingEvidenceId ?? "No flag",
     ]),
     theme: "grid",
+    tableWidth: WIDTH,
     styles: { font: "helvetica", fontSize: 6.7, cellPadding: 4, textColor: C.navy },
     headStyles: { fillColor: C.navy, textColor: C.white, fontStyle: "bold" },
     alternateRowStyles: { fillColor: C.light },
+    columnStyles: {
+      0: { cellWidth: 110 }, 1: { cellWidth: 50 }, 2: { cellWidth: 65 },
+      3: { cellWidth: 55 }, 4: { cellWidth: 65 }, 5: { cellWidth: 70 }, 6: { cellWidth: 104 },
+    },
   });
   sectionTitle(doc, "Statewide evidence summary", 540);
   autoTable(doc, {
@@ -198,6 +203,7 @@ export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
       finding.severity,
     ]),
     theme: "grid",
+    tableWidth: WIDTH,
     styles: { font: "helvetica", fontSize: 6.6, cellPadding: 3.5, textColor: C.navy },
     headStyles: { fillColor: C.blue, textColor: C.white, fontStyle: "bold" },
     alternateRowStyles: { fillColor: C.paleBlue },
@@ -226,7 +232,7 @@ export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
     theme: "grid",
     styles: { font: "helvetica", fontSize: 6.2, cellPadding: 4, textColor: C.navy, valign: "top" },
     headStyles: { fillColor: C.navy, textColor: C.white, fontStyle: "bold" },
-    columnStyles: { 0: { cellWidth: 82 }, 1: { cellWidth: 145 }, 2: { cellWidth: 55 }, 3: { cellWidth: 48 }, 4: { cellWidth: 150 } },
+    columnStyles: { 0: { cellWidth: 82 }, 1: { cellWidth: 154 }, 2: { cellWidth: 58 }, 3: { cellWidth: 50 }, 4: { cellWidth: 175 } },
   });
 
   sectionTitle(doc, "Positive findings", 490);
