@@ -10,6 +10,7 @@ interface Props {
   auth: AuthState;
   onSelectHmis: () => void;
   onSelectUwin: () => void;
+  onSelectStateUwin: () => void;
   onSelectStateHmis: () => void;
   onSelectPcts: () => void;
 }
@@ -50,12 +51,21 @@ const PORTAL_CARDS = [
     bulletA: "Multi-file district-wise workflow",
     bulletB: "State-level completeness, accuracy, and consistency",
   },
+  {
+    key: "U-WIN-STATE",
+    title: "U-WIN State Review",
+    description: "Merge statewide session-site exports and assess U-WIN data quality from district through session-site level.",
+    accent: "linear-gradient(135deg, rgba(124,58,237,0.95), rgba(8,145,178,0.92))",
+    bulletA: "Multi-file, multi-district workflow",
+    bulletB: "District, block, facility, and session-site drill-down",
+  },
 ];
 
 export function PortalSelector({
   auth,
   onSelectHmis,
   onSelectUwin,
+  onSelectStateUwin,
   onSelectStateHmis,
   onSelectPcts,
 }: Props) {
@@ -65,7 +75,7 @@ export function PortalSelector({
   const cards = PORTAL_CARDS.filter((card) => {
     if (card.key === "HMIS") return hasHmisAccess;
     if (card.key === "PCTS") return hasPctsAccess;
-    if (card.key === "HMIS-STATE") return auth.level === "STATE" || isAdmin;
+    if (card.key === "HMIS-STATE" || card.key === "U-WIN-STATE") return auth.level === "STATE" || isAdmin;
     return true;
   });
   return (
@@ -84,6 +94,8 @@ export function PortalSelector({
                     ? onSelectPcts
                     : card.key === "U-WIN"
                       ? onSelectUwin
+                      : card.key === "U-WIN-STATE"
+                        ? onSelectStateUwin
                       : onSelectStateHmis
               }
               className="group text-left"

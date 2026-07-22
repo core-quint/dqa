@@ -102,6 +102,7 @@ export function buildUploadDatasetContext(parsed: {
   globalBlockCount: number;
   globalFacilityCount: number;
   globalSessionSiteCount?: number;
+  globalDistrictCount?: number;
 }): UploadDatasetContext {
   const months = Object.keys(parsed.allMonths).sort();
   return {
@@ -112,12 +113,13 @@ export function buildUploadDatasetContext(parsed: {
     blockCount: parsed.globalBlockCount ?? null,
     facilityCount: parsed.globalFacilityCount ?? null,
     sessionSiteCount: parsed.globalSessionSiteCount ?? null,
+    districtCount: parsed.globalDistrictCount ?? null,
   };
 }
 
 /** Fire-and-forget audit log of who uploaded, why, and from where. Never blocks upload flow. */
 export function logUploadSession(
-  portal: 'HMIS' | 'UWIN' | 'HMIS_STATE' | 'PCTS',
+  portal: 'HMIS' | 'UWIN' | 'UWIN_STATE' | 'HMIS_STATE' | 'PCTS',
   info: PreUploadInfo,
   dataset?: UploadDatasetContext,
 ): Promise<unknown> {

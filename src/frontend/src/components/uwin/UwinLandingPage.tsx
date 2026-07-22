@@ -28,6 +28,7 @@ interface Props {
   onDataReady: (data: UwinParsedCSV, reviewInfo: PreUploadInfo) => void;
   auth: AuthState;
   onBack: () => void;
+  variant?: "district" | "state";
 }
 
 
@@ -57,7 +58,8 @@ function checkGeoAccess(parsed: UwinParsedCSV, auth: AuthState): string | null {
   return null;
 }
 
-export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
+export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district" }: Props) {
+  const isState = variant === "state";
   const [isLoading, setIsLoading] = useState(false);
   const [isPrechecking, setIsPrechecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -134,12 +136,24 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
           ? await parseUwinCSVFile(files[0], fileMonths[0] || undefined)
           : await parseUwinMultipleCSVFiles(files, fileMonths);
 
+      if (isState) {
+        if (parsed.idxDist === null || parsed.globalDistrictCount === 0) {
+          setError("U-WIN State requires a readable District column in every file.");
+          return;
+        }
+        if (parsed.stateName === "Multiple") {
+          setError("All U-WIN State files must belong to the same state.");
+          return;
+        }
+        parsed.portal = "UWIN_STATE";
+      }
+
       const geoErr = checkGeoAccess(parsed, auth);
       if (geoErr) {
         setError(geoErr);
         return;
       }
-      logUploadSession("UWIN", preInfo, buildUploadDatasetContext(parsed)).catch((err) => console.error("Upload session log failed:", err));
+      logUploadSession(isState ? "UWIN_STATE" : "UWIN", preInfo, buildUploadDatasetContext(parsed)).catch((err) => console.error("Upload session log failed:", err));
       onDataReady(parsed, preInfo);
     } catch (parseError) {
       setError(
@@ -275,7 +289,7 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
               Upload dataset
             </div>
             <div className="mt-2 text-2xl font-extrabold text-slate-950">
-              Upload U-WIN CSV files
+              Upload {isState ? "U-WIN State" : "U-WIN"} CSV files
             </div>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
               Upload one to twelve monthly session-site CSV files. If a file
@@ -301,7 +315,7 @@ export function UwinLandingPage({ onDataReady, auth, onBack }: Props) {
                 <Upload className="h-7 w-7" />
               </div>
               <div className="mt-4 text-base font-bold text-slate-950">
-                Drop U-WIN CSV files here or browse from your machine
+                Drop {isState ? "U-WIN State" : "U-WIN"} CSV files here or browse from your machine
               </div>
               <div className="mt-2 text-sm text-slate-500">
                 Up to twelve monthly files. CSV format only.

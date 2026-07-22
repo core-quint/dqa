@@ -40,7 +40,7 @@ interface Props {
   initialPortal?: TrendPortal;
 }
 
-type TrendPortal = "ALL" | "HMIS" | "UWIN" | "HMIS_STATE" | "PCTS";
+type TrendPortal = "ALL" | "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
 type Metric = "overall" | "availability" | "completeness" | "accuracy" | "consistency";
 type Granularity = "ALL" | "DISTRICT" | "BLOCK";
 
@@ -55,11 +55,12 @@ interface TrendFilters {
   dateTo: string;
 }
 
-const PORTALS = ["HMIS", "HMIS_STATE", "UWIN", "PCTS"] as const;
+const PORTALS = ["HMIS", "HMIS_STATE", "UWIN", "UWIN_STATE", "PCTS"] as const;
 const PORTAL_META: Record<(typeof PORTALS)[number], { label: string; color: string; chip: string }> = {
   HMIS: { label: "HMIS", color: "#2563eb", chip: "bg-blue-100 text-blue-700" },
   HMIS_STATE: { label: "State DQA", color: "#059669", chip: "bg-emerald-100 text-emerald-700" },
   UWIN: { label: "U-WIN", color: "#a21caf", chip: "bg-fuchsia-100 text-fuchsia-700" },
+  UWIN_STATE: { label: "U-WIN State", color: "#0891b2", chip: "bg-cyan-100 text-cyan-700" },
   PCTS: { label: "PCTS", color: "#e11d48", chip: "bg-rose-100 text-rose-700" },
 };
 const METRICS: Array<{ value: Metric; label: string }> = [
@@ -119,7 +120,7 @@ function metricValue(snapshot: SnapshotRecord, metric: Metric): number | null {
   if (metric === "overall") return Number.isFinite(snapshot.overallScore) ? snapshot.overallScore : null;
   if (metric === "availability") return snapshot.kpiData?.availabilityScore ?? null;
   if (metric === "completeness") {
-    if (normalizePortal(snapshot.portal) === "UWIN") return null;
+    if (["UWIN", "UWIN_STATE"].includes(normalizePortal(snapshot.portal))) return null;
     return snapshot.kpiData?.completenessScore ?? null;
   }
   if (metric === "accuracy") return snapshot.kpiData?.accuracyScore ?? null;
@@ -398,7 +399,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Analysis controls</div><div className="mt-1 text-sm font-bold text-slate-900">Every visual and comparison follows this scope</div></div><div className="flex flex-wrap gap-1.5">{([{ id: "90", label: "90 days", value: 90 }, { id: "180", label: "6 months", value: 180 }, { id: "fy", label: "This FY", value: "fy" }, { id: "all", label: "All time", value: "all" }] as const).map((preset) => <button key={preset.id} type="button" onClick={() => { const range = periodRange(preset.value); setActivePreset(preset.id); setFilters((current) => ({ ...current, dateFrom: range.from, dateTo: range.to })); }} className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition ${activePreset === preset.id ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{preset.label}</button>)}</div></div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Metric</span><select value={metric} onChange={(event) => setMetric(event.target.value as Metric)} className={selectClass}>{METRICS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-            <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Data source</span><select value={filters.portal} onChange={(event) => { const portal = event.target.value as TrendPortal; setFilters((current) => ({ ...current, portal, district: portal === "HMIS_STATE" ? "" : current.district, block: portal === "HMIS_STATE" ? "" : current.block })); }} className={selectClass}><option value="ALL">All sources</option>{hasHmisAccess ? <option value="HMIS">HMIS</option> : null}<option value="HMIS_STATE">State DQA</option><option value="UWIN">U-WIN</option>{hasPctsAccess ? <option value="PCTS">PCTS</option> : null}</select></label>
+            <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Data source</span><select value={filters.portal} onChange={(event) => { const portal = event.target.value as TrendPortal; const statePortal = portal === "HMIS_STATE" || portal === "UWIN_STATE"; setFilters((current) => ({ ...current, portal, district: statePortal ? "" : current.district, block: statePortal ? "" : current.block })); }} className={selectClass}><option value="ALL">All sources</option>{hasHmisAccess ? <option value="HMIS">HMIS</option> : null}<option value="HMIS_STATE">State DQA</option><option value="UWIN">U-WIN</option><option value="UWIN_STATE">U-WIN State</option>{hasPctsAccess ? <option value="PCTS">PCTS</option> : null}</select></label>
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">DQA level</span><select value={filters.level} onChange={(event) => { const level = event.target.value as TrendFilters["level"]; setFilters((current) => ({ ...current, level, district: level === "STATE" ? "" : current.district, block: level === "STATE" ? "" : current.block })); }} className={selectClass}><option value="ALL">All levels</option><option value="STATE">State DQA</option><option value="DISTRICT">District DQA</option><option value="BLOCK">Block DQA</option></select></label>
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">State file grain</span><select value={filters.granularity} onChange={(event) => setFilters((current) => ({ ...current, granularity: event.target.value as Granularity }))} className={selectClass}><option value="ALL">District & block-wise</option><option value="DISTRICT">District-wise</option><option value="BLOCK">Block-wise</option></select></label>
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">State</span><select value={filters.state} onChange={(event) => setFilters((current) => ({ ...current, state: event.target.value, district: "", block: "" }))} className={selectClass}><option value="">All states</option>{stateOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>

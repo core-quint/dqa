@@ -60,14 +60,18 @@ function finalizeKpiStat(stat: KpiStat): void {
   stat.all = stat.allFacilityKeys.size;
 }
 
-function chartCountsByBlock(
+function chartCountsByGeography(
   facSet: Set<string>,
-  filteredFacilities: Record<string, FacilityRecord>
+  filteredFacilities: Record<string, FacilityRecord>,
+  stateLevel: boolean,
 ): ChartPayload {
   const counts: Record<string, number> = {};
   for (const key of facSet) {
-    const block = displayBlockLabel(filteredFacilities[key]?.block ?? '');
-    counts[block] = (counts[block] ?? 0) + 1;
+    const rec = filteredFacilities[key];
+    const geography = stateLevel
+      ? (rec?.district || 'Unknown district')
+      : displayBlockLabel(rec?.block ?? '');
+    counts[geography] = (counts[geography] ?? 0) + 1;
   }
   const sorted = Object.keys(counts).sort((a, b) =>
     a.localeCompare(b, undefined, { sensitivity: 'base' })
@@ -86,10 +90,10 @@ function aggregateToFacilityLevel(
 ): Record<string, FacilityRecord> {
   const out: Record<string, FacilityRecord> = {};
   for (const fd of Object.values(facilityData)) {
-    const key = `${fd.block}||${fd.facility}`;
+    const key = `${fd.district ?? ''}||${fd.block}||${fd.facility}`;
     let agg = out[key];
     if (!agg) {
-      agg = { block: fd.block, facility: fd.facility, ownership: '', ru: '', months: {} };
+      agg = { district: fd.district, block: fd.block, facility: fd.facility, ownership: '', ru: '', months: {} };
       out[key] = agg;
     }
     if (fd.ownership) {
@@ -136,17 +140,26 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     : aggregateToFacilityLevel(csv.facilityData);
 
   // ---- row identity columns (adds Session Site Name in session-site-wise mode) ----
-  const idHeaderCols: string[] = analysisMode === 'sessionsite'
-    ? ['Block Name', 'Facility Name', 'Session Site Name']
-    : ['Block Name', 'Facility Name'];
+  const stateLevel = csv.portal === 'UWIN_STATE';
+  const idHeaderCols: string[] = [
+    ...(stateLevel ? ['District'] : []),
+    'Block Name',
+    'Facility Name',
+    ...(analysisMode === 'sessionsite' ? ['Session Site Name'] : []),
+  ];
   const idRowCols = (fd: FacilityRecord): (string | number | null)[] =>
-    analysisMode === 'sessionsite'
-      ? [displayBlockLabel(fd.block), fd.facility, fd.sessionsite ?? '']
-      : [displayBlockLabel(fd.block), fd.facility];
-  const idObjCols = (fd: FacilityRecord): { block: string; facility: string; sessionsite?: string } =>
-    analysisMode === 'sessionsite'
-      ? { block: displayBlockLabel(fd.block), facility: fd.facility, sessionsite: fd.sessionsite ?? '' }
-      : { block: displayBlockLabel(fd.block), facility: fd.facility };
+    [
+      ...(stateLevel ? [fd.district ?? 'Unknown district'] : []),
+      displayBlockLabel(fd.block),
+      fd.facility,
+      ...(analysisMode === 'sessionsite' ? [fd.sessionsite ?? ''] : []),
+    ];
+  const idObjCols = (fd: FacilityRecord): { district?: string; block: string; facility: string; sessionsite?: string } => ({
+    ...(stateLevel ? { district: fd.district ?? 'Unknown district' } : {}),
+    block: displayBlockLabel(fd.block),
+    facility: fd.facility,
+    ...(analysisMode === 'sessionsite' ? { sessionsite: fd.sessionsite ?? '' } : {}),
+  });
 
   // ---- resolve selected months ----
   let selMonths = filters.months.length > 0 ? filters.months : Object.keys(allMonths);
@@ -172,8 +185,8 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     : BASE_VAX.filter((v) => indicatorMap[v] !== undefined);
 
   // ---- global counts ----
-  const globalDen = analysisMode === 'sessionsite' ? csv.globalSessionSiteCount : csv.globalFacilityCount;
-  const globalBlockCount = csv.globalBlockCount;
+  let globalDen = analysisMode === 'sessionsite' ? csv.globalSessionSiteCount : csv.globalFacilityCount;
+  let globalBlockCount = csv.globalBlockCount;
 
   // ---- apply global filters ----
   const selBlocksSet = new Set(filters.blocks.length > 0 ? filters.blocks : Object.keys(
@@ -182,12 +195,16 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       return acc;
     }, {})
   ));
+  const selDistrictsSet = new Set(
+    filters.districts && filters.districts.length > 0 ? filters.districts : csv.districts,
+  );
   const selMonthsSet = new Set(selMonths);
   const selOwnerSet = new Set(filters.ownership.length > 0 ? filters.ownership : ['Public', 'Private']);
   const selRUSet = new Set(filters.ru.length > 0 ? filters.ru : ['Rural', 'Urban']);
 
   const filteredFacilities: Record<string, FacilityRecord> = {};
   for (const [key, fd] of Object.entries(facilityData)) {
+    if (stateLevel && fd.district && !selDistrictsSet.has(fd.district)) continue;
     if (fd.block && !selBlocksSet.has(fd.block)) continue;
     if (fd.ownership && !selOwnerSet.has(fd.ownership)) continue;
     if (fd.ru && !selRUSet.has(fd.ru)) continue;
@@ -198,6 +215,8 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     if (Object.keys(monthsKeep).length === 0) continue;
     filteredFacilities[key] = { ...fd, months: monthsKeep };
   }
+  globalDen = Object.keys(filteredFacilities).length;
+  globalBlockCount = new Set(Object.values(filteredFacilities).map((fd) => `${fd.district ?? ''}||${fd.block}`).filter((key) => !key.endsWith('||'))).size;
 
   const totalMonthsSel = selMonths.length;
 
@@ -830,7 +849,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   // Charts
   // ============================================================
   function mkChart(facSet: Set<string>, color: string): ChartPayload {
-    const c = chartCountsByBlock(facSet, filteredFacilities);
+    const c = chartCountsByGeography(facSet, filteredFacilities, stateLevel);
     c.color = color;
     return c;
   }

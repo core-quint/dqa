@@ -6,7 +6,7 @@ import { authorizePctsWrite } from "../lib/pctsAuthorization";
 import { canAccessPortal } from "../lib/portalAuthorization";
 
 const uploadSessionSchema = z.object({
-  portal: z.enum(["HMIS", "UWIN", "HMIS_STATE", "PCTS"]),
+  portal: z.enum(["HMIS", "UWIN", "UWIN_STATE", "HMIS_STATE", "PCTS"]),
   designation: z.string().min(1),
   purpose: z.string().min(1),
   // The frontend always sends these two as strings (defaulting to '' when not

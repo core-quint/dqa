@@ -53,7 +53,7 @@ export function downloadHighlightedXLS(
 ): void {
   const {
     header, rows,
-    idxBlock, idxFac, idxMonth, idxSessionSite,
+    idxBlock, idxFac, idxMonth, idxSessionSite, idxDist,
     idxSessPlanned, idxSessHeld,
     idxBenPW, idxBenInf, idxBenChild, idxBenAdol,
     idxBenTd1, idxBenTd2, idxBenTdB, idxBenTd10, idxBenTd16,
@@ -77,14 +77,15 @@ export function downloadHighlightedXLS(
     const r = fullRows[ri];
     const block = r[idxBlock]?.trim() ?? '';
     const fac = r[idxFac]?.trim() ?? '';
+    const district = idxDist !== null ? (r[idxDist]?.trim() ?? '') : '';
     const monRaw = r[idxMonth] ?? '';
     const mKey = monthKeyFn(monRaw);
     // Must match the granularity kpis.pinkFacSets was built at: session-site-wise
     // keys include the raw row's Session Site Name, facility-wise keys don't (so
     // every raw row for that facility is highlighted together).
     const rowKey = sessionSiteWise
-      ? `${block}||${fac}||${idxSessionSite !== null ? (r[idxSessionSite]?.trim() ?? '') : ''}`
-      : `${block}||${fac}`;
+      ? `${district}||${block}||${fac}||${idxSessionSite !== null ? (r[idxSessionSite]?.trim() ?? '') : ''}`
+      : `${district}||${block}||${fac}`;
     const inSet = pinkFacKeys.has(rowKey);
 
     let monthOk = true;

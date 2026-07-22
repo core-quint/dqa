@@ -34,7 +34,7 @@ import {
 } from "../../lib/maps/topology";
 import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
 
-type PortalFilter = "ALL" | "HMIS" | "UWIN" | "HMIS_STATE" | "PCTS";
+type PortalFilter = "ALL" | "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
 type CoverageIndicator =
   | "count"
   | "overall"
@@ -100,6 +100,7 @@ const portalLabelMap: Record<PortalFilter, string> = {
   HMIS: "HMIS",
   HMIS_STATE: "State DQA",
   UWIN: "U-WIN",
+  UWIN_STATE: "U-WIN State",
   PCTS: "PCTS",
 };
 
@@ -767,9 +768,8 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                   const next = e.target.value as SnapshotDqaLevel;
                   setLevel(next);
                   if (next === "STATE") {
-                    setPortal("HMIS_STATE");
                     setSelectedDistrict("ALL");
-                  } else if (portal === "HMIS_STATE") {
+                  } else if (portal === "HMIS_STATE" || portal === "UWIN_STATE") {
                     setPortal("ALL");
                   }
                 }}
@@ -789,7 +789,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 onChange={(e) => {
                   const next = e.target.value as PortalFilter;
                   setPortal(next);
-                  if (next === "HMIS_STATE") {
+                  if (next === "HMIS_STATE" || next === "UWIN_STATE") {
                     setLevel("STATE");
                     setSelectedDistrict("ALL");
                   } else if (level === "STATE") {
@@ -802,6 +802,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 {hasHmisAccess ? <option value="HMIS">HMIS</option> : null}
                 <option value="HMIS_STATE">State DQA</option>
                 <option value="UWIN">U-WIN</option>
+                <option value="UWIN_STATE">U-WIN State</option>
                 {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
               </select>
             </Field>
@@ -1452,7 +1453,7 @@ function getIndicatorValue(snapshot: SnapshotRecord, indicator: CoverageIndicato
     case "availability":
       return snapshot.kpiData?.availabilityScore ?? null;
     case "completeness":
-      return normalizePortal(snapshot.portal) !== "UWIN"
+      return !["UWIN", "UWIN_STATE"].includes(normalizePortal(snapshot.portal))
         ? (snapshot.kpiData?.completenessScore ?? null)
         : null;
     case "accuracy":

@@ -31,6 +31,10 @@ interface SidebarProps {
   onToggleCollapse: () => void;
 }
 
+function portalIsStateUwin(appState: string, trendSource: string) {
+  return appState.startsWith("state-uwin-") || (appState === "trend" && trendSource === "UWIN_STATE");
+}
+
 function uniqueIssueCount(
   cards: { group: string; stat: { facilityKeys: Set<string> } }[],
   group: string,
@@ -58,6 +62,7 @@ function uniquePctsIssueCount(
 const PORTAL_ACCENT: Record<string, string> = {
   HMIS: "#3b82f6",
   "U-WIN": "#8b5cf6",
+  "U-WIN STATE": "#0891b2",
   PCTS: "#e11d48",
 };
 
@@ -68,6 +73,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
     setAppState,
     csvData,
     uwinData,
+    stateUwinData,
     pctsData,
     trendSource,
     setTrendSource,
@@ -80,13 +86,14 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
 
   const [analysisOpen, setAnalysisOpen] = useState(true);
 
-  const portal = getPortalForView(appState, trendSource, csvData, uwinData, pctsData);
+  const viewUwinData = portalIsStateUwin(appState, trendSource) ? stateUwinData : uwinData;
+  const portal = getPortalForView(appState, trendSource, csvData, viewUwinData, pctsData);
   const activeData =
-    appState === "coverage" ? null : getPortalData(portal, csvData, uwinData, pctsData);
+    appState === "coverage" ? null : getPortalData(portal, csvData, viewUwinData, pctsData);
   const groupItems = getPortalGroups(portal);
   const isAnalysis =
     appState === "results" || appState === "uwin-results" || appState === "pcts-results";
-  const currentGroup = portal === "U-WIN" ? uwinActiveGroup : activeGroup;
+  const currentGroup = portal === "U-WIN" || portal === "U-WIN STATE" ? uwinActiveGroup : activeGroup;
 
   useEffect(() => {
     if (isAnalysis) setAnalysisOpen(true);
@@ -105,8 +112,8 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
         consistency: uniqueIssueCount(result.cards, "consistency"),
       };
     }
-    if (portal === "U-WIN" && uwinData) {
-      const result = computeUwinKpis(uwinData, {
+    if ((portal === "U-WIN" || portal === "U-WIN STATE") && viewUwinData) {
+      const result = computeUwinKpis(viewUwinData, {
         ...UWIN_DEFAULT_FILTERS,
         activeGroup: "availability",
       });
@@ -126,7 +133,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
       };
     }
     return {};
-  }, [csvData, pctsData, portal, uwinData]);
+  }, [csvData, pctsData, portal, viewUwinData]);
 
   const currentScope =
     auth && auth.level !== "NATIONAL" && auth.role !== "admin"
@@ -148,6 +155,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
       hasChildren: false,
       onClick: () => {
         if (portal === "U-WIN") { setAppState("uwin-landing"); return; }
+        if (portal === "U-WIN STATE") { setAppState("state-uwin-landing"); return; }
         if (portal === "PCTS") { setAppState("pcts-landing"); return; }
         if (portal === "HMIS") { setAppState("landing"); return; }
         setAppState("portal");
@@ -164,7 +172,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
         if (!activeData) return;
         setAnalysisOpen((v) => !v);
         setAppState(
-          portal === "U-WIN"
+          portal === "U-WIN" || portal === "U-WIN STATE"
             ? "uwin-results"
             : portal === "PCTS"
               ? "pcts-results"
@@ -191,7 +199,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
       onClick: () => {
         if (portal) {
           setTrendSource(
-            portal === "U-WIN" ? "UWIN" : portal === "PCTS" ? "PCTS" : "HMIS",
+            portal === "U-WIN" ? "UWIN" : portal === "U-WIN STATE" ? "UWIN_STATE" : portal === "PCTS" ? "PCTS" : "HMIS",
           );
         }
         else setTrendSource("ALL");
@@ -211,6 +219,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
 
   function openGroup(group: (typeof groupItems)[number]) {
     if (portal === "U-WIN") { setUwinActiveGroup(group.id); setAppState("uwin-results"); return; }
+    if (portal === "U-WIN STATE") { setUwinActiveGroup(group.id); setAppState("state-uwin-results"); return; }
     if (portal === "PCTS") { setActiveGroup(group.id); setAppState("pcts-results"); return; }
     setActiveGroup(group.id);
     setAppState("results");

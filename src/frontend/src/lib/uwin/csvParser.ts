@@ -180,7 +180,7 @@ function injectMonthIfMissing(rawRows: string[][], fileMonth: string): string[][
 // Month extraction from filename (YYYY-MM, or null if not found)
 // ============================================================
 
-function extractMonthFromFilename(filename: string): string | null {
+export function extractMonthFromFilename(filename: string): string | null {
   const base = filename.replace(/\.[^.]+$/, '').replace(/[_\-\s]+/g, ' ').toLowerCase();
   const MONTHS3 = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
   const MONTHS_FULL = ['january','february','march','april','may','june','july','august','september','october','november','december'];
@@ -276,7 +276,7 @@ export function parseUwinCSVFile(file: File, fileMonth?: string): Promise<UwinPa
 // fileMonths[i]: YYYY-MM — required for files[i] that lack a Month column
 // ============================================================
 
-export function parseUwinMultipleCSVFiles(files: File[], fileMonths?: string[]): Promise<UwinParsedCSV> {
+export async function parseUwinMultipleCSVFiles(files: File[], fileMonths?: string[]): Promise<UwinParsedCSV> {
   if (files.length === 0) throw new Error('No files provided.');
   if (files.length === 1) return parseUwinCSVFile(files[0], fileMonths?.[0]);
 
@@ -289,26 +289,25 @@ export function parseUwinMultipleCSVFiles(files: File[], fileMonths?: string[]):
       });
     });
 
-  return Promise.all(files.map(parseRaw)).then((allRaw) => {
-    // Inject synthetic Month per-file where needed, before canonical header computation
-    const processedRaws = allRaw.map((raw, fi) => {
-      const { header } = extractHeader(raw);
-      const hasMonth = findMonthColIndex(header) !== null;
-      if (hasMonth) return raw;
-      const fm = fileMonths?.[fi];
-      if (!fm) throw new Error(`File "${files[fi].name}" has no Month column. Please provide the month for each file.`);
-      return injectMonthIfMissing(raw, fm);
-    });
+  // Parse one file at a time. State exports can exceed 100 MB, so retaining all
+  // Papa raw results simultaneously causes an avoidable memory spike.
+  let canonicalHeader: string[] | null = null;
+  let canonNorm: string[] = [];
+  const mergedRows: string[][] = [];
 
-    const { header: canonicalHeader, dataStartIdx: firstDataIdx0 } = extractHeader(processedRaws[0]);
-    const canonNorm = canonicalHeader.map(normalizeHeader);
-    const mergedRows: string[][] = [];
-
-    for (let fi = 0; fi < processedRaws.length; fi++) {
-      const raw = processedRaws[fi];
-      const { header: fileHeader, dataStartIdx } = fi === 0
-        ? { header: canonicalHeader, dataStartIdx: firstDataIdx0 }
-        : extractHeader(raw);
+  for (let fi = 0; fi < files.length; fi++) {
+      let raw = await parseRaw(files[fi]);
+      const initial = extractHeader(raw);
+      if (findMonthColIndex(initial.header) === null) {
+        const fm = fileMonths?.[fi];
+        if (!fm) throw new Error(`File "${files[fi].name}" has no Month column. Please provide the month for each file.`);
+        raw = injectMonthIfMissing(raw, fm);
+      }
+      const { header: fileHeader, dataStartIdx } = extractHeader(raw);
+      if (!canonicalHeader) {
+        canonicalHeader = fileHeader;
+        canonNorm = canonicalHeader.map(normalizeHeader);
+      }
 
       const fileNorm = fileHeader.map(normalizeHeader);
       const canonicalNoMonth = canonNorm.filter((hn) => !MONTH_CANDIDATES.includes(hn));
@@ -327,20 +326,19 @@ export function parseUwinMultipleCSVFiles(files: File[], fileMonths?: string[]):
         while (mapped.length < canonicalHeader.length) mapped.push('');
         mergedRows.push(mapped);
       }
-    }
+  }
 
-    return processUwinRawRows(
-      [canonicalHeader, ...mergedRows],
-      files.map((f) => f.name).join(', ')
-    );
-  });
+  return processUwinRawRows(
+    [canonicalHeader!, ...mergedRows],
+    files.map((f) => f.name).join(', ')
+  );
 }
 
 // ============================================================
 // Core processing
 // ============================================================
 
-function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCSV {
+export function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCSV {
   if (rawRows.length === 0) throw new Error('Empty file or unreadable header.');
 
   const { header, dataStartIdx } = extractHeader(rawRows);
@@ -410,7 +408,9 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
   const facilityData: Record<string, FacilityRecord> = {};
   const allMonthsMap: Record<string, string> = {};
   const statesSet = new Set<string>();
+  const statesByKey: Record<string, string> = {};
   const distsSet = new Set<string>();
+  const districtsByKey: Record<string, string> = {};
 
   for (const r of rows) {
     const block = r[idxBlock]?.trim() ?? '';
@@ -427,15 +427,28 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
     const own = idxOwner !== null ? normalizeOwnership(r[idxOwner] ?? '') : '';
     const ru = idxRU !== null ? normalizeRU(r[idxRU] ?? '') : '';
 
-    if (idxState !== null) { const sv = r[idxState]?.trim(); if (sv) statesSet.add(sv); }
-    if (idxDist !== null) { const dv = r[idxDist]?.trim(); if (dv) distsSet.add(dv); }
+    if (idxState !== null) {
+      const state = r[idxState]?.trim();
+      if (state) {
+        const stateKey = normalizeLooseText(state);
+        if (!statesByKey[stateKey]) statesByKey[stateKey] = state;
+        statesSet.add(statesByKey[stateKey]);
+      }
+    }
+    let district = idxDist !== null ? (r[idxDist]?.trim() ?? '') : '';
+    if (district) {
+      const districtKey = normalizeLooseText(district);
+      if (!districtsByKey[districtKey]) districtsByKey[districtKey] = district;
+      district = districtsByKey[districtKey];
+      distsSet.add(district);
+    }
 
     allMonthsMap[mk] = mLabel;
     // Finest-grain key: Block || Facility || Session Site. computeUwinKpis aggregates
     // this back up to Block||Facility for facility-wise analysis mode at query time.
-    const facKey = `${block}||${fac}||${sess}`;
+    const facKey = `${district}||${block}||${fac}||${sess}`;
     if (!facilityData[facKey]) {
-      facilityData[facKey] = { block, facility: fac, sessionsite: sess, ownership: '', ru: '', months: {} };
+      facilityData[facKey] = { district, block, facility: fac, sessionsite: sess, ownership: '', ru: '', months: {} };
     }
     const fd = facilityData[facKey];
     if (own) { if (!fd.ownership) fd.ownership = own; else if (fd.ownership !== own) fd.ownership = 'Mixed'; }
@@ -458,9 +471,9 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
   const globalBlockSet = new Set<string>();
   const globalSessionSiteSet = new Set<string>();
   for (const [facKey, fd] of Object.entries(facilityData)) {
-    const fk = normalizeFacilityKey(fd.facility);
+    const fk = normalizeFacilityKey(`${fd.district ?? ''}||${fd.block}||${fd.facility}`);
     if (fk && !globalFacilitySet.has(fk)) globalFacilitySet.set(fk, { ownership: fd.ownership, ru: fd.ru });
-    if (fd.block.trim()) globalBlockSet.add(fd.block.trim());
+    if (fd.block.trim()) globalBlockSet.add(`${fd.district ?? ''}||${fd.block.trim()}`);
     // Session-site denominator excludes rows with a blank Session Site Name (matches
     // a pivot distinct-count of the Session Site Name column).
     if (fd.sessionsite?.trim()) globalSessionSiteSet.add(normalizeFacilityKey(facKey));
@@ -493,6 +506,9 @@ function processUwinRawRows(rawRows: string[][], fileName: string): UwinParsedCS
     publicCount, privateCount, ruralCount, urbanCount,
     stateName: statesSet.size === 1 ? [...statesSet][0] : statesSet.size > 1 ? 'Multiple' : '—',
     distName: distsSet.size === 1 ? [...distsSet][0] : distsSet.size > 1 ? 'Multiple' : '—',
+    districts: [...distsSet].sort((a, b) => a.localeCompare(b)),
+    districtsByKey,
+    globalDistrictCount: distsSet.size,
     fileName,
   };
 }

@@ -32,14 +32,25 @@ export function sortNodes(map: Map<string, SummaryNode>): SummaryNode[] {
 export function buildOverallSummary(
   cards: KpiCard[],
   facilities: Record<string, FacilityRecord>,
-): { blocks: SummaryNode[]; hasSessionSites: boolean } {
+): { blocks: SummaryNode[]; hasSessionSites: boolean; hasDistricts: boolean } {
   const blockMap = new Map<string, SummaryNode>();
   let hasSessionSites = false;
+  const hasDistricts = Object.values(facilities).some((rec) => Boolean(rec.district));
+
+  const hierarchy = (rec: FacilityRecord) => {
+    const root = hasDistricts
+      ? nodeFor(blockMap, rec.district || 'Unknown district')
+      : nodeFor(blockMap, rec.block || 'Unknown block');
+    const block = hasDistricts
+      ? nodeFor(root.children, rec.block || 'Unknown block')
+      : root;
+    return { root, block };
+  };
 
   // Seed every entity in the filtered dataset so issue-free rows still
   // appear (with a zero count) instead of silently disappearing.
   for (const rec of Object.values(facilities)) {
-    const block = nodeFor(blockMap, rec.block || 'Unknown block');
+    const { block } = hierarchy(rec);
     const fac = nodeFor(block.children, rec.facility || 'Unknown facility');
     if (rec.sessionsite) {
       hasSessionSites = true;
@@ -52,7 +63,8 @@ export function buildOverallSummary(
     for (const key of card.stat.facilityKeys) {
       const rec = facilities[key];
       if (!rec) continue;
-      const block = nodeFor(blockMap, rec.block || 'Unknown block');
+      const { root, block } = hierarchy(rec);
+      root.indicators.add(card.name);
       block.indicators.add(card.name);
       const fac = nodeFor(block.children, rec.facility || 'Unknown facility');
       fac.indicators.add(card.name);
@@ -62,19 +74,24 @@ export function buildOverallSummary(
     }
   }
 
-  return { blocks: sortNodes(blockMap), hasSessionSites };
+  return { blocks: sortNodes(blockMap), hasSessionSites, hasDistricts };
 }
 
 export function buildOverallExportRows(
   blocks: SummaryNode[],
   hasSessionSites: boolean,
+  hasDistricts = false,
 ): (string | number | null)[][] {
-  const header = hasSessionSites
-    ? ['Block', 'Facility', 'Session Site', 'No. of Data Quality Issues identified', 'Indicators identified']
-    : ['Block', 'Facility', 'No. of Data Quality Issues identified', 'Indicators identified'];
+  const header = [
+    ...(hasDistricts ? ['District'] : []),
+    'Block', 'Facility',
+    ...(hasSessionSites ? ['Session Site'] : []),
+    'No. of Data Quality Issues identified', 'Indicators identified',
+  ];
   const rows: (string | number | null)[][] = [header];
 
   const pushRow = (
+    district: string,
     block: string,
     facility: string,
     session: string,
@@ -82,18 +99,26 @@ export function buildOverallExportRows(
   ) => {
     const para = [...node.indicators].join(', ') || '-';
     rows.push(
-      hasSessionSites
-        ? [block, facility, session, node.indicators.size, para]
-        : [block, facility, node.indicators.size, para],
+      [
+        ...(hasDistricts ? [district] : []),
+        block, facility,
+        ...(hasSessionSites ? [session] : []),
+        node.indicators.size, para,
+      ],
     );
   };
 
-  for (const block of blocks) {
-    pushRow(block.label, '', '', block);
-    for (const fac of sortNodes(block.children)) {
-      pushRow(block.label, fac.label, '', fac);
-      for (const site of sortNodes(fac.children)) {
-        pushRow(block.label, fac.label, site.label, site);
+  for (const root of blocks) {
+    const district = hasDistricts ? root.label : '';
+    if (hasDistricts) pushRow(district, '', '', '', root);
+    const blockNodes = hasDistricts ? sortNodes(root.children) : [root];
+    for (const block of blockNodes) {
+      pushRow(district, block.label, '', '', block);
+      for (const fac of sortNodes(block.children)) {
+        pushRow(district, block.label, fac.label, '', fac);
+        for (const site of sortNodes(fac.children)) {
+          pushRow(district, block.label, fac.label, site.label, site);
+        }
       }
     }
   }

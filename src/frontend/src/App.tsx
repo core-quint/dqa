@@ -27,6 +27,8 @@ function AppContent() {
     setCsvData,
     uwinData,
     setUwinData,
+    stateUwinData,
+    setStateUwinData,
     trendSource,
     setTrendSource,
     activeGroup,
@@ -37,10 +39,14 @@ function AppContent() {
     setHmisSnapshotSaved,
     uwinSnapshotSaved,
     setUwinSnapshotSaved,
+    stateUwinSnapshotSaved,
+    setStateUwinSnapshotSaved,
     hmisReviewInfo,
     setHmisReviewInfo,
     uwinReviewInfo,
     setUwinReviewInfo,
+    stateUwinReviewInfo,
+    setStateUwinReviewInfo,
     stateHmisData,
     setStateHmisData,
     stateHmisReviewInfo,
@@ -111,6 +117,7 @@ function AppContent() {
           auth={auth}
           onSelectHmis={() => setAppState("landing")}
           onSelectUwin={() => setAppState("uwin-landing")}
+          onSelectStateUwin={() => setAppState("state-uwin-landing")}
           onSelectStateHmis={() => setAppState("state-hmis-landing")}
           onSelectPcts={() => setAppState("pcts-landing")}
         />
@@ -178,6 +185,8 @@ function AppContent() {
     const trendBackLabel =
       trendSource === "UWIN" && uwinData
         ? "Back to U-WIN analysis"
+        : trendSource === "UWIN_STATE" && stateUwinData
+          ? "Back to U-WIN State analysis"
         : trendSource === "PCTS" && pctsData
           ? "Back to PCTS analysis"
           : trendSource === "HMIS" && csvData
@@ -191,6 +200,11 @@ function AppContent() {
           onBack={() => {
             if (trendSource === "UWIN" && uwinData) {
               setAppState("uwin-results");
+              return;
+            }
+
+            if (trendSource === "UWIN_STATE" && stateUwinData) {
+              setAppState("state-uwin-results");
               return;
             }
 
@@ -273,6 +287,51 @@ function AppContent() {
     );
   }
 
+  if (appState === "state-uwin-landing" || (appState === "state-uwin-results" && !stateUwinData)) {
+    return (
+      <AppShell>
+        <UwinLandingPage
+          variant="state"
+          auth={auth}
+          onDataReady={(data, reviewInfo) => {
+            setStateUwinData(data);
+            setUwinActiveGroup("availability");
+            setStateUwinReviewInfo(reviewInfo);
+            setStateUwinSnapshotSaved(false);
+            setAppState("state-uwin-results");
+          }}
+          onBack={() => setAppState("portal")}
+        />
+      </AppShell>
+    );
+  }
+
+  if (appState === "state-uwin-results" && stateUwinData) {
+    return (
+      <AppShell>
+        <UwinResultsPage
+          csv={stateUwinData}
+          auth={auth}
+          activeGroup={uwinActiveGroup}
+          onGroupChange={setUwinActiveGroup}
+          snapshotSaved={stateUwinSnapshotSaved}
+          onSnapshotSaved={() => setStateUwinSnapshotSaved(true)}
+          reviewInfo={stateUwinReviewInfo}
+          onReset={() => {
+            setStateUwinData(null);
+            setStateUwinSnapshotSaved(false);
+            setStateUwinReviewInfo(null);
+            setAppState("portal");
+          }}
+          onTrend={() => {
+            setTrendSource("UWIN_STATE");
+            setAppState("trend");
+          }}
+        />
+      </AppShell>
+    );
+  }
+
   if (appState === "state-hmis-landing" || (appState === "state-hmis-results" && !stateHmisData)) {
     return <AppShell><StateHmisLandingPage auth={auth} onBack={() => setAppState("portal")} onDataReady={(data, reviewInfo) => { setStateHmisData(data); setStateHmisReviewInfo(reviewInfo); setStateHmisSnapshotSaved(false); setAppState("state-hmis-results"); }} /></AppShell>;
   }
@@ -332,6 +391,7 @@ function AppContent() {
         auth={auth}
         onSelectHmis={() => setAppState("landing")}
         onSelectUwin={() => setAppState("uwin-landing")}
+        onSelectStateUwin={() => setAppState("state-uwin-landing")}
         onSelectStateHmis={() => setAppState("state-hmis-landing")}
         onSelectPcts={() => setAppState("pcts-landing")}
       />

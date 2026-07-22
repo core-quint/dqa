@@ -228,7 +228,8 @@ export function FilterPanel({
 }: Props) {
   const [f, setF] = useState<FilterState>({ ...initFilters });
   const portal = (csv as unknown as { portal?: string }).portal ?? "HMIS";
-  const isUwin = portal === "UWIN";
+  const isUwin = portal === "UWIN" || portal === "UWIN_STATE";
+  const isStateUwin = portal === "UWIN_STATE";
   const uwinCsv = isUwin ? (csv as unknown as UwinParsedCSV) : null;
   const showAnalysisModeToggle = isUwin && uwinCsv?.idxSessionSite !== null;
 
@@ -236,9 +237,11 @@ export function FilterPanel({
     setF({ ...initFilters });
   }, [initFilters]);
 
+  const allDistricts = uwinCsv?.districts ?? [];
+  const selectedDistricts = f.districts?.length ? f.districts : allDistricts;
   const allBlocks = Object.keys(
     Object.values(csv.facilityData).reduce<Record<string, true>>((acc, fd) => {
-      if (fd.block) acc[fd.block] = true;
+      if (fd.block && (!isStateUwin || !fd.district || selectedDistricts.includes(fd.district))) acc[fd.block] = true;
       return acc;
     }, {}),
   ).sort((a, b) => a.localeCompare(b));
@@ -252,6 +255,7 @@ export function FilterPanel({
   const setAll = (keys: string[], on: boolean): string[] => (on ? [...keys] : []);
 
   const isAllBlocks = f.blocks.length === 0 || f.blocks.length === allBlocks.length;
+  const isAllDistricts = !f.districts?.length || f.districts.length === allDistricts.length;
   const isAllMonths = f.months.length === 0 || f.months.length === allMonths.length;
 
   const handleSubmit = (event: React.FormEvent) => {
@@ -284,6 +288,30 @@ export function FilterPanel({
             onChange={(value) => setF((prev) => ({ ...prev, analysisMode: value }))}
             fullWidth={isRail}
           />
+        ) : null}
+
+        {isStateUwin ? (
+          <Dropdown label="District Name" fullWidth={isRail}>
+            <CheckAll
+              label="Select All"
+              checked={isAllDistricts}
+              onChange={(value) => setF((prev) => ({ ...prev, districts: setAll(allDistricts, value), blocks: [] }))}
+            />
+            <div className="mt-2 max-h-56 space-y-1 overflow-y-auto border-t border-slate-200/80 pt-2 thin-scroll">
+              {allDistricts.map((district) => (
+                <CheckItem
+                  key={district}
+                  label={district}
+                  checked={!f.districts?.length || f.districts.includes(district)}
+                  onChange={(value) => setF((prev) => ({
+                    ...prev,
+                    blocks: [],
+                    districts: toggleSet(prev.districts?.length ? prev.districts : allDistricts, district, value),
+                  }))}
+                />
+              ))}
+            </div>
+          </Dropdown>
         ) : null}
 
         <Dropdown label="Block Name" fullWidth={isRail}>

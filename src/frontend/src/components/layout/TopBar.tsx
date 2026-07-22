@@ -66,6 +66,8 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
     csvData,
     setCsvData,
     uwinData,
+    stateUwinData,
+    setStateUwinData,
     setUwinData,
     pctsData,
     setPctsData,
@@ -81,10 +83,13 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
   const [commandOpen, setCommandOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
-  const portal = getPortalForView(appState, trendSource, csvData, uwinData, pctsData);
+  const isStateUwinView = appState.startsWith("state-uwin-") || (appState === "trend" && trendSource === "UWIN_STATE");
+  const viewUwinData = isStateUwinView ? stateUwinData : uwinData;
+  const canUseStateUwin = auth?.role === "admin" || auth?.level === "STATE";
+  const portal = getPortalForView(appState, trendSource, csvData, viewUwinData, pctsData);
   const activeData =
-    appState === "coverage" ? null : getPortalData(portal, csvData, uwinData, pctsData);
-  const currentGroup = portal === "U-WIN" ? uwinActiveGroup : activeGroup;
+    appState === "coverage" ? null : getPortalData(portal, csvData, viewUwinData, pctsData);
+  const currentGroup = portal === "U-WIN" || portal === "U-WIN STATE" ? uwinActiveGroup : activeGroup;
   const groupItems = getPortalGroups(portal);
 
   useEffect(() => {
@@ -299,6 +304,15 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               <Upload className="h-4 w-4" />
               U-WIN Upload
             </CommandItem>
+            {canUseStateUwin ? (
+              <CommandItem
+                keywords={["upload", "uwin", "state", "district", "csv"]}
+                onSelect={() => runCommand(() => setAppState("state-uwin-landing"))}
+              >
+                <Upload className="h-4 w-4" />
+                U-WIN State Upload
+              </CommandItem>
+            ) : null}
             <CommandItem
               keywords={["trend", "history", "analytics"]}
               onSelect={() => runCommand(() => { setTrendSource("ALL"); setAppState("trend"); })}
@@ -329,6 +343,15 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               >
                 <BarChart2 className="h-4 w-4" />
                 U-WIN Analysis
+              </CommandItem>
+            )}
+            {stateUwinData && (
+              <CommandItem
+                keywords={["analysis", "uwin", "state", "review"]}
+                onSelect={() => runCommand(() => setAppState("state-uwin-results"))}
+              >
+                <BarChart2 className="h-4 w-4" />
+                U-WIN State Analysis
               </CommandItem>
             )}
             {hasPctsAccess && pctsData && (
@@ -365,6 +388,15 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               <TrendingUp className="h-4 w-4" />
               U-WIN Trends
             </CommandItem>
+            {canUseStateUwin ? (
+              <CommandItem
+                keywords={["trend", "uwin", "state"]}
+                onSelect={() => runCommand(() => { setTrendSource("UWIN_STATE"); setAppState("trend"); })}
+              >
+                <TrendingUp className="h-4 w-4" />
+                U-WIN State Trends
+              </CommandItem>
+            ) : null}
             {auth?.role === "admin" && (
               <CommandItem
                 keywords={["admin", "users", "geodata"]}
@@ -384,9 +416,9 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
                   keywords={[group.label.toLowerCase(), portal.toLowerCase(), "analysis"]}
                   onSelect={() =>
                     runCommand(() => {
-                      if (portal === "U-WIN") {
+                      if (portal === "U-WIN" || portal === "U-WIN STATE") {
                         setUwinActiveGroup(group.id);
-                        setAppState("uwin-results");
+                        setAppState(portal === "U-WIN STATE" ? "state-uwin-results" : "uwin-results");
                       } else if (portal === "PCTS") {
                         setActiveGroup(group.id);
                         setAppState("pcts-results");
@@ -441,6 +473,15 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               >
                 <Trash2 className="h-4 w-4" />
                 Clear U-WIN dataset
+              </CommandItem>
+            )}
+            {stateUwinData && (
+              <CommandItem
+                keywords={["clear", "remove", "reset", "uwin", "state"]}
+                onSelect={() => runCommand(() => { setStateUwinData(null); setAppState("portal"); })}
+              >
+                <Trash2 className="h-4 w-4" />
+                Clear U-WIN State dataset
               </CommandItem>
             )}
             {pctsData && (

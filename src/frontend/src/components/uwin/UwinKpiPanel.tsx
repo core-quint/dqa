@@ -24,6 +24,7 @@ import {
   downloadHighlightedXLS,
 } from "../../lib/uwin/exportUtils";
 import { KpiBlockMap } from "../dqa/KpiBlockMap";
+import { StateDistrictMap } from "../stateHmis/StateDistrictMap";
 
 type View = "chart" | "table" | "summary" | "map";
 
@@ -120,6 +121,21 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
   const canvasId = `canvas-${id}`;
   const showSummary = group === "completeness" || group === "accuracy";
   const style = resolveStyle(group, id);
+  const isStateUwin = csv.portal === "UWIN_STATE";
+  const selectedDistricts = useMemo(
+    () => [...new Set(Object.values(kpis.filteredFacilities).map((row) => row.district).filter((value): value is string => Boolean(value)))],
+    [kpis.filteredFacilities],
+  );
+  const stateDrillBlockCounts = useMemo(() => {
+    const result: Record<string, number> = {};
+    if (!isStateUwin || selectedDistricts.length !== 1) return result;
+    for (const key of card.stat.facilityKeys) {
+      const row = kpis.filteredFacilities[key];
+      if (!row?.block) continue;
+      result[row.block] = (result[row.block] ?? 0) + 1;
+    }
+    return result;
+  }, [card.stat.facilityKeys, isStateUwin, kpis.filteredFacilities, selectedDistricts.length]);
 
   // Block-level map data
   const blockCounts = useMemo(() => {
@@ -144,9 +160,9 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
   );
 
   const maxCount = useMemo(() => {
-    const vals = Object.values(blockCounts);
+    const vals = Object.values(isStateUwin && selectedDistricts.length === 1 ? stateDrillBlockCounts : blockCounts);
     return vals.length > 0 ? Math.max(...vals) : 1;
-  }, [blockCounts]);
+  }, [blockCounts, isStateUwin, selectedDistricts.length, stateDrillBlockCounts]);
 
   const handleDownload = () => {
     if (view === "chart") {
@@ -372,13 +388,21 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
           ) : null}
 
           {view === "map" ? (
-            <KpiBlockMap
+            isStateUwin && selectedDistricts.length !== 1 ? (
+              <StateDistrictMap
+                stateName={csv.stateName}
+                counts={blockCounts}
+                districts={csv.districts}
+              />
+            ) : (
+              <KpiBlockMap
               stateName={csv.stateName}
-              districtName={csv.distName}
-              blockCounts={blockCounts}
+              districtName={isStateUwin ? selectedDistricts[0] : csv.distName}
+              blockCounts={isStateUwin ? stateDrillBlockCounts : blockCounts}
               allDataBlocks={allDataBlocks}
               maxCount={maxCount}
-            />
+              />
+            )
           ) : null}
         </div>
       </div>

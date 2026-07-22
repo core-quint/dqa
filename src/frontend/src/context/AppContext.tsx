@@ -20,12 +20,14 @@ export type AppState =
   | "admin"
   | "uwin-landing"
   | "uwin-results"
+  | "state-uwin-landing"
+  | "state-uwin-results"
   | "state-hmis-landing"
   | "state-hmis-results"
   | "pcts-landing"
   | "pcts-results";
 
-export type TrendSource = "ALL" | "HMIS" | "UWIN" | "PCTS";
+export type TrendSource = "ALL" | "HMIS" | "UWIN" | "UWIN_STATE" | "PCTS";
 
 interface AppContextValue {
   auth: AuthState | null;
@@ -36,6 +38,8 @@ interface AppContextValue {
   setCsvData: (d: ParsedCSV | null) => void;
   uwinData: UwinParsedCSV | null;
   setUwinData: (d: UwinParsedCSV | null) => void;
+  stateUwinData: UwinParsedCSV | null;
+  setStateUwinData: (d: UwinParsedCSV | null) => void;
   stateHmisData: StateHmisParsed | null;
   setStateHmisData: (d: StateHmisParsed | null) => void;
   pctsData: PctsParsed | null;
@@ -50,10 +54,14 @@ interface AppContextValue {
   setHmisSnapshotSaved: (v: boolean) => void;
   uwinSnapshotSaved: boolean;
   setUwinSnapshotSaved: (v: boolean) => void;
+  stateUwinSnapshotSaved: boolean;
+  setStateUwinSnapshotSaved: (v: boolean) => void;
   hmisReviewInfo: PreUploadInfo | null;
   setHmisReviewInfo: (v: PreUploadInfo | null) => void;
   uwinReviewInfo: PreUploadInfo | null;
   setUwinReviewInfo: (v: PreUploadInfo | null) => void;
+  stateUwinReviewInfo: PreUploadInfo | null;
+  setStateUwinReviewInfo: (v: PreUploadInfo | null) => void;
   stateHmisReviewInfo: PreUploadInfo | null;
   setStateHmisReviewInfo: (v: PreUploadInfo | null) => void;
   stateHmisSnapshotSaved: boolean;
@@ -72,6 +80,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [appState, setAppState] = useState<AppState>("login");
   const [csvData, setCsvData] = useState<ParsedCSV | null>(null);
   const [uwinData, setUwinData] = useState<UwinParsedCSV | null>(null);
+  const [stateUwinData, setStateUwinData] = useState<UwinParsedCSV | null>(null);
   const [stateHmisData, setStateHmisData] = useState<StateHmisParsed | null>(null);
   const [pctsData, setPctsData] = useState<PctsParsed | null>(null);
   const [trendSource, setTrendSource] = useState<TrendSource>("ALL");
@@ -83,8 +92,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
   const [hmisSnapshotSaved, setHmisSnapshotSaved] = useState(false);
   const [uwinSnapshotSaved, setUwinSnapshotSaved] = useState(false);
+  const [stateUwinSnapshotSaved, setStateUwinSnapshotSaved] = useState(false);
   const [hmisReviewInfo, setHmisReviewInfo] = useState<PreUploadInfo | null>(null);
   const [uwinReviewInfo, setUwinReviewInfo] = useState<PreUploadInfo | null>(null);
+  const [stateUwinReviewInfo, setStateUwinReviewInfo] = useState<PreUploadInfo | null>(null);
   const [stateHmisReviewInfo, setStateHmisReviewInfo] = useState<PreUploadInfo | null>(null);
   const [stateHmisSnapshotSaved, setStateHmisSnapshotSaved] = useState(false);
   const [pctsReviewInfo, setPctsReviewInfo] = useState<PreUploadInfo | null>(null);
@@ -96,6 +107,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setAppState("login");
     setCsvData(null);
     setUwinData(null);
+    setStateUwinData(null);
     setStateHmisData(null);
     setPctsData(null);
     setTrendSource("ALL");
@@ -103,8 +115,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUwinActiveGroup("availability");
     setHmisSnapshotSaved(false);
     setUwinSnapshotSaved(false);
+    setStateUwinSnapshotSaved(false);
     setHmisReviewInfo(null);
     setUwinReviewInfo(null);
+    setStateUwinReviewInfo(null);
     setStateHmisReviewInfo(null);
     setStateHmisSnapshotSaved(false);
     setPctsReviewInfo(null);
@@ -122,6 +136,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setCsvData,
         uwinData,
         setUwinData,
+        stateUwinData,
+        setStateUwinData,
         stateHmisData,
         setStateHmisData,
         pctsData,
@@ -136,10 +152,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setHmisSnapshotSaved,
         uwinSnapshotSaved,
         setUwinSnapshotSaved,
+        stateUwinSnapshotSaved,
+        setStateUwinSnapshotSaved,
         hmisReviewInfo,
         setHmisReviewInfo,
         uwinReviewInfo,
         setUwinReviewInfo,
+        stateUwinReviewInfo,
+        setStateUwinReviewInfo,
         stateHmisReviewInfo,
         setStateHmisReviewInfo,
         stateHmisSnapshotSaved,

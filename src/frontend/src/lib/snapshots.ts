@@ -1,7 +1,7 @@
 import type { FilterState } from "./dqa/types";
 import type { AuthState } from "../components/dqa/LoginPage";
 
-export type SnapshotPortal = "HMIS" | "UWIN" | "HMIS_STATE" | "PCTS";
+export type SnapshotPortal = "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
 export type SnapshotDqaLevel = "STATE" | "DISTRICT" | "BLOCK";
 
 export interface SnapshotKpiData {
@@ -53,6 +53,7 @@ export interface SnapshotSaveMeta {
 export function normalizePortal(portal?: string | null): SnapshotPortal {
   const normalized = portal?.toUpperCase();
   if (normalized === "UWIN") return "UWIN";
+  if (normalized === "UWIN_STATE") return "UWIN_STATE";
   if (normalized === "HMIS_STATE") return "HMIS_STATE";
   if (normalized === "PCTS") return "PCTS";
   return "HMIS";

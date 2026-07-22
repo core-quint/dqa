@@ -3,7 +3,7 @@ import type { UwinParsedCSV } from "../../lib/uwin/types";
 import type { PctsParsed } from "../../lib/pcts/types";
 import type { AppState, TrendSource } from "../../context/AppContext";
 
-export type PortalKind = "HMIS" | "U-WIN" | "PCTS";
+export type PortalKind = "HMIS" | "U-WIN" | "U-WIN STATE" | "PCTS";
 
 export interface ShellGroupItem {
   id: Exclude<ActiveGroup, "">;
@@ -42,9 +42,11 @@ export function getPortalForView(
   if (appState === "coverage") return null;
   if (appState === "landing" || appState === "results") return "HMIS";
   if (appState === "uwin-landing" || appState === "uwin-results") return "U-WIN";
+  if (appState === "state-uwin-landing" || appState === "state-uwin-results") return "U-WIN STATE";
   if (appState === "pcts-landing" || appState === "pcts-results") return "PCTS";
   if (appState === "trend") {
     if (trendSource === "UWIN") return "U-WIN";
+    if (trendSource === "UWIN_STATE") return "U-WIN STATE";
     if (trendSource === "HMIS") return "HMIS";
     if (trendSource === "PCTS") return "PCTS";
     return null;
@@ -57,7 +59,7 @@ export function getPortalForView(
 
 export function getPortalGroups(portal: PortalKind | null): ShellGroupItem[] {
   if (portal === "PCTS") return PCTS_GROUPS;
-  return portal === "U-WIN" ? UWIN_GROUPS : HMIS_GROUPS;
+  return portal === "U-WIN" || portal === "U-WIN STATE" ? UWIN_GROUPS : HMIS_GROUPS;
 }
 
 export function getPortalData(
@@ -66,7 +68,7 @@ export function getPortalData(
   uwinData: UwinParsedCSV | null,
   pctsData: PctsParsed | null,
 ): PortalContextData | null {
-  if (portal === "U-WIN") return uwinData;
+  if (portal === "U-WIN" || portal === "U-WIN STATE") return uwinData;
   if (portal === "HMIS") return csvData;
   if (portal === "PCTS" && pctsData) {
     return {

@@ -202,7 +202,7 @@ function buildCover(
   doc.roundedRect(ML, 76, 60, 22, 4, 4, "S");
   textC(doc, P.blue);
   font(doc, "bold", 9.5);
-  doc.text("U-WIN", ML + 30, 90, { align: "center" });
+  doc.text(csv.portal === "UWIN_STATE" ? "U-WIN STATE" : "U-WIN", ML + 30, 90, { align: "center" });
 
   // Geography card
   fill(doc, P.white);
@@ -218,7 +218,7 @@ function buildCover(
   const ROW = 22;
   const infoRows: [string, string][] = [
     ["State",    csv.stateName || "—"],
-    ["District", csv.distName  || "—"],
+    [csv.portal === "UWIN_STATE" ? "Districts" : "District", csv.portal === "UWIN_STATE" ? String(csv.globalDistrictCount) : (csv.distName || "—")],
     ["Period",   period],
     ["File",     csv.fileName  || "—"],
   ];
@@ -405,7 +405,7 @@ function buildSummary(
   const unit = unitLabels(kpis);
   const statRows = [
     ["State",                         csv.stateName || "—"],
-    ["District",                      csv.distName  || "—"],
+    [csv.portal === "UWIN_STATE" ? "Districts" : "District", csv.portal === "UWIN_STATE" ? String(csv.globalDistrictCount) : (csv.distName || "—")],
     ["Analysis Period",                period],
     ["Months Analyzed",                String(kpis.selMonths.length)],
     [`Total ${unit.plural} (CSV)`,      String(kpis.analysisMode === "sessionsite" ? csv.globalSessionSiteCount : csv.globalFacilityCount)],
@@ -770,13 +770,15 @@ function buildBlockSummary(doc: jsPDF, kpis: UwinComputedKpis) {
   doc.rect(ML, y, 5, 36, "F");
   textC(doc, P.blue);
   font(doc, "bold", 13);
-  doc.text("Block-Level Summary", ML + 14, y + 23);
+  const districtLevel = Object.values(kpis.filteredFacilities).some((fd) => Boolean(fd.district));
+  const geoLabel = districtLevel ? "District" : "Block";
+  doc.text(`${geoLabel}-Level Summary`, ML + 14, y + 23);
   y += 46;
 
   const unit = unitLabels(kpis);
   textC(doc, P.ink500);
   font(doc, "normal", 7);
-  doc.text(`Unique ${unit.lower} flagged per block, across all DQA components.`, ML, y);
+  doc.text(`Unique ${unit.lower} flagged per ${geoLabel.toLowerCase()}, across all DQA components.`, ML, y);
   y += 14;
 
   const blockMap = new Map<string, Record<string, Set<string>>>();
@@ -785,7 +787,7 @@ function buildBlockSummary(doc: jsPDF, kpis: UwinComputedKpis) {
       for (const fk of card.stat.facilityKeys) {
         const fd = kpis.filteredFacilities[fk];
         if (!fd) continue;
-        const blk = fd.block || "Unknown";
+        const blk = districtLevel ? (fd.district || "Unknown") : (fd.block || "Unknown");
         if (!blockMap.has(blk)) blockMap.set(blk, {});
         const entry = blockMap.get(blk)!;
         if (!entry[g]) entry[g] = new Set();
@@ -796,7 +798,7 @@ function buildBlockSummary(doc: jsPDF, kpis: UwinComputedKpis) {
 
   const blockFacTotal = new Map<string, Set<string>>();
   for (const [fk, fd] of Object.entries(kpis.filteredFacilities)) {
-    const blk = fd.block || "Unknown";
+    const blk = districtLevel ? (fd.district || "Unknown") : (fd.block || "Unknown");
     if (!blockFacTotal.has(blk)) blockFacTotal.set(blk, new Set());
     blockFacTotal.get(blk)!.add(fk);
   }
@@ -820,7 +822,7 @@ function buildBlockSummary(doc: jsPDF, kpis: UwinComputedKpis) {
     startY: y,
     margin: { left: ML, right: MR },
     tableWidth: CW,
-    head: [["Block", `Total ${unit.plural}`, "Availability", "Accuracy", "Consistency", "Any Flagged", "Impact%"]],
+    head: [[geoLabel, `Total ${unit.plural}`, "Availability", "Accuracy", "Consistency", "Any Flagged", "Impact%"]],
     body: blockRows,
     styles: { fontSize: 7, cellPadding: 3.5, font: "helvetica", overflow: "linebreak" },
     headStyles: { fillColor: P.bg100, textColor: P.ink700, fontStyle: "bold", fontSize: 7, lineColor: P.border, lineWidth: 0.4 },
@@ -883,7 +885,9 @@ export async function downloadUwinDqaReport(
   const period = selMonthLabels.length > 0
     ? `${selMonthLabels[0]} – ${selMonthLabels[selMonthLabels.length - 1]}`
     : "All selected months";
-  const reportTitle = `${csv.stateName} · ${csv.distName} · U-WIN DQA`;
+  const reportTitle = csv.portal === "UWIN_STATE"
+    ? `${csv.stateName} · U-WIN State DQA`
+    : `${csv.stateName} · ${csv.distName} · U-WIN DQA`;
 
   const allDataBlocks = [...new Set(
     Object.values(kpis.filteredFacilities)
@@ -892,7 +896,7 @@ export async function downloadUwinDqaReport(
   )];
 
   const mapImages: Record<string, string | null> = {};
-  await Promise.all(
+  if (csv.portal !== "UWIN_STATE") await Promise.all(
     UWIN_GROUPS.map(async (g) => {
       const blockCounts = getGroupBlockCounts(g, kpis);
       mapImages[g] = await generateBlockMapDataUrl(csv.stateName, csv.distName, blockCounts, allDataBlocks);
@@ -920,7 +924,7 @@ export async function downloadUwinDqaReport(
     addHeaderFooter(doc, i, total, reportTitle, genDate);
   }
 
-  const filename = ["DQA-Report-UWIN", csv.stateName, csv.distName, new Date().toISOString().slice(0, 10)]
+  const filename = [csv.portal === "UWIN_STATE" ? "DQA-Report-UWIN-State" : "DQA-Report-UWIN", csv.stateName, csv.portal === "UWIN_STATE" ? "All-Districts" : csv.distName, new Date().toISOString().slice(0, 10)]
     .join("-").replace(/\s+/g, "-") + ".pdf";
   doc.save(filename);
 }

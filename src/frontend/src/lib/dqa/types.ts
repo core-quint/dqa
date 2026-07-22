@@ -10,6 +10,7 @@ export interface MonthData {
 }
 
 export interface FacilityRecord {
+  district?: string; // U-WIN State hierarchy
   block: string;
   facility: string;
   ownership: string; // "Public" | "Private" | "Mixed" | ""
@@ -47,6 +48,7 @@ export interface ParsedCSV {
 }
 
 export interface FilterState {
+  districts?: string[]; // U-WIN State only
   blocks: string[];
   months: string[]; // YYYY-MM keys
   ownership: string[]; // "Public" | "Private"
@@ -80,6 +82,7 @@ export type TableRows = (string | number | null)[][];
 
 // For t2: missing indicator matrix
 export interface T2MatrixRow {
+  district?: string;
   block: string;
   facility: string;
   cells: Record<string, Record<string, string>>; // vax -> YYYY-MM -> "Y"|"N"
@@ -102,6 +105,7 @@ export interface T3Cell {
 }
 
 export interface T3MatrixRow {
+  district?: string;
   block: string;
   facility: string;
   cells: Record<string, Record<string, T3Cell>>; // vax -> pairKey -> cell
@@ -130,6 +134,7 @@ export interface DropoutCell {
 }
 
 export interface DropoutRow {
+  district?: string;
   block: string;
   facility: string;
   cells: Record<string, DropoutCell>; // YYYY-MM -> cell
@@ -148,6 +153,7 @@ export interface DropoutWeb {
 
 // For co-admin
 export interface CoAdminRow {
+  district?: string;
   block: string;
   facility: string;
   vals: Record<string, Record<string, number | null>>; // YYYY-MM -> vax -> val

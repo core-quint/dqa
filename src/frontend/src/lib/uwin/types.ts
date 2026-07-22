@@ -38,7 +38,7 @@ export type {
 // ---- UWIN CSV shape (extends HMIS ParsedCSV with beneficiary columns) ----
 
 export interface UwinParsedCSV {
-  portal: 'UWIN';
+  portal: 'UWIN' | 'UWIN_STATE';
   header: string[];
   rows: string[][];
   idxBlock: number;
@@ -81,6 +81,9 @@ export interface UwinParsedCSV {
   urbanCount: number;
   stateName: string;
   distName: string;
+  districts: string[];
+  districtsByKey: Record<string, string>;
+  globalDistrictCount: number;
   fileName: string;
 }
 
@@ -94,6 +97,7 @@ export interface T8MonthData {
 }
 
 export interface T8Row {
+  district?: string;
   block: string;
   facility: string;
   sessionsite?: string;

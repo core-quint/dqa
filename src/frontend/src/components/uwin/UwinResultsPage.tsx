@@ -115,6 +115,8 @@ export function UwinResultsPage({
   onSnapshotSaved,
   reviewInfo,
 }: Props) {
+  const isStateUwin = csv.portal === "UWIN_STATE";
+  const snapshotPortal = isStateUwin ? "UWIN_STATE" : "UWIN";
   const [filters, setFilters] = useState<FilterState>({
     ...UWIN_DEFAULT_FILTERS,
   });
@@ -154,9 +156,9 @@ export function UwinResultsPage({
         const norm = (s: string | undefined | null) => (s ?? "").trim().toLowerCase();
         const matches = snapshots.filter(
           (snapshot) =>
-            (snapshot.portal?.toUpperCase() ?? "HMIS") === "UWIN" &&
+            (snapshot.portal?.toUpperCase() ?? "HMIS") === snapshotPortal &&
             norm(snapshot.state) === norm(csv.stateName) &&
-            norm(snapshot.district) === norm(csv.distName),
+            (isStateUwin || norm(snapshot.district) === norm(csv.distName)),
         );
         const match = matches.sort((a: any, b: any) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -173,7 +175,7 @@ export function UwinResultsPage({
         }
       })
       .catch(() => {});
-  }, [csv.stateName, csv.distName]);
+  }, [csv.stateName, csv.distName, isStateUwin, snapshotPortal]);
 
   useEffect(() => {
     if (!activeGroup) {
@@ -204,9 +206,9 @@ export function UwinResultsPage({
       const savedSnapshot = await apiFetch("/api/snapshots", {
         method: "POST",
         body: JSON.stringify({
-          portal: "UWIN",
+          portal: snapshotPortal,
           state: csv.stateName,
-          district: csv.distName,
+          district: isStateUwin ? "All Districts" : csv.distName,
           duration: durationStr,
           designation: reviewInfo?.designation || null,
           purpose: reviewInfo?.purpose || null,
@@ -217,13 +219,14 @@ export function UwinResultsPage({
           completenessScore: components.completeness?.score ?? 0,
           accuracyScore: components.accuracy?.score ?? 0,
           consistencyScore: components.consistency?.score ?? 0,
-          dqaLevel: snapshotMeta.dqaLevel,
-          block: snapshotMeta.block,
+          dqaLevel: isStateUwin ? "STATE" : snapshotMeta.dqaLevel,
+          block: isStateUwin ? null : snapshotMeta.block,
           periodStart: snapshotMeta.periodStart,
           periodEnd: snapshotMeta.periodEnd,
           blockCount: csv.globalBlockCount,
           facilityCount: csv.globalFacilityCount,
           sessionSiteCount: csv.globalSessionSiteCount,
+          districtCount: isStateUwin ? csv.globalDistrictCount : null,
         }),
       });
       setLastSnapshot({
@@ -257,9 +260,9 @@ export function UwinResultsPage({
   const unitPluralLower = isSessionSiteWise ? "session sites" : "facilities";
 
   const contextStats = [
-    { label: "Program", value: "U-WIN" },
+    { label: "Program", value: isStateUwin ? "U-WIN State" : "U-WIN" },
     { label: "State", value: csv.stateName || "-" },
-    { label: "District", value: csv.distName || "-" },
+    { label: isStateUwin ? "Districts" : "District", value: isStateUwin ? String(csv.globalDistrictCount) : (csv.distName || "-") },
     { label: "Duration", value: durationStr },
     { label: "Blocks", value: String(csv.globalBlockCount) },
     {
@@ -311,7 +314,7 @@ export function UwinResultsPage({
       <div className="space-y-5">
         <div className="border-b border-slate-200 bg-white px-6 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-lg font-semibold text-slate-900">U-WIN Analysis</h1>
+            <h1 className="text-lg font-semibold text-slate-900">{isStateUwin ? "U-WIN State Analysis" : "U-WIN Analysis"}</h1>
             <div className="flex flex-wrap items-center gap-2">
               {kpis ? (
                 <button onClick={() => setShowOverall(true)} className={primaryActionClass}>
@@ -435,7 +438,7 @@ export function UwinResultsPage({
                 <OverallSummaryTable
                   cards={kpis.cards}
                   facilities={kpis.filteredFacilities}
-                  exportName={`Blockwise-Overall-Summary-UWIN-${csv.distName || "district"}`}
+                  exportName={`${isStateUwin ? "Districtwise" : "Blockwise"}-Overall-Summary-${isStateUwin ? "UWIN-State" : "UWIN"}-${isStateUwin ? csv.stateName : (csv.distName || "district")}`}
                 />
               ) : null}
 

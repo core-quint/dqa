@@ -27,7 +27,7 @@ export function titleCaseGeo(s: string | null | undefined): string {
 
 export interface DashboardRecord {
   id: string;
-  portal: "HMIS" | "UWIN" | "HMIS_STATE" | "PCTS";
+  portal: "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
   state: string;
   stateKey: string;
   district: string;
@@ -62,7 +62,7 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
   const portal = normalizePortal(s.portal);
   const dqaLevel = getSnapshotDqaLevel(s);
   const block = getSnapshotBlock(s);
-  const isStateDqa = portal === "HMIS_STATE" || dqaLevel === "STATE";
+  const isStateDqa = portal === "HMIS_STATE" || portal === "UWIN_STATE" || dqaLevel === "STATE";
   const monthKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}`;
   return {
     id: s.id,
@@ -85,7 +85,7 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
     savedBy: s.createdBy?.email ?? null,
     overall: s.overallScore ?? 0,
     availability: s.kpiData?.availabilityScore ?? null,
-    completeness: portal === "UWIN" ? null : (s.kpiData?.completenessScore ?? null),
+    completeness: portal === "UWIN" || portal === "UWIN_STATE" ? null : (s.kpiData?.completenessScore ?? null),
     accuracy: s.kpiData?.accuracyScore ?? null,
     consistency: s.kpiData?.consistencyScore ?? null,
     blockCount: s.kpiData?.blockCount ?? null,
@@ -100,7 +100,7 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
 // ---------------------------------------------------------------
 
 export interface DashboardFilters {
-  portal: "ALL" | "HMIS" | "UWIN" | "HMIS_STATE" | "PCTS";
+  portal: "ALL" | "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
   dqaLevel: "ALL" | "STATE" | "DISTRICT" | "BLOCK";
   granularity: "ALL" | "DISTRICT" | "BLOCK";
   state: string; // stateKey, "" = all
@@ -203,7 +203,7 @@ export function computeDashboardStats(records: DashboardRecord[]): DashboardStat
 
   for (const r of records) {
     if (r.portal === "HMIS_STATE") stateHmis += 1;
-    else if (r.portal === "UWIN") uwin += 1;
+    else if (r.portal === "UWIN_STATE" || r.portal === "UWIN") uwin += 1;
     else if (r.portal === "PCTS") pcts += 1;
     else hmis += 1;
     if (r.stateKey) states.add(r.stateKey);
@@ -213,13 +213,13 @@ export function computeDashboardStats(records: DashboardRecord[]): DashboardStat
       set.add(r.districtKey);
       explicitDistrictsByState.set(r.stateKey, set);
     }
-    if (r.portal === "HMIS_STATE" && r.districtCount !== null) {
+    if ((r.portal === "HMIS_STATE" || r.portal === "UWIN_STATE") && r.districtCount !== null) {
       maxStateDistrictCount.set(r.stateKey, Math.max(maxStateDistrictCount.get(r.stateKey) ?? 0, r.districtCount));
     }
     if (r.savedBy) reviewers.add(r.savedBy);
 
     if (r.blockCount !== null) {
-      if (r.portal === "HMIS_STATE") {
+      if (r.portal === "HMIS_STATE" || r.portal === "UWIN_STATE") {
         maxStateBlockCount.set(r.stateKey, Math.max(maxStateBlockCount.get(r.stateKey) ?? 0, r.blockCount));
       } else if (r.blockCount > (maxBlockCount.get(dKey) ?? 0)) {
         maxBlockCount.set(dKey, r.blockCount);
@@ -235,7 +235,7 @@ export function computeDashboardStats(records: DashboardRecord[]): DashboardStat
       maxFacility.set(fKey, r.facilityCount);
     }
     if (
-      r.portal === "UWIN" &&
+      (r.portal === "UWIN" || r.portal === "UWIN_STATE") &&
       r.sessionSiteCount !== null &&
       r.sessionSiteCount > (maxSessionSites.get(dKey) ?? 0)
     ) {
@@ -325,7 +325,7 @@ export function groupByMonth(records: DashboardRecord[]): MonthBucket[] {
   for (const r of records) {
     const bucket = byMonth.get(r.monthKey) ?? { hmis: 0, uwin: 0, pcts: 0, stateHmis: 0, scores: [] };
     if (r.portal === "HMIS_STATE") bucket.stateHmis += 1;
-    else if (r.portal === "UWIN") bucket.uwin += 1;
+    else if (r.portal === "UWIN_STATE" || r.portal === "UWIN") bucket.uwin += 1;
     else if (r.portal === "PCTS") bucket.pcts += 1;
     else bucket.hmis += 1;
     bucket.scores.push(r.overall);
@@ -476,7 +476,7 @@ export function groupByCategory(
       label,
       total: list.length,
       hmis: list.filter((r) => r.portal === "HMIS").length,
-      uwin: list.filter((r) => r.portal === "UWIN").length,
+      uwin: list.filter((r) => r.portal === "UWIN" || r.portal === "UWIN_STATE").length,
       pcts: list.filter((r) => r.portal === "PCTS").length,
       stateHmis: list.filter((r) => r.portal === "HMIS_STATE").length,
       avgOverall: mean(list.map((r) => r.overall)),

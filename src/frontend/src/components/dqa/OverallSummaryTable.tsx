@@ -27,7 +27,7 @@ function severity(count: number) {
 export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const { blocks, hasSessionSites } = useMemo(
+  const { blocks, hasSessionSites, hasDistricts } = useMemo(
     () => buildOverallSummary(cards, facilities),
     [cards, facilities],
   );
@@ -42,12 +42,12 @@ export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
   };
 
   const handleExport = () => {
-    downloadXLS(buildOverallExportRows(blocks, hasSessionSites), exportName);
+    downloadXLS(buildOverallExportRows(blocks, hasSessionSites, hasDistricts), exportName);
   };
 
   const renderRow = (
     node: SummaryNode,
-    depth: 0 | 1 | 2,
+    depth: number,
     rowKey: string,
   ): React.ReactNode[] => {
     const canExpand = node.children.size > 0;
@@ -88,7 +88,7 @@ export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
             >
               {node.label}
             </span>
-            {depth === 2 ? (
+            {depth === (hasDistricts ? 3 : 2) ? (
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                 Session site
               </span>
@@ -110,7 +110,7 @@ export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
     if (canExpand && isOpen) {
       for (const child of sortNodes(node.children)) {
         rows.push(
-          ...renderRow(child, (depth + 1) as 1 | 2, `${rowKey}||${child.label}`),
+          ...renderRow(child, depth + 1, `${rowKey}||${child.label}`),
         );
       }
     }
@@ -125,11 +125,11 @@ export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
             Overall
           </div>
           <div className="mt-1 text-lg font-bold text-slate-950">
-            Block wise Overall Summary
+            {hasDistricts ? "District wise Overall Summary" : "Block wise Overall Summary"}
           </div>
           <div className="mt-1 text-sm text-slate-600">
             Distinct indicators flagged across all data quality components.
-            Expand a block to see facilities
+            Expand {hasDistricts ? "a district to see blocks and facilities" : "a block to see facilities"}
             {hasSessionSites ? ", and a facility to see session sites" : ""}.
           </div>
         </div>
@@ -165,7 +165,7 @@ export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
             <thead className="sticky top-0 z-10 bg-slate-50">
               <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 <th className="px-4 py-3">
-                  Block{hasSessionSites ? " / Facility / Session Site" : " / Facility"}
+                  {hasDistricts ? "District / " : ""}Block{hasSessionSites ? " / Facility / Session Site" : " / Facility"}
                 </th>
                 <th className="px-4 py-3 text-center">
                   No. of Data Quality Issues identified

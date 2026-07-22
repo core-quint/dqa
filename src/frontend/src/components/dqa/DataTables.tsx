@@ -60,6 +60,7 @@ export function FlatTable({ rows, highlightN }: FlatTableProps) {
 export function T2Table({ web }: { web: T2Web }) {
   const { vaccines, months, monthLabels, rows } = web;
   const rowList = Object.values(rows);
+  const showDistrict = rowList.some((row) => Boolean(row.district));
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
   const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
@@ -67,6 +68,7 @@ export function T2Table({ web }: { web: T2Web }) {
     <table className="border-collapse text-xs" style={{ minWidth: 600 }}>
       <thead>
         <tr>
+          {showDistrict ? <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">District</th> : null}
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
           {showSessionSite ? (
@@ -95,6 +97,7 @@ export function T2Table({ web }: { web: T2Web }) {
       <tbody>
         {rowList.map((row, rowIdx) => (
           <tr key={rowIdx} className="hover:bg-accent/20">
+            {showDistrict ? <td className="border border-border px-2 py-1">{row.district}</td> : null}
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
             {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
@@ -125,6 +128,7 @@ export function T2Table({ web }: { web: T2Web }) {
 export function T3Table({ web }: { web: T3Web }) {
   const { vaccines, pairs, rows } = web;
   const rowList = Object.values(rows);
+  const showDistrict = rowList.some((row) => Boolean(row.district));
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
   const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
@@ -132,6 +136,7 @@ export function T3Table({ web }: { web: T3Web }) {
     <table className="border-collapse text-xs" style={{ minWidth: 600 }}>
       <thead>
         <tr>
+          {showDistrict ? <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">District</th> : null}
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
           {showSessionSite ? (
@@ -162,6 +167,7 @@ export function T3Table({ web }: { web: T3Web }) {
       <tbody>
         {rowList.map((row, rowIdx) => (
           <tr key={rowIdx} className="hover:bg-accent/20">
+            {showDistrict ? <td className="border border-border px-2 py-1">{row.district}</td> : null}
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
             {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
@@ -209,6 +215,7 @@ export function T3Table({ web }: { web: T3Web }) {
 export function DropoutTable({ web }: { web: DropoutWeb }) {
   const { from, to, months, monthLabels, rows } = web;
   const rowList = Object.values(rows);
+  const showDistrict = rowList.some((row) => Boolean(row.district));
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
   const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
@@ -216,6 +223,7 @@ export function DropoutTable({ web }: { web: DropoutWeb }) {
     <table className="border-collapse text-xs" style={{ minWidth: 600 }}>
       <thead>
         <tr>
+          {showDistrict ? <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">District</th> : null}
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
           {showSessionSite ? (
@@ -244,6 +252,7 @@ export function DropoutTable({ web }: { web: DropoutWeb }) {
       <tbody>
         {rowList.map((row, rowIdx) => (
           <tr key={rowIdx} className="hover:bg-accent/20">
+            {showDistrict ? <td className="border border-border px-2 py-1">{row.district}</td> : null}
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
             {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}

@@ -1,7 +1,7 @@
 import type { JwtUser } from "../middleware/auth.middleware";
 import { canAccessPcts } from "./pctsAuthorization";
 
-export type NormalizedPortal = "HMIS" | "UWIN" | "HMIS_STATE" | "PCTS";
+export type NormalizedPortal = "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
 
 const normalizeGeo = (value: string | null | undefined): string =>
   (value ?? "").trim().toLowerCase();
@@ -14,6 +14,7 @@ const normalizeGeo = (value: string | null | undefined): string =>
 export function normalizePortal(value: unknown): NormalizedPortal {
   const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
   if (normalized === "UWIN") return "UWIN";
+  if (normalized === "UWIN_STATE") return "UWIN_STATE";
   if (normalized === "HMIS_STATE") return "HMIS_STATE";
   if (normalized === "PCTS") return "PCTS";
   return "HMIS";
@@ -43,5 +44,8 @@ export function canAccessPortal(
   const normalizedPortal = normalizePortal(portal);
   if (normalizedPortal === "HMIS") return canAccessStandardHmis(user);
   if (normalizedPortal === "PCTS") return canAccessPcts(user);
+  if (normalizedPortal === "UWIN_STATE") {
+    return user?.role === "ADMIN" || user?.level === "NATIONAL" || user?.level === "STATE";
+  }
   return Boolean(user);
 }

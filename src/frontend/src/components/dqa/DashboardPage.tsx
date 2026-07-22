@@ -661,7 +661,7 @@ function ComponentProfile({
 }) {
   const rows = useMemo(() => {
     const hmisRecords = records.filter((r) => r.portal === "HMIS");
-    const uwinRecords = records.filter((r) => r.portal === "UWIN");
+    const uwinRecords = records.filter((r) => r.portal === "UWIN" || r.portal === "UWIN_STATE");
     const pctsRecords = records.filter((r) => r.portal === "PCTS");
     const stateHmisRecords = records.filter((r) => r.portal === "HMIS_STATE");
     const avg = (list: DashboardRecord[], pick: (r: DashboardRecord) => number | null): number | null => {
@@ -884,7 +884,7 @@ export function DashboardPage({ auth }: Props) {
 
   const showHmis = hasHmisAccess && (filters.portal === "ALL" || filters.portal === "HMIS");
   const showStateHmis = filters.portal === "ALL" || filters.portal === "HMIS_STATE";
-  const showUwin = filters.portal === "ALL" || filters.portal === "UWIN";
+  const showUwin = filters.portal === "ALL" || filters.portal === "UWIN" || filters.portal === "UWIN_STATE";
   const showPcts = filters.portal === "ALL" || filters.portal === "PCTS";
 
   const managementSignals = useMemo(() => {
@@ -1100,7 +1100,8 @@ export function DashboardPage({ auth }: Props) {
                 value={filters.portal}
                 onChange={(e) => {
                   const portal = e.target.value as DashboardFilters["portal"];
-                  setFilter({ portal, district: portal === "HMIS_STATE" ? "" : filters.district, block: portal === "HMIS_STATE" ? "" : filters.block });
+                  const statePortal = portal === "HMIS_STATE" || portal === "UWIN_STATE";
+                  setFilter({ portal, district: statePortal ? "" : filters.district, block: statePortal ? "" : filters.block });
                 }}
                 className={selectClass}
               >
@@ -1108,6 +1109,7 @@ export function DashboardPage({ auth }: Props) {
                 {hasHmisAccess ? <option value="HMIS">HMIS</option> : null}
                 <option value="HMIS_STATE">State DQA (HMIS)</option>
                 <option value="UWIN">U-WIN</option>
+                <option value="UWIN_STATE">U-WIN State</option>
                 {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
               </select>
             </label>
@@ -1247,7 +1249,8 @@ export function DashboardPage({ auth }: Props) {
                 <StatTile label="Total DQA reviews" value={fmtCount(stats.total)} sub={`${fmtCount(stats.reviewers)} reviewer${stats.reviewers !== 1 ? "s" : ""} engaged`} icon={<ClipboardList className="h-4 w-4" />} />
                 {hasHmisAccess ? <StatTile label="HMIS reviews" value={fmtCount(stats.hmis)} icon={<BarChart3 className="h-4 w-4" />} /> : null}
                 <StatTile label="State DQA reviews" value={fmtCount(stats.stateHmis)} sub="District / block-wise state files" icon={<Radar className="h-4 w-4" />} />
-                <StatTile label="U-WIN reviews" value={fmtCount(stats.uwin)} icon={<Syringe className="h-4 w-4" />} />
+                <StatTile label="U-WIN reviews" value={fmtCount(stats.uwin)} sub="District and state workflows" icon={<Syringe className="h-4 w-4" />} />
+                <StatTile label="U-WIN State reviews" value={fmtCount(filtered.filter((record) => record.portal === "UWIN_STATE").length)} icon={<Landmark className="h-4 w-4" />} />
                 <StatTile label="PCTS reviews" value={fmtCount(stats.pcts)} icon={<BarChart3 className="h-4 w-4" />} />
                 <StatTile
                   label="Avg overall score"
