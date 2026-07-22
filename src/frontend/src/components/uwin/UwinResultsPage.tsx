@@ -343,7 +343,6 @@ export function UwinResultsPage({
                   kpis={kpis}
                   filters={filters}
                   reviewInfo={reviewInfo}
-                  auth={auth}
                 />
               ) : null}
               {kpis ? (

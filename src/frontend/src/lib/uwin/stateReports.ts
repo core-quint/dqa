@@ -7,7 +7,7 @@ import type { PreUploadInfo } from "../dqa/preUploadOptions";
 import type { UwinComputedKpis, UwinParsedCSV } from "./types";
 import { buildUwinStateFactPack, UWIN_STATE_REPORT_RULES_VERSION, type UwinStateReportFactPack } from "./stateReportFacts";
 
-export type UwinStateReportStatus = "DRAFT" | "REVIEWED" | "APPROVED" | "SUPERSEDED";
+export type UwinStateReportStatus = "SAVED" | "DRAFT" | "REVIEWED" | "APPROVED" | "SUPERSEDED";
 
 export interface UwinStateReportRecord {
   id: string;
@@ -55,24 +55,6 @@ export interface UwinStateReportRecord {
     disclosure: string;
   };
   reused?: boolean;
-}
-
-export type ReportActionStatus = "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED" | "VERIFIED" | "OVERDUE";
-export interface UwinStateReportAction {
-  id: string;
-  reportId: string;
-  evidenceId: string;
-  findingTitle: string;
-  affectedUnits: number;
-  actionRuleId: string;
-  action: string;
-  responsibleLevel: string;
-  responsibleOfficer: string | null;
-  dueDate: string;
-  status: ReportActionStatus;
-  progressNote: string | null;
-  verification: string;
-  updatedAt: string | null;
 }
 
 function compactHash(value: string): string {
@@ -224,26 +206,4 @@ export async function downloadSavedUwinStateReportPdf(report: UwinStateReportRec
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-}
-
-export async function updateUwinStateReportStatus(id: string, status: "REVIEWED" | "APPROVED"): Promise<UwinStateReportRecord> {
-  return apiFetch(`/api/uwin-state-reports/${encodeURIComponent(id)}/status`, {
-    method: "PATCH",
-    body: JSON.stringify({ status }),
-  });
-}
-
-export async function listUwinStateReportActions(id: string): Promise<UwinStateReportAction[]> {
-  return apiFetch(`/api/uwin-state-reports/${encodeURIComponent(id)}/actions`);
-}
-
-export async function updateUwinStateReportAction(
-  reportId: string,
-  actionId: string,
-  update: Pick<UwinStateReportAction, "status" | "responsibleOfficer" | "dueDate" | "progressNote">,
-): Promise<UwinStateReportAction> {
-  return apiFetch(`/api/uwin-state-reports/${encodeURIComponent(reportId)}/actions/${encodeURIComponent(actionId)}`, {
-    method: "PATCH",
-    body: JSON.stringify(update),
-  });
 }

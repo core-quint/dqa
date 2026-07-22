@@ -146,7 +146,7 @@ export const createUwinStateReport = async (req: AuthRequest, res: Response) => 
         analysisFingerprint,
         version,
         reportNumber,
-        status: "DRAFT",
+        status: "SAVED",
         sourceSignature: input.sourceSignature,
         analysisMode: input.analysisMode,
         narrativeMode: input.narrativeMode,
@@ -164,7 +164,6 @@ export const createUwinStateReport = async (req: AuthRequest, res: Response) => 
         },
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
-        statusHistory: [{ status: "DRAFT", userId: req.user!.id, userEmail: req.user!.email, at: new Date() }],
       });
       transaction.set(seriesRef, {
         portal: "UWIN_STATE",
@@ -177,39 +176,6 @@ export const createUwinStateReport = async (req: AuthRequest, res: Response) => 
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
 
-      const findings = input.factPack.findings as Array<Record<string, unknown>>;
-      const actionRules = input.factPack.actionRules as Array<Record<string, unknown>>;
-      const rulesById = new Map(actionRules.map((rule) => [String(rule.id ?? ""), rule]));
-      findings.forEach((finding) => {
-        const evidenceId = String(finding.evidenceId ?? "");
-        const rule = rulesById.get(String(finding.actionRuleId ?? ""));
-        if (!evidenceId || !rule) return;
-        const timelineDays = Math.max(1, Math.min(365, Number(rule.timelineDays ?? 30)));
-        const dueDate = new Date(Date.now() + timelineDays * 86_400_000).toISOString().slice(0, 10);
-        const actionId = hash(`${reportRef.id}|${evidenceId}`).slice(0, 32);
-        transaction.set(db.collection("uwinStateReportActions").doc(actionId), {
-          reportId: reportRef.id,
-          reportNumber,
-          state: input.state,
-          stateKey,
-          periodStart: input.periodStart,
-          periodEnd: input.periodEnd,
-          evidenceId,
-          findingTitle: String(finding.title ?? "DQA finding"),
-          affectedUnits: Number(finding.affectedUnits ?? 0),
-          actionRuleId: String(rule.id ?? ""),
-          action: String(rule.action ?? ""),
-          responsibleLevel: String(rule.responsibleLevel ?? "DISTRICT"),
-          responsibleOfficer: null,
-          dueDate,
-          status: "NOT_STARTED",
-          progressNote: null,
-          verification: String(rule.verification ?? ""),
-          createdAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-          createdBy: { id: req.user!.id, email: req.user!.email },
-        });
-      });
       return { reused: false, id: reportRef.id };
     });
 
@@ -218,78 +184,6 @@ export const createUwinStateReport = async (req: AuthRequest, res: Response) => 
   } catch (error) {
     console.error("Create U-WIN State report error:", error);
     res.status(500).json({ message: "Failed to save U-WIN State report" });
-  }
-};
-
-const reportStatusSchema = z.object({ status: z.enum(["REVIEWED", "APPROVED"]) });
-
-export const updateUwinStateReportStatus = async (req: AuthRequest, res: Response) => {
-  const parsed = reportStatusSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ message: parsed.error.issues[0].message });
-    return;
-  }
-  try {
-    const reportRef = db.collection("uwinStateReports").doc(req.params.id as string);
-    const report = await reportRef.get();
-    const data = report.data();
-    if (!report.exists || !canAccessState(req.user, data?.state)) {
-      res.status(404).json({ message: "Report not found" });
-      return;
-    }
-    const target = parsed.data.status;
-    if (target === "REVIEWED") {
-      if (data?.status !== "DRAFT") {
-        res.status(409).json({ message: "Only a draft can be submitted for review" });
-        return;
-      }
-      if (!data?.artifacts?.pdf?.storagePath) {
-        res.status(409).json({ message: "Generate and save the report PDF before submitting it for review" });
-        return;
-      }
-      await reportRef.update({
-        status: "REVIEWED",
-        reviewedBy: { id: req.user!.id, email: req.user!.email },
-        reviewedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-        statusHistory: FieldValue.arrayUnion({ status: "REVIEWED", userId: req.user!.id, userEmail: req.user!.email, at: new Date() }),
-      });
-    } else {
-      const canApprove = req.user!.role === "ADMIN" || req.user!.level === "NATIONAL";
-      if (!canApprove) {
-        res.status(403).json({ message: "Only a national user or administrator can approve a report" });
-        return;
-      }
-      if (data?.status !== "REVIEWED") {
-        res.status(409).json({ message: "Only a reviewed report can be approved" });
-        return;
-      }
-      const sameSeries = await db.collection("uwinStateReports").where("geographyPeriodKey", "==", data.geographyPeriodKey).get();
-      const batch = db.batch();
-      sameSeries.docs.forEach((candidate) => {
-        if (candidate.id !== report.id && candidate.data().status === "APPROVED") {
-          batch.update(candidate.ref, {
-            status: "SUPERSEDED",
-            supersededByReportId: report.id,
-            updatedAt: FieldValue.serverTimestamp(),
-            statusHistory: FieldValue.arrayUnion({ status: "SUPERSEDED", userId: req.user!.id, userEmail: req.user!.email, at: new Date() }),
-          });
-        }
-      });
-      batch.update(reportRef, {
-        status: "APPROVED",
-        approvedBy: { id: req.user!.id, email: req.user!.email },
-        approvedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-        statusHistory: FieldValue.arrayUnion({ status: "APPROVED", userId: req.user!.id, userEmail: req.user!.email, at: new Date() }),
-      });
-      await batch.commit();
-    }
-    const updated = await reportRef.get();
-    res.json(serializeReport(updated));
-  } catch (error) {
-    console.error("Update U-WIN State report status error:", error);
-    res.status(500).json({ message: "Failed to update report status" });
   }
 };
 
@@ -316,8 +210,8 @@ export const uploadUwinStateReportPdf = async (req: AuthRequest, res: Response) 
       res.status(403).json({ message: "Only the report creator or an administrator can save its PDF" });
       return;
     }
-    if (data?.status !== "DRAFT") {
-      res.status(409).json({ message: "Only a draft report can receive a generated PDF" });
+    if (!["DRAFT", "SAVED"].includes(data?.status)) {
+      res.status(409).json({ message: "Only a saved report can receive a generated PDF" });
       return;
     }
 

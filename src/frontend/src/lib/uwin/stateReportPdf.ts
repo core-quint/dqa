@@ -213,7 +213,7 @@ export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
   doc.addPage();
   addPageFrame(doc, report, 3);
   sectionTitle(doc, "Recommended action and follow-up plan", 64);
-  wrapped(doc, "Actions are selected from the configured action library. State and district teams should confirm ownership and due dates during review before approval.", MARGIN, 84, WIDTH, 8);
+  wrapped(doc, "Actions are selected from the configured action library. State and district teams should use these recommendations to assign local ownership and practical timelines.", MARGIN, 84, WIDTH, 8);
   const actionById = new Map(facts.actionRules.map((action) => [action.id, action]));
   autoTable(doc, {
     startY: 112,
@@ -252,7 +252,7 @@ export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
   doc.setFontSize(7);
   doc.text("REPORT CONTROL", MARGIN + 10, 746);
   doc.setFont("helvetica", "normal");
-  doc.text(`Status: ${report.status} | Version: ${report.version} | Fingerprint: ${report.analysisFingerprint.slice(0, 16)}...`, MARGIN + 10, 762);
+  doc.text(`Status: SAVED | Version: ${report.version} | Fingerprint: ${report.analysisFingerprint.slice(0, 16)}...`, MARGIN + 10, 762);
   doc.text(`Created: ${safe(report.createdAt ? new Date(report.createdAt).toLocaleString("en-IN") : "Pending")} | Created by: ${safe(report.createdBy?.email)} | Narrative: ${report.aiNarrative?.validated ? "AI-assisted, validated" : "Deterministic"}`, MARGIN + 10, 777);
 
   return {

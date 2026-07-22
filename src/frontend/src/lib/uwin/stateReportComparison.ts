@@ -42,8 +42,6 @@ export function findPreviousComparableReport(
     .filter((report) => report.id !== current.id && report.periodEnd < current.periodStart && !comparabilityReason(current, report))
     .sort((a, b) => {
       if (a.periodEnd !== b.periodEnd) return b.periodEnd.localeCompare(a.periodEnd);
-      if (a.status === "APPROVED" && b.status !== "APPROVED") return -1;
-      if (b.status === "APPROVED" && a.status !== "APPROVED") return 1;
       return b.version - a.version;
     });
   return candidates[0] ?? null;
@@ -54,8 +52,7 @@ export function latestReportPerPeriod(reports: UwinStateReportRecord[]) {
   reports.forEach((report) => {
     const key = `${report.periodStart}|${report.periodEnd}`;
     const current = selected.get(key);
-    if (!current || (report.status === "APPROVED" && current.status !== "APPROVED") ||
-      (report.status === current.status && report.version > current.version)) {
+    if (!current || report.version > current.version) {
       selected.set(key, report);
     }
   });

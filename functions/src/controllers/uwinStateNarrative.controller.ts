@@ -133,8 +133,8 @@ export const generateUwinStateNarrative = async (req: AuthRequest, res: Response
       res.status(404).json({ message: "Report not found" });
       return;
     }
-    if (data?.status !== "DRAFT") {
-      res.status(409).json({ message: "AI narrative can only be generated while the report is a draft" });
+    if (!["DRAFT", "SAVED"].includes(data?.status)) {
+      res.status(409).json({ message: "AI narrative can only be generated for a saved report" });
       return;
     }
     if ((data?.artifacts?.pdf?.storagePath || data?.artifacts?.pdf?.artifactId) && !data?.aiNarrative?.validated) {
@@ -212,7 +212,7 @@ export const generateUwinStateNarrative = async (req: AuthRequest, res: Response
       estimatedUsd: estimateUsd(MODEL, promptTokens, outputTokens),
       generatedBy: { id: req.user!.id, email: req.user!.email },
       generatedAt: new Date().toISOString(),
-      disclosure: "AI-assisted draft; all factual claims are linked to deterministic report evidence.",
+      disclosure: "AI-assisted narrative; all factual claims are linked to deterministic report evidence.",
     };
     await reportRef.update({
       aiNarrative: savedNarrative,

@@ -26,20 +26,13 @@ service cloud.firestore {
     }
 
     // State reports are available only through the authenticated backend API.
-    // This keeps versioning, geography scoping, and approval transitions server-controlled.
+    // This keeps versioning and geography scoping server-controlled.
     match /uwinStateReports/{reportId} {
       allow read, write: if false;
     }
 
     match /uwinStateReportSeries/{seriesId} {
       allow read, write: if false;
-    }
-
-    match /uwinStateReportActions/{actionId} {
-      allow read, write: if false;
-      match /history/{historyId} {
-        allow read, write: if false;
-      }
     }
 
     match /uwinStateAiUsage/{usageId} {

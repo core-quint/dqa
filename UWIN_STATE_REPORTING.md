@@ -1,6 +1,6 @@
 # U-WIN State report configuration
 
-The U-WIN State report workflow works without AI. It stores an immutable evidence pack, a three-page PDF, report history, progress comparisons, and action tracking. PDF artifacts default to a private backend-only Firestore document (maximum 750 KB), because this Firebase project does not currently have a provisioned Cloud Storage bucket. Set `UWIN_STATE_REPORT_STORAGE=GCS` only after a bucket exists.
+The U-WIN State report workflow works without AI. It stores an immutable evidence pack, a three-page PDF, report history, and progress comparisons. Recommended action points remain part of the report. PDF artifacts default to a private backend-only Firestore document (maximum 750 KB), because this Firebase project does not currently have a provisioned Cloud Storage bucket. Set `UWIN_STATE_REPORT_STORAGE=GCS` only after a bucket exists.
 
 ## Optional Vertex AI narrative
 
@@ -18,4 +18,4 @@ Every model statement must cite an allowed evidence ID. Numeric and causal state
 
 ## Report workflow
 
-State users can generate drafts, download saved PDFs and district annexes, update report actions, and submit drafts for review. National users and administrators can approve reviewed reports. Approving a newer version automatically marks an older approved version for the same state and period as superseded.
+State users can generate and save reports, download saved PDFs and district annexes, review version history, and compare progress across comparable reporting periods. There is no approval or action-tracker workflow.

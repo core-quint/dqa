@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ClipboardCheck, Download, FileClock, FilePlus2, FileSpreadsheet, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { Download, FileClock, FilePlus2, FileSpreadsheet, Loader2, RefreshCw } from "lucide-react";
 import type { FilterState } from "../../lib/dqa/types";
 import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
 import type { UwinComputedKpis, UwinParsedCSV } from "../../lib/uwin/types";
@@ -12,7 +12,6 @@ import {
   getUwinStateReportPeriod,
   listUwinStateReports,
   uploadUwinStateReportPdf,
-  updateUwinStateReportStatus,
   type UwinStateReportRecord,
 } from "../../lib/uwin/stateReports";
 import { downloadUwinStateDistrictAnnex, generateUwinStateExecutivePdf } from "../../lib/uwin/stateReportPdf";
@@ -22,8 +21,6 @@ import {
   latestReportPerPeriod,
   type ReportComparison,
 } from "../../lib/uwin/stateReportComparison";
-import type { AuthState } from "../dqa/LoginPage";
-import { UwinStateActionTracker } from "./UwinStateActionTracker";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +35,6 @@ interface Props {
   kpis: UwinComputedKpis;
   filters: FilterState;
   reviewInfo: PreUploadInfo | null;
-  auth: AuthState;
 }
 
 function formatDate(value: string | null) {
@@ -58,7 +54,7 @@ function previousRevision(report: UwinStateReportRecord, reports: UwinStateRepor
     .sort((a, b) => b.version - a.version)[0] ?? null;
 }
 
-export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo, auth }: Props) {
+export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo }: Props) {
   const [open, setOpen] = useState(false);
   const [reports, setReports] = useState<UwinStateReportRecord[]>([]);
   const [allReports, setAllReports] = useState<UwinStateReportRecord[]>([]);
@@ -66,7 +62,6 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo, auth }: 
   const [saving, setSaving] = useState(false);
   const [artifactBusy, setArtifactBusy] = useState<string | null>(null);
   const [comparison, setComparison] = useState<{ current: UwinStateReportRecord; previous: UwinStateReportRecord; result: ReportComparison } | null>(null);
-  const [actionReport, setActionReport] = useState<UwinStateReportRecord | null>(null);
   const [aiStatus, setAiStatus] = useState<{ enabled: boolean; model: string } | null>(null);
   const [useAi, setUseAi] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -98,7 +93,7 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo, auth }: 
     }
   }, [loadReports, open]);
 
-  const saveDraft = async () => {
+  const saveReport = async () => {
     setSaving(true);
     setError(null);
     setMessage(null);
@@ -121,10 +116,10 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo, auth }: 
         ? `${report.reportNumber} was saved with the deterministic narrative because the AI output was unavailable or did not pass validation.`
         : report.reused
         ? `${report.reportNumber} already represents this exact analysis. Its saved report is ready.`
-        : `${report.reportNumber} and its three-page PDF were saved as a new draft.`);
+        : `${report.reportNumber} and its three-page PDF were saved as a new report.`);
       await loadReports();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save report draft");
+      setError(saveError instanceof Error ? saveError.message : "Failed to save report");
     } finally {
       setSaving(false);
     }
@@ -146,8 +141,6 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo, auth }: 
           </DialogDescription>
         </DialogHeader>
 
-        {actionReport ? <UwinStateActionTracker report={actionReport} onBack={() => setActionReport(null)} /> : <>
-
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
           <div>
             <div className="text-sm font-semibold text-slate-900">Current analysis</div>
@@ -157,7 +150,7 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo, auth }: 
           </div>
           <button
             type="button"
-            onClick={saveDraft}
+            onClick={saveReport}
             disabled={saving}
             className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
@@ -183,7 +176,7 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo, auth }: 
         {latestReportPerPeriod(allReports).length > 0 ? (
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="text-sm font-semibold text-slate-900">Saved progress over time</div>
-            <div className="mt-1 text-xs text-slate-500">The latest approved version is preferred; otherwise the latest saved draft is shown.</div>
+            <div className="mt-1 text-xs text-slate-500">The latest saved version for each reporting period is shown.</div>
             <div className="mt-3 overflow-x-auto">
               <table className="w-full min-w-[560px] text-left text-xs">
                 <thead className="text-slate-500"><tr><th className="pb-2">Period</th><th className="pb-2">Version</th><th className="pb-2">Overall</th><th className="pb-2">Availability</th><th className="pb-2">Accuracy</th><th className="pb-2">Consistency</th></tr></thead>
@@ -239,7 +232,7 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo, auth }: 
                     <div className="mt-1 text-xs text-slate-500">Saved {formatDate(report.createdAt)} by {report.createdBy?.email || "Unknown user"}</div>
                     <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{report.aiNarrative?.validated ? "AI-assisted narrative · validated" : "Deterministic narrative"}</div>
                   </div>
-                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-800">{report.status}</span>
+                  <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-800">SAVED</span>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
                   {[
@@ -310,29 +303,11 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo, auth }: 
                   >
                     Compare previous period
                   </button>
-                  <button type="button" onClick={() => setActionReport(report)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700"><ClipboardCheck className="h-3.5 w-3.5" />Action tracker</button>
-                  {report.status === "DRAFT" ? (
-                    <button
-                      type="button"
-                      disabled={artifactBusy === report.id || !report.pdfAvailable}
-                      onClick={async () => { setArtifactBusy(report.id); setError(null); try { await updateUwinStateReportStatus(report.id, "REVIEWED"); await loadReports(); } catch (statusError) { setError(statusError instanceof Error ? statusError.message : "Status update failed"); } finally { setArtifactBusy(null); } }}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-                    ><ShieldCheck className="h-3.5 w-3.5" />Submit for review</button>
-                  ) : null}
-                  {report.status === "REVIEWED" && (auth.role === "admin" || auth.level === "NATIONAL") ? (
-                    <button
-                      type="button"
-                      disabled={artifactBusy === report.id}
-                      onClick={async () => { setArtifactBusy(report.id); setError(null); try { await updateUwinStateReportStatus(report.id, "APPROVED"); await loadReports(); } catch (statusError) { setError(statusError instanceof Error ? statusError.message : "Approval failed"); } finally { setArtifactBusy(null); } }}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-                    ><ShieldCheck className="h-3.5 w-3.5" />Approve report</button>
-                  ) : null}
                 </div>
               </div>
             ))}
           </div>
         )}
-        </>}
       </DialogContent>
     </Dialog>
   );
