@@ -19,6 +19,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { GlassPanel } from "../branding/GlassPanel";
 import type { AuthState } from "../dqa/LoginPage";
 import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
+import { UwinStateReportDialog } from "./UwinStateReportDialog";
 
 interface Props {
   csv: UwinParsedCSV;
@@ -335,6 +336,15 @@ export function UwinResultsPage({
                   <FileDown className="h-3.5 w-3.5" />
                   {generatingReport ? "Generating…" : "Download Report"}
                 </button>
+              ) : null}
+              {isStateUwin && kpis ? (
+                <UwinStateReportDialog
+                  csv={csv}
+                  kpis={kpis}
+                  filters={filters}
+                  reviewInfo={reviewInfo}
+                  auth={auth}
+                />
               ) : null}
               {kpis ? (
                 <button

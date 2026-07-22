@@ -4,6 +4,7 @@ import authRoutes from "./routes/auth.routes";
 import snapshotRoutes from "./routes/snapshot.routes";
 import adminRoutes from "./routes/admin.routes";
 import uploadSessionRoutes from "./routes/uploadSession.routes";
+import uwinStateReportRoutes from "./routes/uwinStateReport.routes";
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/snapshots", snapshotRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/upload-sessions", uploadSessionRoutes);
+app.use("/api/uwin-state-reports", uwinStateReportRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ message: "Not found" });

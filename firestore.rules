@@ -25,6 +25,27 @@ service cloud.firestore {
       allow update: if false; // Snapshots are immutable
     }
 
+    // State reports are available only through the authenticated backend API.
+    // This keeps versioning, geography scoping, and approval transitions server-controlled.
+    match /uwinStateReports/{reportId} {
+      allow read, write: if false;
+    }
+
+    match /uwinStateReportSeries/{seriesId} {
+      allow read, write: if false;
+    }
+
+    match /uwinStateReportActions/{actionId} {
+      allow read, write: if false;
+      match /history/{historyId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /uwinStateAiUsage/{usageId} {
+      allow read, write: if false;
+    }
+
     // Geo entries: any authenticated user can read; only backend writes
     match /geoEntries/{entryId} {
       allow read: if request.auth != null;
