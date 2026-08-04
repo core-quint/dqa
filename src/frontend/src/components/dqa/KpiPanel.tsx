@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Download,
   BarChart2,
@@ -20,6 +20,7 @@ import {
   downloadXLS,
   downloadChartPNG,
   downloadHighlightedXLS,
+  downloadRenderedTableXLS,
 } from "../../lib/dqa/exportUtils";
 import { KpiBlockMap } from "./KpiBlockMap";
 
@@ -114,6 +115,8 @@ function resolveStyle(group: string, id: string) {
 
 export function KpiPanel({ card, kpis, csv }: Props) {
   const [view, setView] = useState<View>("chart");
+  const [exportError, setExportError] = useState<string | null>(null);
+  const tableViewRef = useRef<HTMLDivElement>(null);
   const { id, name, group, downloadKey, stat } = card;
   const canvasId = `canvas-${id}`;
   const showSummary = group === "completeness" || group === "accuracy";
@@ -147,6 +150,8 @@ export function KpiPanel({ card, kpis, csv }: Props) {
   }, [blockCounts]);
 
   const handleDownload = () => {
+    setExportError(null);
+
     if (view === "chart") {
       downloadChartPNG(canvasId, name);
       return;
@@ -158,8 +163,9 @@ export function KpiPanel({ card, kpis, csv }: Props) {
     }
 
     if (view === "table") {
-      const rows = getTableRows();
-      if (rows) downloadXLS(rows, name);
+      if (!downloadRenderedTableXLS(tableViewRef.current, name)) {
+        setExportError("No table data available to export.");
+      }
       return;
     }
 
@@ -179,19 +185,9 @@ export function KpiPanel({ card, kpis, csv }: Props) {
   };
 
   const handleHighlightedDownload = () => {
+    setExportError(null);
     downloadHighlightedXLS(csv, downloadKey, name, kpis);
   };
-
-  function getTableRows() {
-    if (id === "t1") return kpis.t1Rows;
-    if (id === "t0") return kpis.t0Rows;
-    if (id === "t7") return kpis.t7Rows;
-    if (id === "t6") return kpis.t6Rows;
-    if (id === "i1") return kpis.i1Rows;
-    if (id === "i2") return kpis.i2Rows;
-    if (id.startsWith("iadd_")) return kpis.inconsTables[id] ?? null;
-    return null;
-  }
 
   const renderTable = () => {
     if (id === "t1") return <FlatTable rows={kpis.t1Rows} highlightN />;
@@ -301,7 +297,10 @@ export function KpiPanel({ card, kpis, csv }: Props) {
               <button
                 key={option}
                 type="button"
-                onClick={() => setView(option)}
+                onClick={() => {
+                  setExportError(null);
+                  setView(option);
+                }}
                 className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/85 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600 transition hover:bg-white hover:text-slate-950"
                 style={
                   view === option
@@ -323,7 +322,15 @@ export function KpiPanel({ card, kpis, csv }: Props) {
             ))}
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {exportError ? (
+              <span
+                role="status"
+                className="text-xs font-medium text-rose-600"
+              >
+                {exportError}
+              </span>
+            ) : null}
             <button
               type="button"
               onClick={handleHighlightedDownload}
@@ -361,7 +368,9 @@ export function KpiPanel({ card, kpis, csv }: Props) {
           ) : null}
 
           {view === "table" ? (
-            <div className="h-full overflow-auto thin-scroll">{renderTable()}</div>
+            <div ref={tableViewRef} className="h-full overflow-auto thin-scroll">
+              {renderTable()}
+            </div>
           ) : null}
 
           {view === "summary" ? (

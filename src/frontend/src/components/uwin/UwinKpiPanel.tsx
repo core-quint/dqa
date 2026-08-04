@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Download,
   BarChart2,
@@ -23,6 +23,7 @@ import {
   downloadChartPNG,
   downloadHighlightedXLS,
 } from "../../lib/uwin/exportUtils";
+import { downloadRenderedTableXLS } from "../../lib/dqa/exportUtils";
 import { KpiBlockMap } from "../dqa/KpiBlockMap";
 import { StateDistrictMap } from "../stateHmis/StateDistrictMap";
 
@@ -117,6 +118,8 @@ function resolveStyle(group: string, id: string) {
 
 export function UwinKpiPanel({ card, kpis, csv }: Props) {
   const [view, setView] = useState<View>("chart");
+  const [exportError, setExportError] = useState<string | null>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
   const { id, name, group, downloadKey, stat } = card;
   const canvasId = `canvas-${id}`;
   const showSummary = group === "completeness" || group === "accuracy";
@@ -165,6 +168,8 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
   }, [blockCounts, isStateUwin, selectedDistricts.length, stateDrillBlockCounts]);
 
   const handleDownload = () => {
+    setExportError(null);
+
     if (view === "chart") {
       downloadChartPNG(canvasId, name);
       return;
@@ -176,8 +181,9 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
     }
 
     if (view === "table") {
-      const rows = getTableRows();
-      if (rows) downloadXLS(rows, name);
+      if (!downloadRenderedTableXLS(tableContainerRef.current, name)) {
+        setExportError("No table data available to export.");
+      }
       return;
     }
 
@@ -197,19 +203,9 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
   };
 
   const handleHighlightedDownload = () => {
+    setExportError(null);
     downloadHighlightedXLS(csv, downloadKey, name, kpis);
   };
-
-  function getTableRows() {
-    if (id === "t0") return kpis.t0Rows;
-    if (id === "t7") return kpis.t7Rows;
-    if (id === "t9") return kpis.t9Rows;
-    if (id === "t6") return kpis.t6Rows;
-    if (id === "i1") return kpis.i1Rows;
-    if (id === "i2") return kpis.i2Rows;
-    if (id.startsWith("iadd_")) return kpis.inconsTables[id] ?? null;
-    return null;
-  }
 
   const renderTable = () => {
     if (id === "t0") return <FlatTable rows={kpis.t0Rows} highlightN />;
@@ -320,7 +316,10 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
               <button
                 key={option}
                 type="button"
-                onClick={() => setView(option)}
+                onClick={() => {
+                  setExportError(null);
+                  setView(option);
+                }}
                 className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/85 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600 transition hover:bg-white hover:text-slate-950"
                 style={
                   view === option
@@ -342,25 +341,32 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
             ))}
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={handleHighlightedDownload}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/85 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600 transition hover:bg-slate-950 hover:text-white"
-            >
-              <FileSpreadsheet className="h-3.5 w-3.5" />
-              Highlighted XLS
-            </button>
-            {view !== "map" && (
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={handleDownload}
+                onClick={handleHighlightedDownload}
                 className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/85 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600 transition hover:bg-slate-950 hover:text-white"
               >
-                <Download className="h-3.5 w-3.5" />
-                Export current
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                Highlighted XLS
               </button>
-            )}
+              {view !== "map" && (
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/85 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600 transition hover:bg-slate-950 hover:text-white"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Export current
+                </button>
+              )}
+            </div>
+            {exportError ? (
+              <p role="status" className="text-xs font-medium text-red-600">
+                {exportError}
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -380,7 +386,9 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
           ) : null}
 
           {view === "table" ? (
-            <div className="h-full overflow-auto thin-scroll">{renderTable()}</div>
+            <div ref={tableContainerRef} className="h-full overflow-auto thin-scroll">
+              {renderTable()}
+            </div>
           ) : null}
 
           {view === "summary" ? (

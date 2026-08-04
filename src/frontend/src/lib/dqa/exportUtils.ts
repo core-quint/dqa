@@ -11,8 +11,8 @@ const TABLE_STYLE = `
 table{border-collapse:collapse;width:100%;background:#fff;font-family:Arial,sans-serif;font-size:11pt;}
 th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left;vertical-align:top;}
 th{background:#f9fafb;font-weight:bold;}
-.nCell{background:#dcfce7 !important;color:#14532d;font-weight:bold;}
-.pinkCell{background:#ffc0cb !important;font-weight:bold;}
+.nCell,.n-cell{background:#dcfce7 !important;color:#14532d;font-weight:bold;}
+.pinkCell,.pink-cell{background:#ffc0cb !important;font-weight:bold;}
 .darkPink{background:#ff8fb1 !important;font-weight:bold;}
 </style>
 `;
@@ -25,6 +25,23 @@ export function downloadXLS(rows: TableData, filename: string): void {
   const html = buildTableHTML(rows, filename);
   const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
   triggerDownload(blob, `${sanitizeFilename(filename)}.xls`);
+}
+
+export function downloadRenderedTableXLS(source: HTMLElement | null, filename: string): boolean {
+  if (!source) return false;
+
+  const table = source.tagName === 'TABLE'
+    ? source
+    : source.querySelector<HTMLTableElement>('table');
+  if (!table) return false;
+
+  let html = `<html><head><meta charset="utf-8">${TABLE_STYLE}</head><body>`;
+  html += `<div style="font-weight:bold;font-size:14px;margin-bottom:8px;">${escHtml(filename)}</div>`;
+  html += `${table.outerHTML}</body></html>`;
+
+  const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+  triggerDownload(blob, `${sanitizeFilename(filename)}.xls`);
+  return true;
 }
 
 export function downloadChartPNG(canvasId: string, filename: string): void {
@@ -263,4 +280,3 @@ export function downloadHighlightedXLS(
   const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
   triggerDownload(blob, `${fname}.xls`);
 }
-
