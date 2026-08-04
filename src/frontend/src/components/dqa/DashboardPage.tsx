@@ -7,12 +7,12 @@ import {
   ChevronRight,
   ClipboardList,
   Download,
+  Gauge,
   Landmark,
+  Layers3,
   LayoutDashboard,
   MapPin,
-  Radar,
   RefreshCw,
-  Syringe,
   Users,
 } from "lucide-react";
 import { apiFetch } from "../../api";
@@ -94,38 +94,250 @@ function ScoreChip({ score }: { score: number | null }) {
 }
 
 // ---------------------------------------------------------------
-// Stat tile
+// Consolidated headline KPI cards
 // ---------------------------------------------------------------
 
-function StatTile({
-  label,
-  value,
-  sub,
-  icon,
-}: {
+interface ReviewTypeMetric {
   label: string;
-  value: string;
-  sub?: string;
-  icon: React.ReactNode;
+  value: number;
+  color: string;
+}
+
+interface ScoreMetric {
+  label: string;
+  value: number | null;
+  color: string;
+}
+
+function ReviewSummaryCard({
+  total,
+  reviewers,
+  metrics,
+}: {
+  total: number;
+  reviewers: number;
+  metrics: ReviewTypeMetric[];
 }) {
   return (
-    <GlassPanel className="p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-            {label}
+    <GlassPanel
+      tone="dark"
+      className="relative h-full overflow-hidden p-0 transition-shadow duration-300 hover:shadow-[0_28px_70px_rgba(2,6,23,0.30)]"
+    >
+      <div
+        aria-hidden
+        className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-blue-500/20 blur-3xl"
+      />
+      <div
+        aria-hidden
+        className="absolute -bottom-24 -left-16 h-56 w-56 rounded-full bg-fuchsia-500/10 blur-3xl"
+      />
+      <article className="relative flex h-full flex-col p-5 sm:p-6" aria-labelledby="total-reviews-kpi">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-sky-300">
+              Review portfolio
+            </div>
+            <h2 id="total-reviews-kpi" className="mt-1 text-sm font-semibold text-slate-300">
+              Total DQA reviews
+            </h2>
           </div>
-          <div className="mt-1.5 truncate text-3xl font-extrabold text-slate-950">
-            {value}
+          <div aria-hidden className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-sky-200 shadow-inner">
+            <ClipboardList className="h-5 w-5" />
           </div>
-          {sub ? (
-            <div className="mt-1 truncate text-[11px] font-medium text-slate-500">{sub}</div>
-          ) : null}
         </div>
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
-          {icon}
+
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
+          <div className="font-display text-5xl font-extrabold leading-none tracking-tight text-white tabular-nums">
+            {fmtCount(total)}
+          </div>
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.07] px-2.5 py-1 text-[11px] font-semibold text-slate-300">
+            <Users aria-hidden className="h-3.5 w-3.5 text-sky-300" />
+            {fmtCount(reviewers)} reviewer{reviewers !== 1 ? "s" : ""}
+          </div>
         </div>
-      </div>
+
+        <div className="mt-auto pt-5">
+          <div
+            className="flex h-1.5 overflow-hidden rounded-full bg-white/10"
+            role="img"
+            aria-label={metrics.map((metric) => `${metric.label}: ${fmtCount(metric.value)}`).join(", ")}
+          >
+            {metrics.map((metric) => (
+              <span
+                key={metric.label}
+                className="h-full first:rounded-l-full last:rounded-r-full"
+                style={{
+                  backgroundColor: metric.color,
+                  width: total > 0 ? `${(metric.value / total) * 100}%` : "0%",
+                }}
+              />
+            ))}
+          </div>
+
+          <dl className="mt-3 grid grid-cols-2 gap-2">
+            {metrics.map((metric) => (
+              <div key={metric.label} className="rounded-2xl border border-white/[0.08] bg-white/[0.055] px-3 py-2.5">
+                <dt className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.11em] text-slate-400">
+                  <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: metric.color }} />
+                  {metric.label}
+                </dt>
+                <dd className="mt-1 text-lg font-extrabold leading-none text-white tabular-nums">
+                  {fmtCount(metric.value)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      </article>
+    </GlassPanel>
+  );
+}
+
+function AverageScoreCard({
+  overall,
+  metrics,
+}: {
+  overall: number | null;
+  metrics: ScoreMetric[];
+}) {
+  const clampedScore = Math.max(0, Math.min(100, overall ?? 0));
+  const accent = overall === null
+    ? "#94a3b8"
+    : overall >= 85
+      ? "#059669"
+      : overall >= 70
+        ? "#0284c7"
+        : overall >= 50
+          ? "#d97706"
+          : "#dc2626";
+
+  return (
+    <GlassPanel className="relative h-full overflow-hidden p-0 transition-shadow duration-300 hover:shadow-elevated">
+      <div aria-hidden className="absolute -right-16 -top-20 h-52 w-52 rounded-full bg-emerald-100/70 blur-3xl" />
+      <article className="relative flex h-full flex-col p-5 sm:p-6" aria-labelledby="average-score-kpi">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-700">
+              Data quality
+            </div>
+            <h2 id="average-score-kpi" className="mt-1 text-sm font-semibold text-slate-600">
+              Average overall score
+            </h2>
+          </div>
+          <div aria-hidden className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-emerald-100 bg-emerald-50 text-emerald-700">
+            <Gauge className="h-5 w-5" />
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-4">
+          <div
+            className="relative flex h-[88px] w-[88px] shrink-0 items-center justify-center rounded-full"
+            style={{ background: `conic-gradient(${accent} ${clampedScore * 3.6}deg, #e2e8f0 0deg)` }}
+            role="img"
+            aria-label={overall === null ? "No overall score available" : `Average overall score ${overall.toFixed(1)} out of 100`}
+          >
+            <div className="flex h-[68px] w-[68px] items-center justify-center rounded-full bg-white shadow-inner">
+              <span className="text-2xl font-extrabold text-slate-950 tabular-nums">{fmtScore(overall)}</span>
+            </div>
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-1">
+              <span className="font-display text-4xl font-extrabold tracking-tight text-slate-950 tabular-nums">
+                {fmtScore(overall)}
+              </span>
+              {overall !== null ? <span className="text-xs font-semibold text-slate-400">/100</span> : null}
+            </div>
+            <span className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${overall === null ? "bg-slate-100 text-slate-500" : gradeOf(overall).chip}`}>
+              {overall === null ? "No scored reviews" : gradeOf(overall).label}
+            </span>
+          </div>
+        </div>
+
+        <dl className="mt-5 space-y-3">
+          {metrics.map((metric) => {
+            const value = metric.value;
+            const width = value === null ? 0 : Math.max(0, Math.min(100, value));
+            return (
+              <div key={metric.label}>
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <dt className="text-[11px] font-semibold text-slate-600">{metric.label}</dt>
+                  <dd className="text-xs font-extrabold text-slate-900 tabular-nums">
+                    {value === null ? "N/A" : value.toFixed(1)}
+                  </dd>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-slate-100" aria-hidden>
+                  <div className="h-full rounded-full" style={{ backgroundColor: metric.color, width: `${width}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </dl>
+        <p className="mt-auto pt-4 text-[10px] leading-4 text-slate-400">
+          Component averages use available scored reviews; U-WIN does not report completeness.
+        </p>
+      </article>
+    </GlassPanel>
+  );
+}
+
+function AreaCoverageCard({
+  states,
+  districts,
+  blocks,
+  facilities,
+}: {
+  states: number;
+  districts: number;
+  blocks: number;
+  facilities: number;
+}) {
+  const metrics = [
+    { label: "States", value: states, icon: <Landmark className="h-4 w-4" />, tone: "bg-violet-50 text-violet-700" },
+    { label: "Districts", value: districts, icon: <MapPin className="h-4 w-4" />, tone: "bg-sky-50 text-sky-700" },
+    { label: "Blocks", value: blocks, icon: <Layers3 className="h-4 w-4" />, tone: "bg-amber-50 text-amber-700" },
+    { label: "Facilities", value: facilities, icon: <Building2 className="h-4 w-4" />, tone: "bg-rose-50 text-rose-700" },
+  ];
+
+  return (
+    <GlassPanel className="relative h-full overflow-hidden p-0 transition-shadow duration-300 hover:shadow-elevated">
+      <div aria-hidden className="absolute -bottom-20 -right-12 h-56 w-56 rounded-full bg-violet-100/60 blur-3xl" />
+      <article className="relative flex h-full flex-col p-5 sm:p-6" aria-labelledby="area-covered-kpi">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-700">
+              Geographic reach
+            </div>
+            <h2 id="area-covered-kpi" className="mt-1 text-xl font-extrabold tracking-tight text-slate-950">
+              Area covered
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">Current filtered footprint, from state to facility</p>
+          </div>
+          <div aria-hidden className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-violet-100 bg-violet-50 text-violet-700">
+            <MapPin className="h-5 w-5" />
+          </div>
+        </div>
+
+        <dl className="mt-5 grid grid-cols-2 gap-2.5">
+          {metrics.map((metric) => (
+            <div key={metric.label} className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+              <dt className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                <span aria-hidden className={`flex h-7 w-7 items-center justify-center rounded-lg ${metric.tone}`}>
+                  {metric.icon}
+                </span>
+                {metric.label}
+              </dt>
+              <dd className="mt-2 text-2xl font-extrabold leading-none text-slate-950 tabular-nums">
+                {fmtCount(metric.value)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+
+        <div className="mt-auto flex items-start gap-2 pt-4 text-[10px] leading-4 text-slate-400">
+          <span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-violet-400" />
+          <p>States are unique; other levels use the widest saved review per geography to avoid repeat-review inflation.</p>
+        </div>
+      </article>
     </GlassPanel>
   );
 }
@@ -887,6 +1099,32 @@ export function DashboardPage({ auth }: Props) {
   const showUwin = filters.portal === "ALL" || filters.portal === "UWIN" || filters.portal === "UWIN_STATE";
   const showPcts = filters.portal === "ALL" || filters.portal === "PCTS";
 
+  // The chart series intentionally combines both U-WIN workflows. The headline
+  // card needs an exclusive five-way breakdown, so split them at record level.
+  const portalReviewCounts = useMemo(() => {
+    let uwin = 0;
+    let uwinState = 0;
+    for (const record of filtered) {
+      if (record.portal === "UWIN") uwin += 1;
+      if (record.portal === "UWIN_STATE") uwinState += 1;
+    }
+    return { uwin, uwinState };
+  }, [filtered]);
+  const showPctsKpi = hasPctsAccess && (!filters.state || filters.state === "rajasthan");
+  const reviewTypeMetrics: ReviewTypeMetric[] = [
+    ...(hasHmisAccess ? [{ label: "HMIS review", value: stats.hmis, color: HMIS_COLOR }] : []),
+    { label: "State DQA", value: stats.stateHmis, color: STATE_HMIS_COLOR },
+    { label: "U-WIN", value: portalReviewCounts.uwin, color: UWIN_COLOR },
+    { label: "U-WIN State", value: portalReviewCounts.uwinState, color: "#7c3aed" },
+    ...(showPctsKpi ? [{ label: "PCTS", value: stats.pcts, color: PCTS_COLOR }] : []),
+  ];
+  const scoreMetrics: ScoreMetric[] = [
+    { label: "Availability", value: stats.avgAvailability, color: "#ef4444" },
+    { label: "Completeness", value: stats.avgCompleteness, color: "#6366f1" },
+    { label: "Accuracy", value: stats.avgAccuracy, color: "#f59e0b" },
+    { label: "Consistency", value: stats.avgConsistency, color: "#22c55e" },
+  ];
+
   const managementSignals = useMemo(() => {
     const components = [
       { label: "Availability", value: stats.avgAvailability },
@@ -1244,25 +1482,23 @@ export function DashboardPage({ auth }: Props) {
         ) : (
           <div className={loading ? "pointer-events-none opacity-60 transition-opacity" : "transition-opacity"}>
             <div className="space-y-5">
-              {/* ── KPI tiles ─────────────────────── */}
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-                <StatTile label="Total DQA reviews" value={fmtCount(stats.total)} sub={`${fmtCount(stats.reviewers)} reviewer${stats.reviewers !== 1 ? "s" : ""} engaged`} icon={<ClipboardList className="h-4 w-4" />} />
-                {hasHmisAccess ? <StatTile label="HMIS reviews" value={fmtCount(stats.hmis)} icon={<BarChart3 className="h-4 w-4" />} /> : null}
-                <StatTile label="State DQA reviews" value={fmtCount(stats.stateHmis)} sub="District / block-wise state files" icon={<Radar className="h-4 w-4" />} />
-                <StatTile label="U-WIN reviews" value={fmtCount(stats.uwin)} sub="District and state workflows" icon={<Syringe className="h-4 w-4" />} />
-                <StatTile label="U-WIN State reviews" value={fmtCount(filtered.filter((record) => record.portal === "UWIN_STATE").length)} icon={<Landmark className="h-4 w-4" />} />
-                <StatTile label="PCTS reviews" value={fmtCount(stats.pcts)} icon={<BarChart3 className="h-4 w-4" />} />
-                <StatTile
-                  label="Avg overall score"
-                  value={stats.avgOverall === null ? "—" : stats.avgOverall.toFixed(1)}
-                  sub={stats.avgOverall === null ? "No scored reviews" : gradeOf(stats.avgOverall).label}
-                  icon={<Landmark className="h-4 w-4" />}
+              {/* ── Consolidated KPI overview ───────────────── */}
+              <section aria-label="Dashboard summary" className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <ReviewSummaryCard
+                  total={stats.total}
+                  reviewers={stats.reviewers}
+                  metrics={reviewTypeMetrics}
                 />
-                <StatTile label="Districts covered" value={fmtCount(stats.districts)} sub={uniqueStates > 1 ? `${fmtCount(stats.states)} state${stats.states !== 1 ? "s" : ""}` : undefined} icon={<MapPin className="h-4 w-4" />} />
-                <StatTile label="Blocks covered" value={fmtCount(stats.blocks)} sub="Widest review per district" icon={<MapPin className="h-4 w-4" />} />
-                <StatTile label="Facilities covered" value={fmtCount(stats.facilities)} sub="Widest review per district" icon={<Building2 className="h-4 w-4" />} />
-                <StatTile label="Session sites covered" value={fmtCount(stats.sessionSites)} sub="U-WIN datasets only" icon={<Users className="h-4 w-4" />} />
-              </div>
+                <AverageScoreCard overall={stats.avgOverall} metrics={scoreMetrics} />
+                <div className="md:col-span-2 xl:col-span-1">
+                  <AreaCoverageCard
+                    states={stats.states}
+                    districts={stats.districts}
+                    blocks={stats.blocks}
+                    facilities={stats.facilities}
+                  />
+                </div>
+              </section>
 
               <div className="grid gap-4 lg:grid-cols-12">
                 <GlassPanel className="overflow-hidden p-5 lg:col-span-4">
