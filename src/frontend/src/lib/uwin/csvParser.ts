@@ -19,7 +19,7 @@ import {
   asNumOrNull,
   arraySearchFirst,
   indicatorShortFromHeader,
-  detectTargetIndicator,
+  buildTargetIndicatorMap,
   findIndexByCode,
   findBlockColIndex,
   findFacilityColIndex,
@@ -384,15 +384,8 @@ export function processUwinRawRows(rawRows: string[][], fileName: string): UwinP
     indicatorMap[short] = i;
     allIndicatorShorts.push(short);
   }
-  const targetMap: Record<string, number> = {};
-  const targetIndicatorIndices: number[] = [];
-  for (let i = idxMonth + 1; i < header.length; i++) {
-    const det = detectTargetIndicator(header[i]);
-    if (det) {
-      targetMap[det.short] = i;
-      targetIndicatorIndices.push(i);
-    }
-  }
+  const { map: targetMap, indices: targetIndicatorIndices } =
+    buildTargetIndicatorMap(header, idxMonth + 1);
   Object.assign(indicatorMap, targetMap);
 
   // Parse data rows

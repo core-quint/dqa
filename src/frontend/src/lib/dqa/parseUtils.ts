@@ -170,9 +170,9 @@ const INDICATOR_TARGETS: { code: string; short: string }[] = [
   { code: '9.1.11', short: 'IPV1' },
   { code: '9.1.12', short: 'IPV2' },
   { code: '9.2.1', short: 'IPV3' },
-  { code: '9.3.3', short: 'IPV3' },
   { code: '9.1.16', short: 'PCV1' },
-  { code: '9.2.3', short: 'PCV1' },
+  { code: '9.2.3', short: 'JE1' },
+  { code: '9.4.4', short: 'JE2' },
   { code: '9.1.17', short: 'PCV2' },
   { code: '9.2.4', short: 'PCV Booster' },
   { code: '9.1.10', short: 'HepB0' },
@@ -262,8 +262,10 @@ function detectTextualIndicatorShort(headerOriginal: string): string | null {
     if (/\bmr\s*[- ]?\s*1\b/u.test(part)) return 'MR1';
     if (/\bmr\s*[- ]?\s*2\b/u.test(part)) return 'MR2';
 
-    if (/\bje\s*[- ]?\s*1\b/u.test(part)) return 'JE1';
-    if (/\bje\s*[- ]?\s*2\b/u.test(part)) return 'JE2';
+    if (/\bje\s*[- ]?\s*1(?:st)?\b/u.test(part)) return 'JE1';
+    if (/\b(?:je|japanese encephalitis)\b.*\b1st\s+dose\b/u.test(part)) return 'JE1';
+    if (/\bje\s*[- ]?\s*2(?:nd)?\b/u.test(part)) return 'JE2';
+    if (/\b(?:je|japanese encephalitis)\b.*\b2nd\s+dose\b/u.test(part)) return 'JE2';
 
     if (/\bdpt\b.*\bbooster\b.*\b1\b/u.test(part)) return 'DPT 1st Booster';
     if (/\bdpt\b.*\bbooster\b.*\b2\b/u.test(part)) return 'DPT Booster 2';
@@ -282,6 +284,10 @@ export function detectTargetIndicator(headerOriginal: string): { code: string; s
   const h = stripBOM(headerOriginal).trim();
   if (!h) return null;
 
+  // HMIS "delayed vaccination" items (9.3.x) are separate data items, never
+  // analysis targets — without this guard they masquerade as the regular dose.
+  if (/\bdelayed\b/u.test(normalizeLooseText(h))) return null;
+
   const textShort = detectTextualIndicatorShort(h);
   if (textShort) return { code: '', short: textShort };
 
@@ -294,6 +300,31 @@ export function detectTargetIndicator(headerOriginal: string): { code: string; s
   return null;
 }
 
+// Resolves collisions when several columns claim the same indicator short:
+// a column whose own text names the vaccine outranks a code-table match
+// (code numbering has changed across HMIS template revisions), and the
+// earliest column wins ties (the M9 immunisation section precedes the
+// disease/inpatient sections that reuse the same names).
+export function buildTargetIndicatorMap(
+  header: string[],
+  startIdx: number
+): { map: Record<string, number>; indices: number[] } {
+  const map: Record<string, number> = {};
+  const tier: Record<string, number> = {};
+  const indices: number[] = [];
+  for (let i = startIdx; i < header.length; i++) {
+    const det = detectTargetIndicator(header[i]);
+    if (!det) continue;
+    indices.push(i);
+    const t = det.code === '' ? 2 : 1;
+    if (map[det.short] === undefined || t > tier[det.short]) {
+      map[det.short] = i;
+      tier[det.short] = t;
+    }
+  }
+  return { map, indices };
+}
+
 export function indicatorShortFromHeader(headerOriginal: string): string {
   const h = stripBOM(headerOriginal.trim());
   const low = normalizeLooseText(h);
@@ -302,8 +333,9 @@ export function indicatorShortFromHeader(headerOriginal: string): string {
   if (det) return det.short;
 
   if (low.includes('fully immuniz') || low.includes('fully immunis')) {
-    if (low.includes('male')) return 'FIC-M';
+    // 'female' first: "female".includes('male') is true
     if (low.includes('female')) return 'FIC-F';
+    if (low.includes('male')) return 'FIC-M';
     if (low.includes('total')) return 'FIC-Total';
   }
 

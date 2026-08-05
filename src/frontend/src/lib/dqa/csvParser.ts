@@ -15,7 +15,7 @@ import {
   asNumOrNull,
   arraySearchFirst,
   indicatorShortFromHeader,
-  detectTargetIndicator,
+  buildTargetIndicatorMap,
   findIndexByCode,
 } from './parseUtils';
 import type { ParsedCSV, FacilityRecord } from './types';
@@ -181,14 +181,8 @@ function processRawRows(rawRows: string[][], fileName: string): ParsedCSV {
     allIndicatorShorts.push(short);
   }
 
-  // Also build a map by code for the target indicators
-  const targetIndicatorIdxMap: Record<string, number> = {};
-  for (let i = idxMonth + 1; i < header.length; i++) {
-    const det = detectTargetIndicator(header[i]);
-    if (det) targetIndicatorIdxMap[det.short] = i;
-  }
   // Merge target map into indicator map (prefer target detection)
-  Object.assign(indicatorMap, targetIndicatorIdxMap);
+  Object.assign(indicatorMap, buildTargetIndicatorMap(header, idxMonth + 1).map);
 
   // Parse data rows
   const rows = normalizedRows.slice(1).map((r) => {
