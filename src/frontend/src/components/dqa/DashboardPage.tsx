@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   AlertTriangle,
@@ -8,7 +8,6 @@ import {
   ClipboardList,
   Download,
   Gauge,
-  Landmark,
   Layers3,
   LayoutDashboard,
   MapPin,
@@ -36,6 +35,7 @@ import {
   type MonthBucket,
 } from "../../lib/dashboard";
 import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
+import { downloadElementPNG } from "../../lib/dqa/exportUtils";
 
 // Chart series colors. HMIS keeps the app's portal blue; the U-WIN mark is
 // shifted from the app's violet (#8b5cf6) to fuchsia because blue+violet is
@@ -69,6 +69,62 @@ function fmtDay(ms: number): string {
     month: "short",
     year: "numeric",
   });
+}
+
+function waitForPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
+async function downloadDashboardGraph(source: HTMLElement | null, title: string): Promise<void> {
+  const date = new Date().toISOString().slice(0, 10);
+  const exportRegion = source?.closest<HTMLElement>("[data-dashboard-graph]") ?? source;
+  const downloaded = await downloadElementPNG(exportRegion, `DQA Dashboard ${title} ${date}`);
+  if (!downloaded) throw new Error("The graph is not available to export.");
+}
+
+function GraphDownloadButton({
+  label,
+  onDownload,
+  disabled = false,
+}: {
+  label: string;
+  onDownload: () => Promise<void>;
+  disabled?: boolean;
+}) {
+  const [downloading, setDownloading] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setFailed(false);
+    try {
+      await onDownload();
+    } catch (error) {
+      console.error(`Could not download ${label}:`, error);
+      setFailed(true);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className="mb-1 flex min-h-7 items-center justify-end gap-2" data-html2canvas-ignore="true">
+      {failed ? <span role="status" className="text-[10px] font-semibold text-red-600">Export failed</span> : null}
+      <button
+        type="button"
+        onClick={handleDownload}
+        disabled={disabled || downloading}
+        aria-label={`Download ${label} graph as PNG`}
+        title={`Download ${label} graph as PNG`}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {downloading ? <RefreshCw aria-hidden className="h-3.5 w-3.5 animate-spin" /> : <Download aria-hidden className="h-3.5 w-3.5" />}
+        {downloading ? "Preparing…" : "PNG"}
+      </button>
+    </div>
+  );
 }
 
 function gradeOf(score: number) {
@@ -119,46 +175,43 @@ function ReviewSummaryCard({
   metrics: ReviewTypeMetric[];
 }) {
   return (
-    <GlassPanel
-      tone="dark"
-      className="relative h-full overflow-hidden p-0 transition-shadow duration-300 hover:shadow-[0_28px_70px_rgba(2,6,23,0.30)]"
-    >
+    <GlassPanel className="relative h-full overflow-hidden p-0 transition-shadow duration-300 hover:shadow-elevated">
       <div
         aria-hidden
-        className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-blue-500/20 blur-3xl"
+        className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-sky-100/80 blur-3xl"
       />
       <div
         aria-hidden
-        className="absolute -bottom-24 -left-16 h-56 w-56 rounded-full bg-fuchsia-500/10 blur-3xl"
+        className="absolute -bottom-24 -left-16 h-56 w-56 rounded-full bg-fuchsia-100/50 blur-3xl"
       />
       <article className="relative flex h-full flex-col p-5 sm:p-6" aria-labelledby="total-reviews-kpi">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-sky-300">
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-sky-700">
               Review portfolio
             </div>
-            <h2 id="total-reviews-kpi" className="mt-1 text-sm font-semibold text-slate-300">
+            <h2 id="total-reviews-kpi" className="mt-1 text-sm font-semibold text-slate-600">
               Total DQA reviews
             </h2>
           </div>
-          <div aria-hidden className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-sky-200 shadow-inner">
+          <div aria-hidden className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-sky-100 bg-sky-50 text-sky-700 shadow-inner">
             <ClipboardList className="h-5 w-5" />
           </div>
         </div>
 
         <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
-          <div className="font-display text-5xl font-extrabold leading-none tracking-tight text-white tabular-nums">
+          <div className="font-display text-5xl font-extrabold leading-none tracking-tight text-slate-950 tabular-nums">
             {fmtCount(total)}
           </div>
-          <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.07] px-2.5 py-1 text-[11px] font-semibold text-slate-300">
-            <Users aria-hidden className="h-3.5 w-3.5 text-sky-300" />
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+            <Users aria-hidden className="h-3.5 w-3.5 text-sky-700" />
             {fmtCount(reviewers)} reviewer{reviewers !== 1 ? "s" : ""}
           </div>
         </div>
 
         <div className="mt-auto pt-5">
           <div
-            className="flex h-1.5 overflow-hidden rounded-full bg-white/10"
+            className="flex h-1.5 overflow-hidden rounded-full bg-slate-100"
             role="img"
             aria-label={metrics.map((metric) => `${metric.label}: ${fmtCount(metric.value)}`).join(", ")}
           >
@@ -176,12 +229,12 @@ function ReviewSummaryCard({
 
           <dl className="mt-3 grid grid-cols-2 gap-2">
             {metrics.map((metric) => (
-              <div key={metric.label} className="rounded-2xl border border-white/[0.08] bg-white/[0.055] px-3 py-2.5">
-                <dt className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.11em] text-slate-400">
+              <div key={metric.label} className="rounded-2xl border border-slate-100 bg-slate-50/80 px-3 py-2.5">
+                <dt className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.11em] text-slate-500">
                   <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: metric.color }} />
                   {metric.label}
                 </dt>
-                <dd className="mt-1 text-lg font-extrabold leading-none text-white tabular-nums">
+                <dd className="mt-1 text-lg font-extrabold leading-none text-slate-950 tabular-nums">
                   {fmtCount(metric.value)}
                 </dd>
               </div>
@@ -281,18 +334,15 @@ function AverageScoreCard({
 }
 
 function AreaCoverageCard({
-  states,
   districts,
   blocks,
   facilities,
 }: {
-  states: number;
   districts: number;
   blocks: number;
   facilities: number;
 }) {
   const metrics = [
-    { label: "States", value: states, icon: <Landmark className="h-4 w-4" />, tone: "bg-violet-50 text-violet-700" },
     { label: "Districts", value: districts, icon: <MapPin className="h-4 w-4" />, tone: "bg-sky-50 text-sky-700" },
     { label: "Blocks", value: blocks, icon: <Layers3 className="h-4 w-4" />, tone: "bg-amber-50 text-amber-700" },
     { label: "Facilities", value: facilities, icon: <Building2 className="h-4 w-4" />, tone: "bg-rose-50 text-rose-700" },
@@ -310,7 +360,7 @@ function AreaCoverageCard({
             <h2 id="area-covered-kpi" className="mt-1 text-xl font-extrabold tracking-tight text-slate-950">
               Area covered
             </h2>
-            <p className="mt-1 text-xs text-slate-500">Current filtered footprint, from state to facility</p>
+            <p className="mt-1 text-xs text-slate-500">Estimated unique district, block and facility footprint</p>
           </div>
           <div aria-hidden className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-violet-100 bg-violet-50 text-violet-700">
             <MapPin className="h-5 w-5" />
@@ -319,7 +369,7 @@ function AreaCoverageCard({
 
         <dl className="mt-5 grid grid-cols-2 gap-2.5">
           {metrics.map((metric) => (
-            <div key={metric.label} className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+            <div key={metric.label} className={`rounded-2xl border border-slate-100 bg-slate-50/80 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] ${metric.label === "Facilities" ? "col-span-2" : ""}`}>
               <dt className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
                 <span aria-hidden className={`flex h-7 w-7 items-center justify-center rounded-lg ${metric.tone}`}>
                   {metric.icon}
@@ -335,7 +385,7 @@ function AreaCoverageCard({
 
         <div className="mt-auto flex items-start gap-2 pt-4 text-[10px] leading-4 text-slate-400">
           <span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-violet-400" />
-          <p>States are unique; other levels use the widest saved review per geography to avoid repeat-review inflation.</p>
+          <p>Counts are de-duplicated by geography; count-only snapshots use the widest saved review to avoid repeat-review inflation.</p>
         </div>
       </article>
     </GlassPanel>
@@ -410,6 +460,7 @@ function MonthlyActivityChart({
   showStateHmis: boolean;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
   const W = 720;
   const H = 240;
   const PAD_L = 36;
@@ -427,8 +478,18 @@ function MonthlyActivityChart({
   const hovered = hover !== null ? months[hover] : null;
 
   return (
-    <div className="relative">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="DQA reviews per month, stacked by data source">
+    <div>
+      <GraphDownloadButton
+        label="reviews per month"
+        disabled={months.length === 0}
+        onDownload={async () => {
+          setHover(null);
+          await waitForPaint();
+          await downloadDashboardGraph(exportRef.current, "Reviews per month");
+        }}
+      />
+      <div ref={exportRef} className="relative">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="DQA reviews per month, stacked by data source">
         {[...new Set(ticks)].map((t) => (
           <g key={t}>
             <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke={GRID} strokeWidth={1} />
@@ -514,16 +575,16 @@ function MonthlyActivityChart({
           );
         })}
         <line x1={PAD_L} x2={W - PAD_R} y1={PAD_T + plotH} y2={PAD_T + plotH} stroke="#cbd5e1" strokeWidth={1} />
-      </svg>
-      {hovered ? (
-        <div
-          className="pointer-events-none absolute z-10 min-w-[150px] rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg"
-          style={{
-            left: `${(((PAD_L + band * (hover as number) + band / 2) / W) * 100).toFixed(2)}%`,
-            top: 0,
-            transform: "translateX(-50%)",
-          }}
-        >
+        </svg>
+        {hovered ? (
+          <div
+            className="pointer-events-none absolute z-10 min-w-[150px] rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg"
+            style={{
+              left: `${(((PAD_L + band * (hover as number) + band / 2) / W) * 100).toFixed(2)}%`,
+              top: 0,
+              transform: "translateX(-50%)",
+            }}
+          >
           <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{hovered.label}</div>
           <div className="mt-1 space-y-0.5">
             {showHmis ? (
@@ -565,8 +626,9 @@ function MonthlyActivityChart({
               </div>
             ) : null}
           </div>
-        </div>
-      ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -583,6 +645,7 @@ function roundedTopBar(x: number, y: number, w: number, h: number, r: number): s
 
 function ScoreTrendChart({ months }: { months: MonthBucket[] }) {
   const [hover, setHover] = useState<number | null>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
   const W = 360;
   const H = 240;
   const PAD_L = 30;
@@ -608,8 +671,17 @@ function ScoreTrendChart({ months }: { months: MonthBucket[] }) {
   }
 
   return (
-    <div className="relative">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Average overall DQA score per month">
+    <div>
+      <GraphDownloadButton
+        label="average overall score by month"
+        onDownload={async () => {
+          setHover(null);
+          await waitForPaint();
+          await downloadDashboardGraph(exportRef.current, "Average score by month");
+        }}
+      />
+      <div ref={exportRef} className="relative">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Average overall DQA score per month">
         {[0, 25, 50, 75, 100].map((t) => (
           <g key={t}>
             <line x1={PAD_L} x2={W - PAD_R} y1={cy(t)} y2={cy(t)} stroke={GRID} strokeWidth={1} />
@@ -658,16 +730,17 @@ function ScoreTrendChart({ months }: { months: MonthBucket[] }) {
             onBlur={() => setHover(null)}
           />
         ))}
-      </svg>
-      {hoveredPoint ? (
-        <div
-          className="pointer-events-none absolute z-10 rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-lg"
-          style={{ left: `${((hoveredPoint.x / W) * 100).toFixed(2)}%`, top: 0, transform: "translateX(-50%)" }}
-        >
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{hoveredPoint.label}</div>
-          <div className="text-sm font-bold tabular-nums text-slate-900">{hoveredPoint.v.toFixed(1)}</div>
-        </div>
-      ) : null}
+        </svg>
+        {hoveredPoint ? (
+          <div
+            className="pointer-events-none absolute z-10 rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-lg"
+            style={{ left: `${((hoveredPoint.x / W) * 100).toFixed(2)}%`, top: 0, transform: "translateX(-50%)" }}
+          >
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{hoveredPoint.label}</div>
+            <div className="text-sm font-bold tabular-nums text-slate-900">{hoveredPoint.v.toFixed(1)}</div>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -690,6 +763,7 @@ interface BarListRow {
 
 function StackedBarList({
   rows,
+  downloadName,
   showHmis,
   showStateHmis,
   onRowClick,
@@ -698,6 +772,7 @@ function StackedBarList({
   initialLimit = 12,
 }: {
   rows: BarListRow[];
+  downloadName: string;
   showHmis: boolean;
   showStateHmis: boolean;
   onRowClick?: (row: BarListRow) => void;
@@ -706,15 +781,31 @@ function StackedBarList({
   initialLimit?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
   const max = Math.max(1, ...rows.map((r) => r.total));
   const visible = expanded ? rows : rows.slice(0, initialLimit);
+
+  const handleDownload = async () => {
+    const expandForExport = !expanded && rows.length > initialLimit;
+    if (expandForExport) {
+      setExpanded(true);
+      await waitForPaint();
+    }
+    try {
+      await downloadDashboardGraph(exportRef.current, downloadName);
+    } finally {
+      if (expandForExport) setExpanded(false);
+    }
+  };
 
   if (rows.length === 0) {
     return <div className="flex h-24 items-center justify-center text-sm font-medium text-slate-400">No reviews in this slice.</div>;
   }
 
   return (
-    <div className="space-y-1">
+    <div>
+      <GraphDownloadButton label={downloadName.toLowerCase()} onDownload={handleDownload} />
+      <div ref={exportRef} className="space-y-1">
       {visible.map((row) => {
         const hmisPct = (row.hmis / max) * 100;
         const uwinPct = (row.uwin / max) * 100;
@@ -845,11 +936,13 @@ function StackedBarList({
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
+          data-html2canvas-ignore="true"
           className="mt-1 w-full rounded-xl border border-slate-200 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-white"
         >
           {expanded ? "Show fewer" : `Show all ${rows.length}`}
         </button>
       ) : null}
+      </div>
     </div>
   );
 }
@@ -871,6 +964,7 @@ function ComponentProfile({
   showUwin: boolean;
   showPcts: boolean;
 }) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const rows = useMemo(() => {
     const hmisRecords = records.filter((r) => r.portal === "HMIS");
     const uwinRecords = records.filter((r) => r.portal === "UWIN" || r.portal === "UWIN_STATE");
@@ -907,23 +1001,30 @@ function ComponentProfile({
   );
 
   return (
-    <div className="space-y-3">
-      {rows.map((row) => (
-        <div key={row.label}>
-          <div className="mb-1 text-xs font-semibold text-slate-600">{row.label}</div>
-          <div className="space-y-1">
-            {showHmis ? bar(row.hmis, HMIS_COLOR, "HMIS") : null}
-            {showStateHmis ? bar(row.stateHmis, STATE_HMIS_COLOR, "State DQA") : null}
-            {showUwin ? bar(row.uwin, UWIN_COLOR, "U-WIN", "uwinNa" in row && row.uwinNa) : null}
-            {showPcts ? bar(row.pcts, PCTS_COLOR, "PCTS") : null}
+    <div>
+      <GraphDownloadButton
+        label="average component scores"
+        onDownload={() => downloadDashboardGraph(exportRef.current, "Average component scores")}
+      />
+      <div ref={exportRef} className="space-y-3">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <div className="mb-1 text-xs font-semibold text-slate-600">{row.label}</div>
+            <div className="space-y-1">
+              {showHmis ? bar(row.hmis, HMIS_COLOR, "HMIS") : null}
+              {showStateHmis ? bar(row.stateHmis, STATE_HMIS_COLOR, "State DQA") : null}
+              {showUwin ? bar(row.uwin, UWIN_COLOR, "U-WIN", "uwinNa" in row && row.uwinNa) : null}
+              {showPcts ? bar(row.pcts, PCTS_COLOR, "PCTS") : null}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
 
 function ScoreDistribution({ records }: { records: DashboardRecord[] }) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const bands = [
     { label: "Excellent", range: "85–100", color: "#059669", count: records.filter((r) => r.overall >= 85).length },
     { label: "Good", range: "70–84", color: "#0284c7", count: records.filter((r) => r.overall >= 70 && r.overall < 85).length },
@@ -932,19 +1033,26 @@ function ScoreDistribution({ records }: { records: DashboardRecord[] }) {
   ];
   const max = Math.max(1, ...bands.map((band) => band.count));
   return (
-    <div className="space-y-3">
-      {bands.map((band) => (
-        <div key={band.label} className="grid grid-cols-[76px_1fr_34px] items-center gap-2">
-          <div>
-            <div className="text-xs font-bold text-slate-700">{band.label}</div>
-            <div className="text-[10px] font-medium text-slate-400">{band.range}</div>
+    <div>
+      <GraphDownloadButton
+        label="performance distribution"
+        disabled={records.length === 0}
+        onDownload={() => downloadDashboardGraph(exportRef.current, "Performance distribution")}
+      />
+      <div ref={exportRef} className="space-y-3">
+        {bands.map((band) => (
+          <div key={band.label} className="grid grid-cols-[76px_1fr_34px] items-center gap-2">
+            <div>
+              <div className="text-xs font-bold text-slate-700">{band.label}</div>
+              <div className="text-[10px] font-medium text-slate-400">{band.range}</div>
+            </div>
+            <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full" style={{ width: `${(band.count / max) * 100}%`, background: band.color }} />
+            </div>
+            <div className="text-right text-xs font-extrabold tabular-nums text-slate-900">{fmtCount(band.count)}</div>
           </div>
-          <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
-            <div className="h-full rounded-full" style={{ width: `${(band.count / max) * 100}%`, background: band.color }} />
-          </div>
-          <div className="text-right text-xs font-extrabold tabular-nums text-slate-900">{fmtCount(band.count)}</div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -1492,7 +1600,6 @@ export function DashboardPage({ auth }: Props) {
                 <AverageScoreCard overall={stats.avgOverall} metrics={scoreMetrics} />
                 <div className="md:col-span-2 xl:col-span-1">
                   <AreaCoverageCard
-                    states={stats.states}
                     districts={stats.districts}
                     blocks={stats.blocks}
                     facilities={stats.facilities}
@@ -1513,7 +1620,7 @@ export function DashboardPage({ auth }: Props) {
                   <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" /><div className="text-xs text-amber-900"><span className="font-bold">Primary quality gap:</span> {managementSignals.weakest ? `${managementSignals.weakest.label} (${managementSignals.weakest.value.toFixed(1)})` : "Not enough scored data"}</div></div>
                 </GlassPanel>
 
-                <GlassPanel className="p-5 lg:col-span-4">
+                <GlassPanel data-dashboard-graph="performance-distribution" className="p-5 lg:col-span-4">
                   <div className="mb-4 flex items-center justify-between gap-2"><div><div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Score mix</div><div className="mt-1 text-lg font-bold text-slate-950">Performance distribution</div></div><BarChart3 className="h-5 w-5 text-slate-400" /></div>
                   <ScoreDistribution records={filtered} />
                 </GlassPanel>
@@ -1529,7 +1636,7 @@ export function DashboardPage({ auth }: Props) {
 
               {/* ── Time charts ───────────────────── */}
               <div className="grid gap-4 lg:grid-cols-3">
-                <GlassPanel className="p-5 lg:col-span-2">
+                <GlassPanel data-dashboard-graph="reviews-per-month" className="p-5 lg:col-span-2">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">DQA activity</div>
@@ -1540,6 +1647,7 @@ export function DashboardPage({ auth }: Props) {
                       <button
                         type="button"
                         onClick={() => setActivityTable((v) => !v)}
+                        data-html2canvas-ignore="true"
                         className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
                       >
                         {activityTable ? "Chart" : "Table"}
@@ -1581,7 +1689,7 @@ export function DashboardPage({ auth }: Props) {
                     <MonthlyActivityChart months={months} showHmis={showHmis} showStateHmis={showStateHmis} />
                   )}
                 </GlassPanel>
-                <GlassPanel className="p-5">
+                <GlassPanel data-dashboard-graph="average-score-by-month" className="p-5">
                   <div className="mb-3">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Data quality</div>
                     <div className="text-sm font-bold text-slate-900">Average overall score by month</div>
@@ -1596,7 +1704,7 @@ export function DashboardPage({ auth }: Props) {
 
               {/* ── Geography + component profile ── */}
               <div className="grid gap-4 lg:grid-cols-3">
-                <GlassPanel className="p-5 lg:col-span-2">
+                <GlassPanel data-dashboard-graph="reviews-by-geography" className="p-5 lg:col-span-2">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Where DQA is happening</div>
@@ -1632,6 +1740,7 @@ export function DashboardPage({ auth }: Props) {
                   </div>
                   <StackedBarList
                     rows={geo.rows}
+                    downloadName={`Reviews by ${geoLevel}`}
                     showHmis={showHmis}
                     showStateHmis={showStateHmis}
                     onRowClick={handleGeoDrill}
@@ -1650,7 +1759,7 @@ export function DashboardPage({ auth }: Props) {
                     </div>
                   ) : null}
                 </GlassPanel>
-                <GlassPanel className="p-5">
+                <GlassPanel data-dashboard-graph="average-component-scores" className="p-5">
                   <div className="mb-3 flex items-center justify-between gap-2">
                     <div>
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Quality profile</div>
@@ -1692,7 +1801,7 @@ export function DashboardPage({ auth }: Props) {
               </GlassPanel>
 
               <div className="grid gap-4 lg:grid-cols-2">
-                <GlassPanel className="p-5">
+                <GlassPanel data-dashboard-graph="reviews-by-designation" className="p-5">
                   <div className="mb-3 flex items-center justify-between gap-2">
                     <div>
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Reviewed by</div>
@@ -1702,6 +1811,7 @@ export function DashboardPage({ auth }: Props) {
                   </div>
                   <StackedBarList
                     rows={designations.map(categoryToRow)}
+                    downloadName="Reviews by designation"
                     showHmis={showHmis}
                     showStateHmis={showStateHmis}
                     onRowClick={(row) => setFilter({ designation: filters.designation === row.key ? "" : row.key })}
@@ -1709,7 +1819,7 @@ export function DashboardPage({ auth }: Props) {
                     clickHint="Click to filter by this designation"
                   />
                 </GlassPanel>
-                <GlassPanel className="p-5">
+                <GlassPanel data-dashboard-graph="reviews-by-purpose" className="p-5">
                   <div className="mb-3 flex items-center justify-between gap-2">
                     <div>
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Purpose of DQA</div>
@@ -1719,6 +1829,7 @@ export function DashboardPage({ auth }: Props) {
                   </div>
                   <StackedBarList
                     rows={purposes.map(categoryToRow)}
+                    downloadName="Reviews by purpose"
                     showHmis={showHmis}
                     showStateHmis={showStateHmis}
                     onRowClick={(row) => setFilter({ purpose: filters.purpose === row.key ? "" : row.key })}
@@ -1778,7 +1889,7 @@ export function DashboardPage({ auth }: Props) {
                   </table>
                 </div>
                 <div className="border-t border-slate-200/70 px-5 py-3 text-[11px] font-medium text-slate-500">
-                  * Coverage estimates: snapshots store dataset totals, not facility lists, so each geography counts its single widest review (largest block/facility/session-site count among the filtered reviews) — repeat reviews never double-count. {hasHmisAccess ? "HMIS, U-WIN, and PCTS" : "U-WIN and PCTS"} facility universes are counted separately.
+                  * Coverage estimates: snapshots store dataset totals, not identity lists, so each geography uses its single widest review across data sources. Statewide totals are reconciled against their district roll-up, preventing repeat and cross-portal inflation.
                 </div>
               </GlassPanel>
             </div>

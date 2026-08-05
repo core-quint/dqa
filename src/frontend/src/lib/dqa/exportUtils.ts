@@ -56,6 +56,39 @@ export function downloadChartPNG(canvasId: string, filename: string): void {
   a.remove();
 }
 
+/** Capture an SVG or HTML/CSS chart region exactly as rendered. */
+export async function downloadElementPNG(
+  source: HTMLElement | null,
+  filename: string,
+  backgroundColor = '#ffffff'
+): Promise<boolean> {
+  if (!source) return false;
+
+  const rect = source.getBoundingClientRect();
+  const width = Math.ceil(Math.max(rect.width, source.scrollWidth));
+  const height = Math.ceil(Math.max(rect.height, source.scrollHeight));
+  if (width <= 0 || height <= 0) return false;
+
+  await document.fonts?.ready;
+  const { default: html2canvas } = await import('html2canvas');
+  const scale = Math.min(2, 8192 / width, 8192 / height);
+  if (!Number.isFinite(scale) || scale <= 0) return false;
+  const canvas = await html2canvas(source, {
+    backgroundColor,
+    width,
+    height,
+    scale,
+    useCORS: true,
+    logging: false,
+    removeContainer: true,
+  });
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) return false;
+
+  triggerDownload(blob, `${sanitizeFilename(filename)}.png`);
+  return true;
+}
+
 function sanitizeFilename(s: string): string {
   return s.replace(/[^A-Za-z0-9 _\-]+/g, '').replace(/\s+/g, '_').trim() || 'export';
 }

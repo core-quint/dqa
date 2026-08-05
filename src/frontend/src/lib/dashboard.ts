@@ -12,7 +12,7 @@ export const NOT_RECORDED = "Not recorded";
 // ("UTTAR PRADESH" vs "Uttar Pradesh") — group on a normalized key and
 // display a title-cased form.
 export function geoKey(s: string | null | undefined): string {
-  return (s ?? "").trim().toLowerCase();
+  return (s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 export function titleCaseGeo(s: string | null | undefined): string {
@@ -160,7 +160,7 @@ export interface DashboardStats {
   districts: number;
   /** Estimated blocks covered — see coverage-estimator note below. */
   blocks: number;
-  /** Estimated facilities covered (each portal's facility universe summed separately). */
+  /** Estimated unique facilities covered, reconciled at district/state grain. */
   facilities: number;
   /** Estimated session sites covered (U-WIN only). */
   sessionSites: number;
@@ -178,20 +178,20 @@ function mean(values: number[]): number | null {
 }
 
 // Coverage estimator: snapshots store per-dataset totals (blockCount /
-// facilityCount / sessionSiteCount), not facility name lists, so true
-// cross-review de-duplication is impossible without storing far more data
-// (deliberately avoided — cost). Instead, for each unique geography (portal +
-// state + district) take the LARGEST count seen among the filtered reviews —
-// "the widest net cast over that district" — and sum across geographies.
-// Repeat reviews of the same district therefore never double-count.
+// facilityCount / sessionSiteCount), not identity lists. Take the widest saved
+// review at each geography across every portal, then reconcile state totals
+// against their district roll-up. Repeat reviews and cross-portal snapshots of
+// the same geography therefore never add to the footprint more than once.
 export function computeDashboardStats(records: DashboardRecord[]): DashboardStats {
   const states = new Set<string>();
   const reviewers = new Set<string>();
 
   const maxBlockCount = new Map<string, number>(); // state|district -> max blockCount
   const blockNames = new Map<string, Set<string>>(); // state|district -> unique block names
-  const maxFacility = new Map<string, number>(); // portal|state|district -> max facilityCount
-  const maxSessionSites = new Map<string, number>(); // state|district (UWIN) -> max sessionSiteCount
+  const maxDistrictFacility = new Map<string, number>(); // state|district -> max facilityCount
+  const maxStateFacility = new Map<string, number>(); // state -> max facilityCount
+  const maxDistrictSessionSites = new Map<string, number>(); // state|district -> max sessionSiteCount
+  const maxStateSessionSites = new Map<string, number>(); // state -> max sessionSiteCount
   const explicitDistrictsByState = new Map<string, Set<string>>();
   const maxStateDistrictCount = new Map<string, number>();
   const maxStateBlockCount = new Map<string, number>();
@@ -208,38 +208,46 @@ export function computeDashboardStats(records: DashboardRecord[]): DashboardStat
     else hmis += 1;
     if (r.stateKey) states.add(r.stateKey);
     const dKey = `${r.stateKey}|${r.districtKey}`;
-    if (r.districtKey) {
+    const stateLevel = r.dqaLevel === "STATE" || r.portal === "HMIS_STATE" || r.portal === "UWIN_STATE";
+    if (!stateLevel && r.stateKey && r.districtKey) {
       const set = explicitDistrictsByState.get(r.stateKey) ?? new Set<string>();
       set.add(r.districtKey);
       explicitDistrictsByState.set(r.stateKey, set);
     }
-    if ((r.portal === "HMIS_STATE" || r.portal === "UWIN_STATE") && r.districtCount !== null) {
+    if (stateLevel && r.stateKey && r.districtCount !== null) {
       maxStateDistrictCount.set(r.stateKey, Math.max(maxStateDistrictCount.get(r.stateKey) ?? 0, r.districtCount));
     }
     if (r.savedBy) reviewers.add(r.savedBy);
 
     if (r.blockCount !== null) {
-      if (r.portal === "HMIS_STATE" || r.portal === "UWIN_STATE") {
+      if (stateLevel && r.stateKey) {
         maxStateBlockCount.set(r.stateKey, Math.max(maxStateBlockCount.get(r.stateKey) ?? 0, r.blockCount));
-      } else if (r.blockCount > (maxBlockCount.get(dKey) ?? 0)) {
+      } else if (r.stateKey && r.districtKey && r.blockCount > (maxBlockCount.get(dKey) ?? 0)) {
         maxBlockCount.set(dKey, r.blockCount);
       }
     }
-    if (r.blockKey) {
+    if (!stateLevel && r.stateKey && r.districtKey && r.blockKey) {
       const set = blockNames.get(dKey) ?? new Set<string>();
       set.add(r.blockKey);
       blockNames.set(dKey, set);
     }
-    const fKey = `${r.portal}|${dKey}`;
-    if (r.facilityCount !== null && r.facilityCount > (maxFacility.get(fKey) ?? 0)) {
-      maxFacility.set(fKey, r.facilityCount);
+    if (r.facilityCount !== null && r.stateKey) {
+      if (stateLevel) {
+        maxStateFacility.set(r.stateKey, Math.max(maxStateFacility.get(r.stateKey) ?? 0, r.facilityCount));
+      } else if (r.districtKey) {
+        maxDistrictFacility.set(dKey, Math.max(maxDistrictFacility.get(dKey) ?? 0, r.facilityCount));
+      }
     }
     if (
       (r.portal === "UWIN" || r.portal === "UWIN_STATE") &&
       r.sessionSiteCount !== null &&
-      r.sessionSiteCount > (maxSessionSites.get(dKey) ?? 0)
+      r.stateKey
     ) {
-      maxSessionSites.set(dKey, r.sessionSiteCount);
+      if (stateLevel) {
+        maxStateSessionSites.set(r.stateKey, Math.max(maxStateSessionSites.get(r.stateKey) ?? 0, r.sessionSiteCount));
+      } else if (r.districtKey) {
+        maxDistrictSessionSites.set(dKey, Math.max(maxDistrictSessionSites.get(dKey) ?? 0, r.sessionSiteCount));
+      }
     }
   }
 
@@ -257,10 +265,21 @@ export function computeDashboardStats(records: DashboardRecord[]): DashboardStat
     blocks += Math.max(districtBlocksByState.get(stateKey) ?? 0, maxStateBlockCount.get(stateKey) ?? 0);
   }
 
-  let facilities = 0;
-  for (const v of maxFacility.values()) facilities += v;
-  let sessionSites = 0;
-  for (const v of maxSessionSites.values()) sessionSites += v;
+  const reconcileCoverage = (districtCounts: Map<string, number>, stateCounts: Map<string, number>) => {
+    const districtTotalsByState = new Map<string, number>();
+    for (const [key, count] of districtCounts) {
+      const stateKey = key.split("|")[0];
+      districtTotalsByState.set(stateKey, (districtTotalsByState.get(stateKey) ?? 0) + count);
+    }
+    let total = 0;
+    for (const stateKey of new Set([...districtTotalsByState.keys(), ...stateCounts.keys()])) {
+      total += Math.max(districtTotalsByState.get(stateKey) ?? 0, stateCounts.get(stateKey) ?? 0);
+    }
+    return total;
+  };
+
+  const facilities = reconcileCoverage(maxDistrictFacility, maxStateFacility);
+  const sessionSites = reconcileCoverage(maxDistrictSessionSites, maxStateSessionSites);
 
   const nums = (pick: (r: DashboardRecord) => number | null) =>
     records.map(pick).filter((v): v is number => v !== null);
