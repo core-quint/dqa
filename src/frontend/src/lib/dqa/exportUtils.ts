@@ -3,8 +3,9 @@
 // ============================================================
 
 import type { ParsedCSV, ComputedKpis, FacilityRecord } from './types';
-import { monthKey as monthKeyFn } from './parseUtils';
+import { monthKey as monthKeyFn, asNumOrNull } from './parseUtils';
 import { CO_SPECS } from './constants';
+import { coadminRedCells } from './coadmin';
 
 const TABLE_STYLE = `
 <style>
@@ -212,6 +213,34 @@ function triggerDownload(blob: Blob, filename: string): void {
 // Highlighted full-file export
 // ============================================================
 
+/**
+ * Mark a "later dose exceeds earlier dose" pair, but only on the months that
+ * actually breach it. The KPI itself is decided on the sum across the selected
+ * months, and the old code therefore painted every month of a flagged facility —
+ * measured at 302 rows marked where only 202 breached. Comparing with `?? 0`
+ * (rather than skipping blanks) guarantees at least one month is always marked
+ * whenever the sums breach, so a flagged facility never exports unmarked.
+ */
+export function markInconsistencyPair(
+  styleMap: Record<number, Record<number, string>>,
+  ri: number,
+  row: string[],
+  idxByShort: Record<string, number>,
+  fromShort: string,
+  toShort: string,
+  color: string,
+): void {
+  const fromCi = idxByShort[fromShort];
+  const toCi = idxByShort[toShort];
+  if (fromCi === undefined || toCi === undefined) return;
+  const from = asNumOrNull(row[fromCi]) ?? 0;
+  const to = asNumOrNull(row[toCi]) ?? 0;
+  if (to <= from) return;
+  if (!styleMap[ri]) styleMap[ri] = {};
+  styleMap[ri][fromCi] = color;
+  styleMap[ri][toCi] = color;
+}
+
 export function downloadHighlightedXLS(
   csv: ParsedCSV,
   kpiKey: string,
@@ -334,38 +363,38 @@ export function downloadHighlightedXLS(
         if (toCi !== undefined) styleMap[ri][toCi] = PINK;
       }
     } else if (kpiKey.startsWith('co')) {
-      // Co-admin: dark pink on unique values
+      // Co-admin: light-pink the whole visit group so the reviewer can see which
+      // columns are being compared, then dark-pink the cells the shared rule
+      // marks (see lib/dqa/coadmin.ts). asNumOrNull is the SAME parser the CSV
+      // parser used to build the on-screen values, so the table and this export
+      // always agree — note Number('') is 0, which is why it must not be used.
       const vaxList = CO_SPECS[kpiKey] ?? [];
-      const vals: number[] = [];
-      const ciList: number[] = [];
+      const valsByVx: Record<string, number | null> = {};
+      const ciByVx: Record<string, number> = {};
       for (const vx of vaxList) {
         const ci = idxByShort[vx];
-        if (ci !== undefined) {
-          const v = Number((r[ci] ?? '').trim());
-          if (!isNaN(v)) { vals.push(v); ciList.push(ci); }
-        }
+        if (ci === undefined) continue;
+        ciByVx[vx] = ci;
+        valsByVx[vx] = asNumOrNull(r[ci]);
       }
-      if (vals.length >= 2) {
-        const counts: Record<string, number> = {};
-        for (const v of vals) counts[String(v)] = (counts[String(v)] ?? 0) + 1;
-        for (let idx = 0; idx < vals.length; idx++) {
-          if (counts[String(vals[idx])] === 1) {
-            if (!styleMap[ri]) styleMap[ri] = {};
-            styleMap[ri][ciList[idx]] = DARK_PINK;
-          }
+      const groupCis = Object.values(ciByVx);
+      const red = groupCis.length >= 2 ? coadminRedCells(valsByVx) : new Set<string>();
+      // Only touch months that actually disagree — a month whose doses all match
+      // stays clean, exactly as it renders on screen.
+      if (red.size > 0) {
+        if (!styleMap[ri]) styleMap[ri] = {};
+        for (const ci of groupCis) styleMap[ri][ci] = PINK;
+        for (const vx of Object.keys(ciByVx)) {
+          if (red.has(vx)) styleMap[ri][ciByVx[vx]] = DARK_PINK;
         }
       }
     } else if (kpiKey === 't5_p3gtp1' || kpiKey === 't5_opv3gtopv1') {
       const shortA = kpiKey === 't5_p3gtp1' ? 'Penta3' : 'OPV3';
       const shortB = kpiKey === 't5_p3gtp1' ? 'Penta1' : 'OPV1';
-      if (!styleMap[ri]) styleMap[ri] = {};
-      if (idxByShort[shortA] !== undefined) styleMap[ri][idxByShort[shortA]] = PINK;
-      if (idxByShort[shortB] !== undefined) styleMap[ri][idxByShort[shortB]] = PINK;
+      markInconsistencyPair(styleMap, ri, r, idxByShort, shortB, shortA, PINK);
     } else if (kpiKey.startsWith('t5_') && inconsPairMap[kpiKey]) {
       const pm = inconsPairMap[kpiKey];
-      if (!styleMap[ri]) styleMap[ri] = {};
-      if (idxByShort[pm.from] !== undefined) styleMap[ri][idxByShort[pm.from]] = PINK;
-      if (idxByShort[pm.to] !== undefined) styleMap[ri][idxByShort[pm.to]] = PINK;
+      markInconsistencyPair(styleMap, ri, r, idxByShort, pm.from, pm.to, PINK);
     }
 
     // Carry the flag across the row's mapping columns (only when the row really

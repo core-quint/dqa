@@ -15,6 +15,7 @@ import {
   DropoutTable,
   CoAdminTable,
   SummaryTable,
+  totalValueCols,
 } from "./DataTables";
 import {
   downloadXLS,
@@ -199,10 +200,18 @@ export function KpiPanel({ card, kpis, csv }: Props) {
     if (id.startsWith("drop_") && kpis.dropTables[id]) {
       return <DropoutTable web={kpis.dropTables[id]} />;
     }
-    if (id === "i1") return <FlatTable rows={kpis.i1Rows} />;
-    if (id === "i2") return <FlatTable rows={kpis.i2Rows} />;
+    // Columns 2 and 3 are the two compared dose totals — every listed row is a
+    // violation, so those cells are the evidence. Same two columns the
+    // highlighted XLS marks, so table and export read the same.
+    if (id === "i1") {
+      return <FlatTable rows={kpis.i1Rows} highlightCols={totalValueCols(kpis.i1Rows)} />;
+    }
+    if (id === "i2") {
+      return <FlatTable rows={kpis.i2Rows} highlightCols={totalValueCols(kpis.i2Rows)} />;
+    }
     if (id.startsWith("iadd_") && kpis.inconsTables[id]) {
-      return <FlatTable rows={kpis.inconsTables[id]} />;
+      const rows = kpis.inconsTables[id];
+      return <FlatTable rows={rows} highlightCols={totalValueCols(rows)} />;
     }
     if (id.startsWith("co") && kpis.coTables[id]) {
       return <CoAdminTable web={kpis.coTables[id]} />;

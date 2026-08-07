@@ -29,6 +29,7 @@ import {
   safeKey,
   monthLongLabel,
 } from './parseUtils';
+import { coadminHasDifference } from './coadmin';
 import {
   BASE_VAX,
   ADD_VAX,
@@ -618,29 +619,27 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
 
     for (const [fkey, fd] of Object.entries(filteredFacilities)) {
       const rowVals: Record<string, Record<string, number | null>> = {};
-      const totals: Record<string, number> = {};
-      for (const vx of vaxList) totals[vx] = 0;
+      // null until the vaccine is actually reported at least once — see
+      // coadminTotal() in lib/dqa/coadmin.ts for why a 0 default is wrong.
+      const totals: Record<string, number | null> = {};
+      for (const vx of vaxList) totals[vx] = null;
       let viol = false;
       let monthViolCount = 0;
 
       for (const mk of selMonths) {
         rowVals[mk] = {};
-        const valsMonth: number[] = [];
+        const valsMonth: (number | null)[] = [];
         for (const vx of vaxList) {
           const ci = indicatorMap[vx];
           const val = (ci !== undefined && fd.months[mk]) ? fd.months[mk].vals[ci] ?? null : null;
           rowVals[mk][vx] = val;
-          if (val !== null) { totals[vx] += val; valsMonth.push(val); }
+          valsMonth.push(val);
+          if (val !== null) totals[vx] = (totals[vx] ?? 0) + val;
         }
-        if (valsMonth.length >= 2) {
-          if (Math.max(...valsMonth) !== Math.min(...valsMonth)) {
-            viol = true; monthViolCount++;
-          }
-        }
+        if (coadminHasDifference(valsMonth)) { viol = true; monthViolCount++; }
       }
 
-      const totArr = Object.values(totals).filter((v) => v !== null) as number[];
-      if (totArr.length >= 2 && Math.max(...totArr) !== Math.min(...totArr)) viol = true;
+      if (coadminHasDifference(Object.values(totals))) viol = true;
 
       if (viol) {
         coStat.facilityKeys.add(fkey);

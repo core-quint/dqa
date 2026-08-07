@@ -17,6 +17,7 @@ import {
   CoAdminTable,
   SummaryTable,
   T8Table,
+  totalValueCols,
 } from "./UwinDataTables";
 import {
   downloadXLS,
@@ -218,10 +219,17 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
     if (id.startsWith("drop_") && kpis.dropTables[id]) {
       return <DropoutTable web={kpis.dropTables[id]} />;
     }
-    if (id === "i1") return <FlatTable rows={kpis.i1Rows} />;
-    if (id === "i2") return <FlatTable rows={kpis.i2Rows} />;
+    // The two compared dose totals are the evidence for every listed row, and
+    // they are the same two columns the highlighted XLS marks.
+    if (id === "i1") {
+      return <FlatTable rows={kpis.i1Rows} highlightCols={totalValueCols(kpis.i1Rows)} />;
+    }
+    if (id === "i2") {
+      return <FlatTable rows={kpis.i2Rows} highlightCols={totalValueCols(kpis.i2Rows)} />;
+    }
     if (id.startsWith("iadd_") && kpis.inconsTables[id]) {
-      return <FlatTable rows={kpis.inconsTables[id]} />;
+      const rows = kpis.inconsTables[id];
+      return <FlatTable rows={rows} highlightCols={totalValueCols(rows)} />;
     }
     if (id.startsWith("co") && kpis.coTables[id]) {
       return <CoAdminTable web={kpis.coTables[id]} />;

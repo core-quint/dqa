@@ -7,7 +7,8 @@
 import type { UwinParsedCSV, UwinComputedKpis } from './types';
 import { monthKey as monthKeyFn, asNumOrNull } from '../dqa/parseUtils';
 import { CO_SPECS } from '../dqa/constants';
-import { downloadXLS, downloadChartPNG } from '../dqa/exportUtils';
+import { coadminRedCells } from '../dqa/coadmin';
+import { downloadXLS, downloadChartPNG, markInconsistencyPair } from '../dqa/exportUtils';
 
 export { downloadXLS, downloadChartPNG };
 
@@ -175,55 +176,34 @@ export function downloadHighlightedXLS(
         if (toCi !== undefined) styleMap[ri][toCi] = PINK;
       }
     } else if (kpiKey.startsWith('co')) {
-      // Highlight rule mirrors UwinDataTables' coadminRedCells(): Penta's value (if
-      // present) is the reference — every other cell differing from it is colored,
-      // Penta itself never colored; otherwise cells differing from the majority
-      // value are colored (or all cells on a tie / no majority). Fixes the "3-2
-      // split" case where the old unique-value rule highlighted nothing at all.
+      // Light-pink the whole visit group, then dark-pink whatever the shared rule
+      // marks (lib/dqa/coadmin.ts) — identical to the on-screen CoAdminTable and
+      // to the HMIS export.
       const vaxList = CO_SPECS[kpiKey] ?? [];
-      const present: { vx: string; ci: number; v: number }[] = [];
+      const valsByVx: Record<string, number | null> = {};
+      const ciByVx: Record<string, number> = {};
       for (const vx of vaxList) {
         const ci = idxByShort[vx];
-        if (ci !== undefined) {
-          const v = asNumOrNull(r[ci] ?? '');
-          if (v !== null) present.push({ vx, ci, v });
-        }
+        if (ci === undefined) continue;
+        ciByVx[vx] = ci;
+        valsByVx[vx] = asNumOrNull(r[ci]);
       }
-      const counts = new Map<number, number>();
-      for (const { v } of present) counts.set(v, (counts.get(v) ?? 0) + 1);
-      if (present.length >= 2 && counts.size > 1) {
-        const pentaEntry = present.find((p) => p.vx.toLowerCase().startsWith('penta'));
-        let redCis: number[];
-        if (pentaEntry) {
-          redCis = present
-            .filter((p) => !p.vx.toLowerCase().startsWith('penta') && p.v !== pentaEntry.v)
-            .map((p) => p.ci);
-        } else {
-          let modeVal: number | null = null; let modeCount = -1; let tie = false;
-          for (const [val, c] of counts) {
-            if (c > modeCount) { modeCount = c; modeVal = val; tie = false; }
-            else if (c === modeCount) { tie = true; }
-          }
-          redCis = (tie || modeCount <= 1)
-            ? present.map((p) => p.ci)
-            : present.filter((p) => p.v !== modeVal).map((p) => p.ci);
-        }
-        if (redCis.length > 0) {
-          if (!styleMap[ri]) styleMap[ri] = {};
-          for (const ci of redCis) styleMap[ri][ci] = DARK_PINK;
+      const groupCis = Object.values(ciByVx);
+      const red = groupCis.length >= 2 ? coadminRedCells(valsByVx) : new Set<string>();
+      if (red.size > 0) {
+        if (!styleMap[ri]) styleMap[ri] = {};
+        for (const ci of groupCis) styleMap[ri][ci] = PINK;
+        for (const vx of Object.keys(ciByVx)) {
+          if (red.has(vx)) styleMap[ri][ciByVx[vx]] = DARK_PINK;
         }
       }
     } else if (kpiKey === 't5_p3gtp1' || kpiKey === 't5_opv3gtopv1') {
       const shortA = kpiKey === 't5_p3gtp1' ? 'Penta3' : 'OPV3';
       const shortB = kpiKey === 't5_p3gtp1' ? 'Penta1' : 'OPV1';
-      if (!styleMap[ri]) styleMap[ri] = {};
-      if (idxByShort[shortA] !== undefined) styleMap[ri][idxByShort[shortA]] = PINK;
-      if (idxByShort[shortB] !== undefined) styleMap[ri][idxByShort[shortB]] = PINK;
+      markInconsistencyPair(styleMap, ri, r, idxByShort, shortB, shortA, PINK);
     } else if (kpiKey.startsWith('t5_') && inconsPairMap[kpiKey]) {
       const pm = inconsPairMap[kpiKey];
-      if (!styleMap[ri]) styleMap[ri] = {};
-      if (idxByShort[pm.from] !== undefined) styleMap[ri][idxByShort[pm.from]] = PINK;
-      if (idxByShort[pm.to] !== undefined) styleMap[ri][idxByShort[pm.to]] = PINK;
+      markInconsistencyPair(styleMap, ri, r, idxByShort, pm.from, pm.to, PINK);
     }
   }
 

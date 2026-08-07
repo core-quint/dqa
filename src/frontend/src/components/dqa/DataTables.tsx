@@ -1,4 +1,5 @@
 import type { TableRows, T2Web, T3Web, DropoutWeb, CoAdminWeb, SummaryRow } from '../../lib/dqa/types';
+import { coadminRedCells } from '../../lib/dqa/coadmin';
 
 // ============================================================
 // Generic flat table
@@ -7,13 +8,36 @@ import type { TableRows, T2Web, T3Web, DropoutWeb, CoAdminWeb, SummaryRow } from
 interface FlatTableProps {
   rows: TableRows;
   highlightN?: boolean;
+  /**
+   * Column indices whose cells are always marked. Used by the inconsistency
+   * tables (i1/i2/custom pairs), where every listed row is a violation by
+   * construction, so the two compared totals are the evidence. Keeps the table
+   * aligned with the highlighted XLS, which marks the same two columns.
+   */
+  highlightCols?: number[];
 }
 
-export function FlatTable({ rows, highlightN }: FlatTableProps) {
+/**
+ * Column indices of the compared dose totals in an inconsistency table (i1, i2,
+ * custom pairs). Derived from the header rather than hard-coded because the
+ * leading identifier columns differ per portal — HMIS has Block+Facility, U-WIN
+ * can add District and Session Site.
+ */
+export function totalValueCols(rows: TableRows): number[] {
+  const head = rows[0] ?? [];
+  const cols: number[] = [];
+  head.forEach((h, i) => {
+    if (/\(total\)/i.test(String(h ?? ''))) cols.push(i);
+  });
+  return cols;
+}
+
+export function FlatTable({ rows, highlightN, highlightCols }: FlatTableProps) {
   if (rows.length <= 1) {
     return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
   }
   const head = rows[0];
+  const markedCols = new Set(highlightCols ?? []);
   return (
     <table className="border-collapse w-full text-xs" style={{ minWidth: 600 }}>
       <thead>
@@ -36,10 +60,12 @@ export function FlatTable({ rows, highlightN }: FlatTableProps) {
                 const ci = head.indexOf(h);
                 const v = String(row[ci] ?? '');
                 const isN = highlightN && v === 'N';
+                const isMarked = markedCols.has(ci) && v !== '';
+                const cls = isN ? 'n-cell' : isMarked ? 'pink-cell' : '';
                 return (
                   <td
                     key={`${rowIdx}-${String(h)}`}
-                    className={`border border-border px-2 py-1 whitespace-nowrap ${isN ? 'n-cell' : ''}`}
+                    className={`border border-border px-2 py-1 whitespace-nowrap ${cls}`}
                   >
                     {v}
                   </td>
@@ -284,22 +310,14 @@ export function CoAdminTable({ web }: { web: CoAdminWeb }) {
   const { vaccines, months, monthLabels, rows } = web;
   const rowList = Object.values(rows);
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
+  const showDistrict = rowList.some((row) => Boolean(row.district));
   const showSessionSite = rowList[0]?.sessionsite !== undefined;
-
-  function isUniqueVal(vals: Record<string, number | null>, vx: string): boolean {
-    const allVals = Object.values(vals).filter((v) => v !== null) as number[];
-    if (allVals.length < 2) return false;
-    const counts: Record<string, number> = {};
-    for (const v of allVals) counts[String(v)] = (counts[String(v)] ?? 0) + 1;
-    const myVal = vals[vx];
-    if (myVal === null) return false;
-    return counts[String(myVal)] === 1;
-  }
 
   return (
     <table className="border-collapse text-xs" style={{ minWidth: 600 }}>
       <thead>
         <tr>
+          {showDistrict ? <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">District</th> : null}
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
           {showSessionSite ? (
@@ -324,42 +342,46 @@ export function CoAdminTable({ web }: { web: CoAdminWeb }) {
         </tr>
       </thead>
       <tbody>
-        {rowList.map((row, rowIdx) => (
-          <tr key={rowIdx} className="hover:bg-accent/20">
-            <td className="border border-border px-2 py-1">{row.block}</td>
-            <td className="border border-border px-2 py-1">{row.facility}</td>
-            {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
-            {months.map((mk) =>
-              vaccines.map((vx) => {
-                const v = row.vals[mk]?.[vx] ?? null;
-                const isPink = isUniqueVal(row.vals[mk] ?? {}, vx);
+        {rowList.map((row, rowIdx) => {
+          const totalsRed = coadminRedCells(
+            Object.fromEntries(vaccines.map((v) => [v, row.totals[v] ?? null])),
+          );
+          return (
+            <tr key={rowIdx} className="hover:bg-accent/20">
+              {showDistrict ? <td className="border border-border px-2 py-1">{row.district}</td> : null}
+              <td className="border border-border px-2 py-1">{row.block}</td>
+              <td className="border border-border px-2 py-1">{row.facility}</td>
+              {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
+              {months.map((mk) => {
+                const redMonth = coadminRedCells(row.vals[mk] ?? {});
+                return vaccines.map((vx) => {
+                  const v = row.vals[mk]?.[vx] ?? null;
+                  const isPink = v !== null && redMonth.has(vx);
+                  return (
+                    <td
+                      key={`${mk}-${vx}`}
+                      className={`border border-border px-2 py-1 text-center ${isPink ? 'pink-cell' : ''}`}
+                    >
+                      {v !== null ? Math.round(v) : ''}
+                    </td>
+                  );
+                });
+              })}
+              {vaccines.map((vx) => {
+                const tv = row.totals[vx] ?? null;
+                const isPink = tv !== null && totalsRed.has(vx);
                 return (
                   <td
-                    key={`${mk}-${vx}`}
+                    key={`all-${vx}`}
                     className={`border border-border px-2 py-1 text-center ${isPink ? 'pink-cell' : ''}`}
                   >
-                    {v !== null ? Math.round(v) : ''}
+                    {tv !== null ? Math.round(tv) : ''}
                   </td>
                 );
-              })
-            )}
-            {vaccines.map((vx) => {
-              const tv = row.totals[vx] ?? null;
-              const isPink = isUniqueVal(
-                Object.fromEntries(vaccines.map((v) => [v, row.totals[v] ?? null])),
-                vx
-              );
-              return (
-                <td
-                  key={`all-${vx}`}
-                  className={`border border-border px-2 py-1 text-center ${isPink ? 'pink-cell' : ''}`}
-                >
-                  {tv !== null ? Math.round(tv) : ''}
-                </td>
-              );
-            })}
-          </tr>
-        ))}
+              })}
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
