@@ -27,6 +27,23 @@ export function downloadXLS(rows: TableData, filename: string): void {
   triggerDownload(blob, `${sanitizeFilename(filename)}.xls`);
 }
 
+/**
+ * Highlight classes used by the on-screen drill-down tables, mapped to the fill
+ * Excel should show. Excel's HTML importer ignores class selectors from a <style>
+ * block, so every fill has to be written onto the cell itself (inline style +
+ * legacy bgcolor attribute) for the export to keep the on-screen highlighting.
+ */
+const CELL_HIGHLIGHTS: { cls: string; bg: string; color?: string }[] = [
+  { cls: 'n-cell', bg: '#dcfce7', color: '#14532d' },
+  { cls: 'nCell', bg: '#dcfce7', color: '#14532d' },
+  { cls: 'dark-pink', bg: '#ff8fb1' },
+  { cls: 'darkPink', bg: '#ff8fb1' },
+  { cls: 'pink-cell', bg: '#ffc0cb' },
+  { cls: 'pinkCell', bg: '#ffc0cb' },
+];
+
+const HEADER_BG = '#f1f5f9';
+
 export function downloadRenderedTableXLS(source: HTMLElement | null, filename: string): boolean {
   if (!source) return false;
 
@@ -35,13 +52,70 @@ export function downloadRenderedTableXLS(source: HTMLElement | null, filename: s
     : source.querySelector<HTMLTableElement>('table');
   if (!table) return false;
 
+  const clone = table.cloneNode(true) as HTMLTableElement;
+  const usedHighlights = new Set<string>();
+
+  clone.querySelectorAll<HTMLTableCellElement>('th, td').forEach((cell) => {
+    const highlight = CELL_HIGHLIGHTS.find((entry) => cell.classList.contains(entry.cls));
+    const isHeader = cell.tagName === 'TH';
+    cell.removeAttribute('class');
+
+    const declarations = [
+      'border:1px solid #cbd5e1',
+      'padding:4px 6px',
+      'font-family:Arial,sans-serif',
+      'font-size:10pt',
+      'vertical-align:top',
+    ];
+
+    if (highlight) {
+      usedHighlights.add(highlight.bg);
+      declarations.push(`background-color:${highlight.bg}`, 'font-weight:bold');
+      if (highlight.color) declarations.push(`color:${highlight.color}`);
+      cell.setAttribute('bgcolor', highlight.bg);
+    } else if (isHeader) {
+      declarations.push(`background-color:${HEADER_BG}`, 'font-weight:bold');
+      cell.setAttribute('bgcolor', HEADER_BG);
+    }
+
+    cell.setAttribute('style', declarations.join(';'));
+  });
+
+  clone.removeAttribute('class');
+  clone.setAttribute('border', '1');
+  clone.setAttribute('cellspacing', '0');
+  clone.setAttribute('cellpadding', '4');
+  clone.setAttribute('style', 'border-collapse:collapse;');
+
   let html = `<html><head><meta charset="utf-8">${TABLE_STYLE}</head><body>`;
   html += `<div style="font-weight:bold;font-size:14px;margin-bottom:8px;">${escHtml(filename)}</div>`;
-  html += `${table.outerHTML}</body></html>`;
+  const legend = buildHighlightLegend(usedHighlights);
+  if (legend) html += legend;
+  html += `${clone.outerHTML}</body></html>`;
 
   const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
   triggerDownload(blob, `${sanitizeFilename(filename)}.xls`);
   return true;
+}
+
+const HIGHLIGHT_LEGEND: Record<string, string> = {
+  '#dcfce7': 'Missing / not reported (N)',
+  '#ffc0cb': 'Flagged value',
+  '#ff8fb1': 'Value differing from co-administered vaccines',
+};
+
+/** Small colour key placed above the exported table so fills stay self-explanatory. */
+function buildHighlightLegend(colors: Set<string>): string {
+  const entries = Object.keys(HIGHLIGHT_LEGEND).filter((bg) => colors.has(bg));
+  if (!entries.length) return '';
+  const rows = entries
+    .map(
+      (bg) =>
+        `<tr><td bgcolor="${bg}" style="background-color:${bg};border:1px solid #cbd5e1;width:24px;">&nbsp;</td>` +
+        `<td style="border:1px solid #cbd5e1;font-family:Arial,sans-serif;font-size:9pt;">${escHtml(HIGHLIGHT_LEGEND[bg])}</td></tr>`
+    )
+    .join('');
+  return `<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;margin-bottom:8px;">${rows}</table>`;
 }
 
 export function downloadChartPNG(canvasId: string, filename: string): void {
@@ -161,6 +235,12 @@ export function downloadHighlightedXLS(
 
   // Incons pair map for t5_ keys
   const inconsPairMap = kpis.inconsPairMap;
+
+  // Mapping/identifier columns: everything up to and including Month (all
+  // indicator columns sit after it). These get the same fill as the flagged
+  // cells so the export can be filtered by colour on State/District/Block/etc.
+  const mappingCols: number[] = [];
+  for (let ci = 0; ci <= idxMonth && ci < header.length; ci++) mappingCols.push(ci);
 
   for (let ri = 1; ri < fullRows.length; ri++) {
     const r = fullRows[ri];
@@ -286,6 +366,15 @@ export function downloadHighlightedXLS(
       if (!styleMap[ri]) styleMap[ri] = {};
       if (idxByShort[pm.from] !== undefined) styleMap[ri][idxByShort[pm.from]] = PINK;
       if (idxByShort[pm.to] !== undefined) styleMap[ri][idxByShort[pm.to]] = PINK;
+    }
+
+    // Carry the flag across the row's mapping columns (only when the row really
+    // did get a data-cell highlight — some branches pre-create an empty entry).
+    const rowStyles = styleMap[ri];
+    if (rowStyles && Object.keys(rowStyles).length > 0) {
+      for (const ci of mappingCols) {
+        if (rowStyles[ci] === undefined) rowStyles[ci] = PINK;
+      }
     }
   }
 

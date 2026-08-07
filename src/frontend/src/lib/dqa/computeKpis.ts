@@ -27,7 +27,7 @@ import {
   displayBlockLabel,
   pctChange,
   safeKey,
-  monthShortLabel,
+  monthLongLabel,
 } from './parseUtils';
 import {
   BASE_VAX,
@@ -87,7 +87,9 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
   let selMonths = filters.months.length > 0 ? filters.months : Object.keys(allMonths);
   selMonths = selMonths.slice().sort();
   const selMonthLabels: Record<string, string> = {};
-  for (const mk of selMonths) selMonthLabels[mk] = allMonths[mk] ?? monthShortLabel(mk);
+  // Labels shown in every drill-down table/chart header — always month + year
+  // ("January 2026"), never a bare month name, so multi-year datasets stay unambiguous.
+  for (const mk of selMonths) selMonthLabels[mk] = monthLongLabel(mk);
 
   // ---- resolve selected vaccines ----
   const selVaxBase = filters.outliersVax.length > 0 ? filters.outliersVax : BASE_VAX;

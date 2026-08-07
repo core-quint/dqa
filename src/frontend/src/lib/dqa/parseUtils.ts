@@ -91,6 +91,20 @@ export function monthShortLabel(ym: string): string {
   return monthNames[m];
 }
 
+/** Full month name plus 4-digit year, e.g. "2026-01" -> "January 2026". */
+export function monthLongLabel(ym: string): string {
+  const parts = ym.split('-');
+  if (parts.length !== 2) return ym;
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+  const m = parseInt(parts[1], 10) - 1;
+  const y = parseInt(parts[0], 10);
+  if (m < 0 || m > 11 || isNaN(y)) return ym;
+  return `${monthNames[m]} ${y}`;
+}
+
 export function monthYearLabel(ym: string): string {
   const parts = ym.split('-');
   if (parts.length !== 2) return ym;

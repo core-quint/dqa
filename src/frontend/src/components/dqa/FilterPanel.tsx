@@ -3,6 +3,7 @@ import { ChevronDown, Filter, Plus, X } from "lucide-react";
 import type { FilterState, ParsedCSV } from "../../lib/dqa/types";
 import type { UwinParsedCSV } from "../../lib/uwin/types";
 import { BASE_VAX, ADD_VAX, PAIR_DEFAULTS } from "../../lib/dqa/constants";
+import { monthLongLabel } from "../../lib/dqa/parseUtils";
 
 interface Props {
   csv: ParsedCSV;
@@ -179,6 +180,46 @@ function PairRow({
   );
 }
 
+/**
+ * Blocks present in the dataset, optionally restricted to a district selection.
+ * Module-level so it can be used both while rendering and inside effects without
+ * becoming an unstable dependency.
+ */
+function blocksForDistricts(csv: ParsedCSV, restrictTo: string[] | null): string[] {
+  return Object.keys(
+    Object.values(csv.facilityData).reduce<Record<string, true>>((acc, fd) => {
+      const district = (fd as { district?: string }).district;
+      if (fd.block && (restrictTo === null || !district || restrictTo.includes(district))) {
+        acc[fd.block] = true;
+      }
+      return acc;
+    }, {}),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Applied filters use `[]` to mean "everything". The draft the panel edits instead keeps
+ * every selection explicit, so "Select All" behaves like a real checkbox that can be
+ * unchecked (`[]` then genuinely means "nothing selected"). handleSubmit converts back.
+ */
+export function normalizeDraft(
+  csv: ParsedCSV,
+  applied: FilterState,
+  districtKeys: string[],
+  isStateUwin: boolean,
+): FilterState {
+  const monthKeys = Object.keys(csv.allMonths).sort();
+  const districts = applied.districts?.length ? applied.districts : districtKeys;
+  return {
+    ...applied,
+    months: applied.months.length ? applied.months : monthKeys,
+    blocks: applied.blocks.length
+      ? applied.blocks
+      : blocksForDistricts(csv, isStateUwin ? districts : null),
+    ...(districtKeys.length ? { districts } : {}),
+  };
+}
+
 function AnalysisModeToggle({
   value,
   onChange,
@@ -226,25 +267,23 @@ export function FilterPanel({
   onApply,
   layout = "inline",
 }: Props) {
-  const [f, setF] = useState<FilterState>({ ...initFilters });
   const portal = (csv as unknown as { portal?: string }).portal ?? "HMIS";
   const isUwin = portal === "UWIN" || portal === "UWIN_STATE";
   const isStateUwin = portal === "UWIN_STATE";
   const uwinCsv = isUwin ? (csv as unknown as UwinParsedCSV) : null;
   const showAnalysisModeToggle = isUwin && uwinCsv?.idxSessionSite !== null;
+  const allDistricts = uwinCsv?.districts ?? [];
+
+  const [f, setF] = useState<FilterState>(() =>
+    normalizeDraft(csv, initFilters, allDistricts, isStateUwin),
+  );
 
   useEffect(() => {
-    setF({ ...initFilters });
-  }, [initFilters]);
+    setF(normalizeDraft(csv, initFilters, uwinCsv?.districts ?? [], isStateUwin));
+  }, [initFilters, csv, uwinCsv, isStateUwin]);
 
-  const allDistricts = uwinCsv?.districts ?? [];
-  const selectedDistricts = f.districts?.length ? f.districts : allDistricts;
-  const allBlocks = Object.keys(
-    Object.values(csv.facilityData).reduce<Record<string, true>>((acc, fd) => {
-      if (fd.block && (!isStateUwin || !fd.district || selectedDistricts.includes(fd.district))) acc[fd.block] = true;
-      return acc;
-    }, {}),
-  ).sort((a, b) => a.localeCompare(b));
+  const selectedDistricts = f.districts ?? [];
+  const allBlocks = blocksForDistricts(csv, isStateUwin ? selectedDistricts : null);
 
   const allMonths = Object.keys(csv.allMonths).sort();
   const singleMonth = allMonths.length === 1;
@@ -254,13 +293,31 @@ export function FilterPanel({
 
   const setAll = (keys: string[], on: boolean): string[] => (on ? [...keys] : []);
 
-  const isAllBlocks = f.blocks.length === 0 || f.blocks.length === allBlocks.length;
-  const isAllDistricts = !f.districts?.length || f.districts.length === allDistricts.length;
-  const isAllMonths = f.months.length === 0 || f.months.length === allMonths.length;
+  const isAllBlocks = allBlocks.length > 0 && f.blocks.length >= allBlocks.length;
+  const isAllDistricts =
+    allDistricts.length > 0 && (f.districts?.length ?? 0) >= allDistricts.length;
+  const isAllMonths = allMonths.length > 0 && f.months.length >= allMonths.length;
+
+  // Nothing selected in a mandatory dimension would mean "no data at all", so
+  // block Apply instead of silently falling back to everything.
+  const missingSelections: string[] = [];
+  if (!singleMonth && f.months.length === 0) missingSelections.push("month");
+  if (allBlocks.length > 0 && f.blocks.length === 0) missingSelections.push("block");
+  if (isStateUwin && allDistricts.length > 0 && selectedDistricts.length === 0) {
+    missingSelections.push("district");
+  }
+  const canApply = missingSelections.length === 0;
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    onApply({ ...f });
+    if (!canApply) return;
+    const next: FilterState = {
+      ...f,
+      months: isAllMonths ? [] : f.months,
+      blocks: isAllBlocks ? [] : f.blocks,
+    };
+    if (f.districts) next.districts = isAllDistricts ? [] : f.districts;
+    onApply(next);
   };
 
   const isAcc = activeGroup === "accuracy";
@@ -295,19 +352,29 @@ export function FilterPanel({
             <CheckAll
               label="Select All"
               checked={isAllDistricts}
-              onChange={(value) => setF((prev) => ({ ...prev, districts: setAll(allDistricts, value), blocks: [] }))}
+              onChange={(value) => {
+                const districts = setAll(allDistricts, value);
+                setF((prev) => ({
+                  ...prev,
+                  districts,
+                  blocks: blocksForDistricts(csv, districts),
+                }));
+              }}
             />
             <div className="mt-2 max-h-56 space-y-1 overflow-y-auto border-t border-slate-200/80 pt-2 thin-scroll">
               {allDistricts.map((district) => (
                 <CheckItem
                   key={district}
                   label={district}
-                  checked={!f.districts?.length || f.districts.includes(district)}
-                  onChange={(value) => setF((prev) => ({
-                    ...prev,
-                    blocks: [],
-                    districts: toggleSet(prev.districts?.length ? prev.districts : allDistricts, district, value),
-                  }))}
+                  checked={selectedDistricts.includes(district)}
+                  onChange={(value) => setF((prev) => {
+                    const districts = toggleSet(prev.districts ?? [], district, value);
+                    return {
+                      ...prev,
+                      districts,
+                      blocks: blocksForDistricts(csv, districts),
+                    };
+                  })}
                 />
               ))}
             </div>
@@ -327,15 +394,11 @@ export function FilterPanel({
               <CheckItem
                 key={block}
                 label={block || "Unknown block"}
-                checked={f.blocks.length === 0 || f.blocks.includes(block)}
+                checked={f.blocks.includes(block)}
                 onChange={(value) =>
                   setF((prev) => ({
                     ...prev,
-                    blocks: toggleSet(
-                      prev.blocks.length === 0 ? allBlocks : prev.blocks,
-                      block,
-                      value,
-                    ),
+                    blocks: toggleSet(prev.blocks, block, value),
                   }))
                 }
               />
@@ -356,16 +419,12 @@ export function FilterPanel({
               {allMonths.map((monthKey) => (
                 <CheckItem
                   key={monthKey}
-                  label={`${csv.allMonths[monthKey] ?? monthKey} (${monthKey})`}
-                  checked={f.months.length === 0 || f.months.includes(monthKey)}
+                  label={monthLongLabel(monthKey)}
+                  checked={f.months.includes(monthKey)}
                   onChange={(value) =>
                     setF((prev) => ({
                       ...prev,
-                      months: toggleSet(
-                        prev.months.length === 0 ? allMonths : prev.months,
-                        monthKey,
-                        value,
-                      ),
+                      months: toggleSet(prev.months, monthKey, value),
                     }))
                   }
                 />
@@ -649,16 +708,25 @@ export function FilterPanel({
             : "mt-4 flex justify-end"
         }
       >
-        <button
-          type="submit"
-          className={[
-            "inline-flex items-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] py-3 text-sm font-bold text-white shadow-[0_18px_36px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5",
-            isRail ? "w-full justify-center px-4" : "px-5",
-          ].join(" ")}
-        >
-          <Filter className="h-4 w-4" />
-          Apply filters
-        </button>
+        <div className={isRail ? "space-y-2" : "flex flex-col items-end gap-2"}>
+          {!canApply ? (
+            <p className="text-xs font-semibold text-amber-700">
+              Select at least one {missingSelections.join(" and one ")} to apply filters.
+            </p>
+          ) : null}
+          <button
+            type="submit"
+            disabled={!canApply}
+            className={[
+              "inline-flex items-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] py-3 text-sm font-bold text-white shadow-[0_18px_36px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5",
+              "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0",
+              isRail ? "w-full justify-center px-4" : "px-5",
+            ].join(" ")}
+          >
+            <Filter className="h-4 w-4" />
+            Apply filters
+          </button>
+        </div>
       </div>
     </form>
   );
