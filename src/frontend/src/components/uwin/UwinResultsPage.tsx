@@ -253,12 +253,21 @@ export function UwinResultsPage({
     kpis && activeGroup
       ? kpis.cards.filter((card) => card.group === activeGroup)
       : [];
-  const totalFacilities = kpis
+  const totalUnits = kpis
     ? Math.max(1, Object.keys(kpis.filteredFacilities).length)
     : 0;
-  const isSessionSiteWise = (kpis?.analysisMode ?? filters.analysisMode) === "sessionsite";
-  const unitPlural = isSessionSiteWise ? "Session sites" : "Facilities";
-  const unitPluralLower = isSessionSiteWise ? "session sites" : "facilities";
+  const analysisMode = kpis?.analysisMode ?? filters.analysisMode;
+  const unitPlural = analysisMode === "sessionsite"
+    ? "Session sites"
+    : analysisMode === "subcenter"
+      ? "Sub Centers"
+      : "Facilities";
+  const unitPluralLower = unitPlural.toLowerCase();
+  const unitCsvCount = analysisMode === "sessionsite"
+    ? csv.globalSessionSiteCount
+    : analysisMode === "subcenter"
+      ? csv.globalSubCenterCount
+      : csv.globalFacilityCount;
 
   const contextStats = [
     { label: "Program", value: isStateUwin ? "U-WIN State" : "U-WIN" },
@@ -268,7 +277,7 @@ export function UwinResultsPage({
     { label: "Blocks", value: String(csv.globalBlockCount) },
     {
       label: unitPlural,
-      value: String(isSessionSiteWise ? csv.globalSessionSiteCount : csv.globalFacilityCount),
+      value: String(unitCsvCount),
     },
   ];
 
@@ -280,6 +289,7 @@ export function UwinResultsPage({
           csv={csvForFilter}
           onClose={() => setShowOverall(false)}
           groups={["availability", "accuracy", "consistency"]}
+          unitLabel={unitPlural}
         />
       ) : null}
 
@@ -455,7 +465,7 @@ export function UwinResultsPage({
                 <IndicatorSummaryPanel
                   meta={meta}
                   monthsCount={Object.keys(csv.allMonths).length}
-                  totalUnits={totalFacilities}
+                  totalUnits={totalUnits}
                   unitLabel={unitPluralLower}
                   affectedUnique={
                     new Set(

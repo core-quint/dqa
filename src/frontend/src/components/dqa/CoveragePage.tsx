@@ -383,6 +383,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       if (
         visibleDistrictValue !== "ALL" &&
         "district_name" in f.properties &&
+        typeof f.properties.district_name === "string" &&
         normalizeGeoName(f.properties.district_name) !== normalizeGeoName(visibleDistrictValue)
       )
         return false;

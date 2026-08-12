@@ -369,6 +369,10 @@ export function processUwinRawRows(rawRows: string[][], fileName: string): UwinP
     findColIndexContainsAny(header, ['session held', 'sessions held']);
   const benIdx = findBeneficiaryColumnIndices(header);
   const tdIdx = findTdColumnIndices(header);
+  const idxSubCenter = findColIndexContainsAny(header, [
+    'sub center name', 'sub centre name', 'subcenter name', 'subcentre name',
+    'sub center', 'sub centre', 'subcenter', 'subcentre',
+  ]);
   const idxSessionSite = findColIndexContainsAny(header, ['session site name', 'session site']);
 
   // Build indicator map
@@ -408,6 +412,8 @@ export function processUwinRawRows(rawRows: string[][], fileName: string): UwinP
   for (const r of rows) {
     const block = r[idxBlock]?.trim() ?? '';
     const fac = r[idxFac]?.trim() ?? '';
+    const subcenterRaw = idxSubCenter !== null ? (r[idxSubCenter]?.trim() ?? '') : '';
+    const subcenter = idxSubCenter !== null ? (subcenterRaw || 'Unknown SC') : '';
     const sess = idxSessionSite !== null ? (r[idxSessionSite]?.trim() ?? '') : '';
     const monRaw = r[idxMonth] ?? '';
     if (!block && !fac) continue;
@@ -437,11 +443,16 @@ export function processUwinRawRows(rawRows: string[][], fileName: string): UwinP
     }
 
     allMonthsMap[mk] = mLabel;
-    // Finest-grain key: Block || Facility || Session Site. computeUwinKpis aggregates
-    // this back up to Block||Facility for facility-wise analysis mode at query time.
-    const facKey = `${district}||${block}||${fac}||${sess}`;
+    // Preserve every hierarchy level at the finest grain. In real exports the same
+    // facility/session-site name can occur under more than one sub-center.
+    const facKey = `${district}||${block}||${fac}||${subcenter}||${sess}`;
     if (!facilityData[facKey]) {
-      facilityData[facKey] = { district, block, facility: fac, sessionsite: sess, ownership: '', ru: '', months: {} };
+      facilityData[facKey] = {
+        district, block, facility: fac,
+        ...(idxSubCenter !== null ? { subcenter } : {}),
+        sessionsite: sess,
+        ownership: '', ru: '', months: {},
+      };
     }
     const fd = facilityData[facKey];
     if (own) { if (!fd.ownership) fd.ownership = own; else if (fd.ownership !== own) fd.ownership = 'Mixed'; }
@@ -462,14 +473,24 @@ export function processUwinRawRows(rawRows: string[][], fileName: string): UwinP
 
   const globalFacilitySet = new Map<string, { ownership: string; ru: string }>();
   const globalBlockSet = new Set<string>();
+  const globalSubCenterSet = new Set<string>();
   const globalSessionSiteSet = new Set<string>();
   for (const [facKey, fd] of Object.entries(facilityData)) {
     const fk = normalizeFacilityKey(`${fd.district ?? ''}||${fd.block}||${fd.facility}`);
     if (fk && !globalFacilitySet.has(fk)) globalFacilitySet.set(fk, { ownership: fd.ownership, ru: fd.ru });
     if (fd.block.trim()) globalBlockSet.add(`${fd.district ?? ''}||${fd.block.trim()}`);
+    if (idxSubCenter !== null && fd.subcenter?.trim()) {
+      globalSubCenterSet.add(normalizeFacilityKey(
+        `${fd.district ?? ''}||${fd.block}||${fd.facility}||${fd.subcenter}`
+      ));
+    }
     // Session-site denominator excludes rows with a blank Session Site Name (matches
     // a pivot distinct-count of the Session Site Name column).
-    if (fd.sessionsite?.trim()) globalSessionSiteSet.add(normalizeFacilityKey(facKey));
+    if (fd.sessionsite?.trim()) {
+      globalSessionSiteSet.add(normalizeFacilityKey(
+        `${fd.district ?? ''}||${fd.block}||${fd.facility}||${fd.sessionsite}`
+      ));
+    }
   }
 
   let publicCount = 0, privateCount = 0, ruralCount = 0, urbanCount = 0;
@@ -489,11 +510,12 @@ export function processUwinRawRows(rawRows: string[][], fileName: string): UwinP
     idxBenChild: benIdx.child, idxBenAdol: benIdx.adol,
     idxBenTd1: tdIdx.td1, idxBenTd2: tdIdx.td2, idxBenTdB: tdIdx.tdB,
     idxBenTd10: tdIdx.td10, idxBenTd16: tdIdx.td16,
-    idxSessionSite,
+    idxSubCenter, idxSessionSite,
     targetIndicatorIndices,
     indicatorMap, allIndicatorShorts, facilityData,
     allMonths: allMonthsMap,
     globalFacilityCount: globalFacilitySet.size,
+    globalSubCenterCount: globalSubCenterSet.size,
     globalSessionSiteCount: globalSessionSiteSet.size,
     globalBlockCount: globalBlockSet.size,
     publicCount, privateCount, ruralCount, urbanCount,

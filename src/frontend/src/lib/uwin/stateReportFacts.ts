@@ -51,10 +51,12 @@ export interface UwinStateReportFactPack {
     state: string;
     periodStart: string;
     periodEnd: string;
-    analysisMode: "facility" | "sessionsite";
+    analysisMode: "facility" | "subcenter" | "sessionsite";
     districtCount: number;
     blockCount: number;
     facilityCount: number;
+    /** Absent on fact packs created before sub-center analysis was introduced. */
+    subCenterCount?: number;
     sessionSiteCount: number;
     analysedUnits: number;
   };
@@ -171,7 +173,7 @@ export function buildUwinStateFactPack(
   const actionByIndicator = new Map<string, ReportActionRule>();
   const findings: ReportFinding[] = reportCards
     .filter((card) => card.stat.total > 0)
-    .map((card) => {
+    .map((card): ReportFinding => {
       const affectedPercent = round((card.stat.total / den) * 100);
       const action = actionForCard(card);
       actionByIndicator.set(card.id, action);
@@ -254,6 +256,7 @@ export function buildUwinStateFactPack(
       districtCount: districts.length,
       blockCount: kpis.globalBlockCount,
       facilityCount: csv.globalFacilityCount,
+      subCenterCount: csv.globalSubCenterCount ?? 0,
       sessionSiteCount: csv.globalSessionSiteCount,
       analysedUnits: kpis.globalDen,
     },

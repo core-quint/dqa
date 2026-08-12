@@ -88,6 +88,7 @@ export function T2Table({ web }: { web: T2Web }) {
   const rowList = Object.values(rows);
   const showDistrict = rowList.some((row) => Boolean(row.district));
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
+  const showSubCenter = rowList[0]?.subcenter !== undefined;
   const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
   return (
@@ -97,6 +98,9 @@ export function T2Table({ web }: { web: T2Web }) {
           {showDistrict ? <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">District</th> : null}
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
+          {showSubCenter ? (
+            <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Sub Center Name</th>
+          ) : null}
           {showSessionSite ? (
             <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Session Site Name</th>
           ) : null}
@@ -126,6 +130,7 @@ export function T2Table({ web }: { web: T2Web }) {
             {showDistrict ? <td className="border border-border px-2 py-1">{row.district}</td> : null}
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
+            {showSubCenter ? <td className="border border-border px-2 py-1">{row.subcenter}</td> : null}
             {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
             {vaccines.map((vx) =>
               months.map((mk) => {
@@ -156,6 +161,7 @@ export function T3Table({ web }: { web: T3Web }) {
   const rowList = Object.values(rows);
   const showDistrict = rowList.some((row) => Boolean(row.district));
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
+  const showSubCenter = rowList[0]?.subcenter !== undefined;
   const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
   return (
@@ -165,6 +171,9 @@ export function T3Table({ web }: { web: T3Web }) {
           {showDistrict ? <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">District</th> : null}
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
+          {showSubCenter ? (
+            <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Sub Center Name</th>
+          ) : null}
           {showSessionSite ? (
             <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Session Site Name</th>
           ) : null}
@@ -196,6 +205,7 @@ export function T3Table({ web }: { web: T3Web }) {
             {showDistrict ? <td className="border border-border px-2 py-1">{row.district}</td> : null}
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
+            {showSubCenter ? <td className="border border-border px-2 py-1">{row.subcenter}</td> : null}
             {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
             {vaccines.map((vx) =>
               pairs.map((p) => {
@@ -243,6 +253,7 @@ export function DropoutTable({ web }: { web: DropoutWeb }) {
   const rowList = Object.values(rows);
   const showDistrict = rowList.some((row) => Boolean(row.district));
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
+  const showSubCenter = rowList[0]?.subcenter !== undefined;
   const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
   return (
@@ -252,6 +263,9 @@ export function DropoutTable({ web }: { web: DropoutWeb }) {
           {showDistrict ? <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">District</th> : null}
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
+          {showSubCenter ? (
+            <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Sub Center Name</th>
+          ) : null}
           {showSessionSite ? (
             <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Session Site Name</th>
           ) : null}
@@ -281,6 +295,7 @@ export function DropoutTable({ web }: { web: DropoutWeb }) {
             {showDistrict ? <td className="border border-border px-2 py-1">{row.district}</td> : null}
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
+            {showSubCenter ? <td className="border border-border px-2 py-1">{row.subcenter}</td> : null}
             {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
             {months.map((mk) => {
               const c = row.cells[mk] ?? { from: null, to: null, pct: null };
@@ -311,6 +326,7 @@ export function CoAdminTable({ web }: { web: CoAdminWeb }) {
   const rowList = Object.values(rows);
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
   const showDistrict = rowList.some((row) => Boolean(row.district));
+  const showSubCenter = rowList[0]?.subcenter !== undefined;
   const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
   return (
@@ -320,6 +336,9 @@ export function CoAdminTable({ web }: { web: CoAdminWeb }) {
           {showDistrict ? <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">District</th> : null}
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
+          {showSubCenter ? (
+            <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Sub Center Name</th>
+          ) : null}
           {showSessionSite ? (
             <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Session Site Name</th>
           ) : null}
@@ -351,6 +370,7 @@ export function CoAdminTable({ web }: { web: CoAdminWeb }) {
               {showDistrict ? <td className="border border-border px-2 py-1">{row.district}</td> : null}
               <td className="border border-border px-2 py-1">{row.block}</td>
               <td className="border border-border px-2 py-1">{row.facility}</td>
+              {showSubCenter ? <td className="border border-border px-2 py-1">{row.subcenter}</td> : null}
               {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
               {months.map((mk) => {
                 const redMonth = coadminRedCells(row.vals[mk] ?? {});
@@ -394,9 +414,10 @@ export function CoAdminTable({ web }: { web: CoAdminWeb }) {
 interface SummaryTableProps {
   rows: SummaryRow[];
   label?: string;
+  unitLabel?: string;
 }
 
-export function SummaryTable({ rows, label }: SummaryTableProps) {
+export function SummaryTable({ rows, label, unitLabel = 'Facilities' }: SummaryTableProps) {
   if (!rows.length) return null;
   return (
     <div className="mb-4">
@@ -405,7 +426,7 @@ export function SummaryTable({ rows, label }: SummaryTableProps) {
         <thead>
           <tr>
             <th className="border border-border px-2 py-1.5 bg-accent/60 font-bold text-left">Indicator</th>
-            <th className="border border-border px-2 py-1.5 bg-accent/60 font-bold text-right">Facilities</th>
+            <th className="border border-border px-2 py-1.5 bg-accent/60 font-bold text-right">{unitLabel}</th>
             <th className="border border-border px-2 py-1.5 bg-accent/60 font-bold text-right">%</th>
           </tr>
         </thead>

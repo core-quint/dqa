@@ -37,6 +37,12 @@ function scoreColor(score: number): RGB {
   return C.red;
 }
 
+function analysisUnitPlural(mode: UwinStateReportRecord["analysisMode"]): string {
+  if (mode === "sessionsite") return "session sites";
+  if (mode === "subcenter") return "sub centers";
+  return "facilities";
+}
+
 function addPageFrame(doc: jsPDF, report: UwinStateReportRecord, page: number) {
   doc.setFillColor(...C.navy);
   doc.rect(0, 0, PAGE_W, 34, "F");
@@ -77,6 +83,7 @@ function wrapped(doc: jsPDF, value: string, x: number, y: number, width: number,
 export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
   const facts = report.factPack;
   if (!facts) throw new Error("The saved report has no evidence pack");
+  const analysisUnits = analysisUnitPlural(facts.scope.analysisMode);
   const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "portrait" });
 
   // Page 1 — executive status.
@@ -115,7 +122,7 @@ export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
     doc,
     `The statewide DQA score is ${facts.scores.overall.toFixed(1)}% (${facts.scores.status.replace(/_/g, " ")}). ` +
       `${urgent} of ${facts.scope.districtCount} analysed districts are in critical or high-priority bands and should receive focused data validation follow-up. ` +
-      `The assessment covers ${facts.scope.analysedUnits.toLocaleString("en-IN")} ${facts.scope.analysisMode === "sessionsite" ? "session sites" : "facilities"} across ${facts.scope.blockCount.toLocaleString("en-IN")} blocks.`,
+      `The assessment covers ${facts.scope.analysedUnits.toLocaleString("en-IN")} ${analysisUnits} across ${facts.scope.blockCount.toLocaleString("en-IN")} blocks.`,
     MARGIN, 238, WIDTH, 9, C.navy,
   );
   if (report.aiNarrative?.validated && report.aiNarrative.executiveSummary[0]) {
@@ -158,7 +165,7 @@ export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
     doc.text(`${index + 1}. ${safe(finding.title)}`, MARGIN + 8, y + 2);
     doc.setTextColor(...C.slate);
     doc.setFont("helvetica", "normal");
-    doc.text(`${finding.affectedUnits.toLocaleString("en-IN")} of ${finding.denominator.toLocaleString("en-IN")} units (${finding.affectedPercent.toFixed(1)}%) | ${finding.evidenceId}`, PAGE_W - MARGIN - 8, y + 2, { align: "right" });
+    doc.text(`${finding.affectedUnits.toLocaleString("en-IN")} of ${finding.denominator.toLocaleString("en-IN")} ${analysisUnits} (${finding.affectedPercent.toFixed(1)}%) | ${finding.evidenceId}`, PAGE_W - MARGIN - 8, y + 2, { align: "right" });
     y += 41;
   });
 
@@ -194,7 +201,7 @@ export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
   autoTable(doc, {
     startY: 558,
     margin: { left: MARGIN, right: MARGIN },
-    head: [["Evidence", "DQA finding", "Area", "Affected", "Severity"]],
+    head: [["Evidence", "DQA finding", "Area", `Affected ${analysisUnits}`, "Severity"]],
     body: facts.findings.slice(0, 7).map((finding) => [
       finding.evidenceId,
       safe(finding.title),
@@ -264,9 +271,10 @@ export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
 export function downloadUwinStateDistrictAnnex(report: UwinStateReportRecord) {
   const facts = report.factPack;
   if (!facts) throw new Error("The saved report has no evidence pack");
+  const analysedUnitsColumn = `Analysed ${analysisUnitPlural(facts.scope.analysisMode)}`;
   const rows = facts.districts.map((district) => ({
     District: district.district,
-    "Analysed units": district.analysedUnits,
+    [analysedUnitsColumn]: district.analysedUnits,
     "Overall score": district.scores.overall,
     "Availability score": district.scores.availability,
     "Accuracy score": district.scores.accuracy,

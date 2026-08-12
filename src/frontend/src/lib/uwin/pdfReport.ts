@@ -57,14 +57,38 @@ const P = {
 
 const UWIN_GROUPS = ["availability", "accuracy", "consistency"];
 
-// Report copy says "Session Site(s)" in session-site-wise mode, "Facility/Facilities"
-// in facility-wise mode (mirrors the on-screen results page).
-function unitLabels(kpis: UwinComputedKpis): { singular: string; plural: string; lower: string } {
-  const isSessionSiteWise = kpis.analysisMode === "sessionsite";
+// Keep report terminology aligned with the selected analysis level.
+function unitLabels(kpis: UwinComputedKpis): {
+  singular: string;
+  plural: string;
+  lower: string;
+  legendSingular: string;
+  legendPlural: string;
+} {
+  if (kpis.analysisMode === "sessionsite") {
+    return {
+      singular: "Session Site",
+      plural: "Session Sites",
+      lower: "session sites",
+      legendSingular: "site",
+      legendPlural: "sites",
+    };
+  }
+  if (kpis.analysisMode === "subcenter") {
+    return {
+      singular: "Sub Center",
+      plural: "Sub Centers",
+      lower: "sub centers",
+      legendSingular: "SC",
+      legendPlural: "SCs",
+    };
+  }
   return {
-    singular: isSessionSiteWise ? "Session Site" : "Facility",
-    plural: isSessionSiteWise ? "Session Sites" : "Facilities",
-    lower: isSessionSiteWise ? "session sites" : "facilities",
+    singular: "Facility",
+    plural: "Facilities",
+    lower: "facilities",
+    legendSingular: "fac.",
+    legendPlural: "fac.",
   };
 }
 
@@ -93,11 +117,15 @@ const GROUP_LABEL: Record<string, string> = {
   accuracy:     "Accuracy",
   consistency:  "Consistency",
 };
-const GROUP_DESC: Record<string, string> = {
-  availability: "Measures whether session sites submitted data for each reporting period and whether all indicators were filled.",
-  accuracy:     "Identifies session sites with statistical outliers, consecutive identical values, or abnormal beneficiary-per-session averages.",
-  consistency:  "Checks internal logical relationships between indicators and co-administration ratios.",
-};
+function groupDescription(group: string, kpis: UwinComputedKpis): string {
+  const units = unitLabels(kpis).lower;
+  const descriptions: Record<string, string> = {
+    availability: `Measures whether ${units} submitted data for each reporting period and whether all indicators were filled.`,
+    accuracy:     `Identifies ${units} with statistical outliers, consecutive identical values, or abnormal beneficiary-per-session averages.`,
+    consistency:  "Checks internal logical relationships between indicators and co-administration ratios.",
+  };
+  return descriptions[group] ?? "";
+}
 
 function sanitize(s: string): string {
   return s
@@ -408,7 +436,13 @@ function buildSummary(
     [csv.portal === "UWIN_STATE" ? "Districts" : "District", csv.portal === "UWIN_STATE" ? String(csv.globalDistrictCount) : (csv.distName || "—")],
     ["Analysis Period",                period],
     ["Months Analyzed",                String(kpis.selMonths.length)],
-    [`Total ${unit.plural} (CSV)`,      String(kpis.analysisMode === "sessionsite" ? csv.globalSessionSiteCount : csv.globalFacilityCount)],
+    [`Total ${unit.plural} (CSV)`,      String(
+      kpis.analysisMode === "sessionsite"
+        ? csv.globalSessionSiteCount
+        : kpis.analysisMode === "subcenter"
+          ? (csv.globalSubCenterCount ?? 0)
+          : csv.globalFacilityCount,
+    )],
     [`${unit.plural} in Analysis`,      String(totalFac)],
     ["Blocks",                         String(csv.globalBlockCount)],
     ["Public / Private",               `${csv.publicCount} / ${csv.privateCount}`],
@@ -528,6 +562,7 @@ function drawMapSection(
   mapImg: string | null,
   maxCount: number,
   groupLabel: string,
+  unit: ReturnType<typeof unitLabels>,
 ): number {
   const mapH = 200;
   const legH = 32;
@@ -566,7 +601,9 @@ function drawMapSection(
       doc.roundedRect(lx, y, 9, 9, 1.5, 1.5, "S");
       textC(doc, P.ink500);
       font(doc, "normal", 5.5);
-      const shortLbl = item.label.replace(" facilities", " fac.").replace(" facility", " fac.");
+      const shortLbl = item.label
+        .replace(" facilities", ` ${unit.legendPlural}`)
+        .replace(" facility", ` ${unit.legendSingular}`);
       doc.text(shortLbl, lx + 11, y + 7);
     });
     y += legH;
@@ -632,7 +669,7 @@ function buildComponentSection(
   doc.roundedRect(ML, y, CW, 24, 3, 3, "F");
   textC(doc, P.ink500);
   font(doc, "normal", 7);
-  doc.text(GROUP_DESC[group] ?? "", ML + 10, y + 9, { maxWidth: CW - 20 });
+  doc.text(groupDescription(group, kpis), ML + 10, y + 9, { maxWidth: CW - 20 });
   y += 32;
 
   const cards = kpis.cards.filter(c => c.group === group);
@@ -661,7 +698,7 @@ function buildComponentSection(
     startY: y,
     margin: { left: ML, right: MR },
     tableWidth: CW,
-    head: [["Indicator", "Flagged", "Any Mth", "All Mths", "% of Sites", "Severity"]],
+    head: [["Indicator", "Flagged", "Any Mth", "All Mths", `% of ${unit.plural}`, "Severity"]],
     body: cards.map(c => [
       sanitize(c.name),
       String(c.stat.total),
@@ -704,7 +741,11 @@ function buildComponentSection(
       if (!fd) continue;
       // One indicator per line — guarantees wrapping regardless of jspdf-autotable version
       const flaggedIndicators = cards.filter(c => c.stat.facilityKeys.has(fk)).map(c => sanitize(c.name));
-      const label = fd.sessionsite ? `${fd.facility} — ${fd.sessionsite}` : fd.facility;
+      const label = kpis.analysisMode === "sessionsite"
+        ? (fd.sessionsite ? `${fd.facility} — ${fd.sessionsite}` : fd.facility)
+        : kpis.analysisMode === "subcenter"
+          ? (fd.subcenter ? `${fd.facility} — ${fd.subcenter}` : fd.facility)
+          : fd.facility;
       facRows.push({ block: fd.block, facility: label, indicators: flaggedIndicators.join("\n"), count: flaggedIndicators.length });
     }
     facRows.sort((a, b) => b.count - a.count);
@@ -757,7 +798,7 @@ function buildComponentSection(
   }
   const maxCount = blockFacMap.size > 0 ? Math.max(...[...blockFacMap.values()].map(s => s.size)) : 1;
 
-  drawMapSection(doc, y, mapImg, maxCount, GROUP_LABEL[group] ?? group);
+  drawMapSection(doc, y, mapImg, maxCount, GROUP_LABEL[group] ?? group, unit);
 }
 
 // ─── Block summary ────────────────────────────────────────────────────────────

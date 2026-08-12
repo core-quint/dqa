@@ -54,7 +54,7 @@ export function downloadHighlightedXLS(
 ): void {
   const {
     header, rows,
-    idxBlock, idxFac, idxMonth, idxSessionSite, idxDist,
+    idxBlock, idxFac, idxMonth, idxSubCenter, idxSessionSite, idxDist,
     idxSessPlanned, idxSessHeld,
     idxBenPW, idxBenInf, idxBenChild, idxBenAdol,
     idxBenTd1, idxBenTd2, idxBenTdB, idxBenTd10, idxBenTd16,
@@ -64,7 +64,6 @@ export function downloadHighlightedXLS(
 
   const pinkFacKeys = new Set(kpis.pinkFacSets[kpiKey] ?? []);
   const selMonthsSet = new Set(kpis.selMonths);
-  const sessionSiteWise = kpis.analysisMode === 'sessionsite';
 
   const fullRows: string[][] = [header, ...rows];
   const styleMap: Record<number, Record<number, string>> = {};
@@ -79,14 +78,18 @@ export function downloadHighlightedXLS(
     const block = r[idxBlock]?.trim() ?? '';
     const fac = r[idxFac]?.trim() ?? '';
     const district = idxDist !== null ? (r[idxDist]?.trim() ?? '') : '';
+    const subcenter = idxSubCenter !== null
+      ? (r[idxSubCenter]?.trim() || 'Unknown SC')
+      : '';
+    const sessionSite = idxSessionSite !== null ? (r[idxSessionSite]?.trim() ?? '') : '';
     const monRaw = r[idxMonth] ?? '';
     const mKey = monthKeyFn(monRaw);
-    // Must match the granularity kpis.pinkFacSets was built at: session-site-wise
-    // keys include the raw row's Session Site Name, facility-wise keys don't (so
-    // every raw row for that facility is highlighted together).
-    const rowKey = sessionSiteWise
-      ? `${district}||${block}||${fac}||${idxSessionSite !== null ? (r[idxSessionSite]?.trim() ?? '') : ''}`
-      : `${district}||${block}||${fac}`;
+    // Match the identity used by computeUwinKpis at each analysis grain.
+    const rowKey = [
+      district, block, fac,
+      ...(kpis.analysisMode === 'subcenter' ? [subcenter] : []),
+      ...(kpis.analysisMode === 'sessionsite' ? [sessionSite] : []),
+    ].join('||');
     const inSet = pinkFacKeys.has(rowKey);
 
     let monthOk = true;

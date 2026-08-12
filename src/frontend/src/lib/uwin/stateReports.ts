@@ -19,7 +19,7 @@ export interface UwinStateReportRecord {
   version: number;
   reportNumber: string;
   status: UwinStateReportStatus;
-  analysisMode: "facility" | "sessionsite";
+  analysisMode: "facility" | "subcenter" | "sessionsite";
   narrativeMode: "DETERMINISTIC" | "AI_ASSISTED";
   rulesVersion: string;
   templateVersion: string;
@@ -33,6 +33,8 @@ export interface UwinStateReportRecord {
     districts: number;
     blocks: number;
     facilities: number;
+    /** Absent on reports saved before sub-center analysis was introduced. */
+    subCenters?: number;
     sessionSites: number;
     analysedUnits: number;
   };
@@ -90,7 +92,13 @@ export function buildUwinStateReportRequest(
     rowCount: csv.rows.length,
     header: csv.header,
     months: Object.keys(csv.allMonths).sort(),
-    counts: [csv.globalDistrictCount, csv.globalBlockCount, csv.globalFacilityCount, csv.globalSessionSiteCount],
+    counts: [
+      csv.globalDistrictCount,
+      csv.globalBlockCount,
+      csv.globalFacilityCount,
+      csv.globalSubCenterCount ?? 0,
+      csv.globalSessionSiteCount,
+    ],
     cards: kpis.cards
       .map((card) => [card.id, card.group, card.stat.total, card.stat.any, card.stat.all])
       .sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
@@ -121,6 +129,7 @@ export function buildUwinStateReportRequest(
       districts: new Set(Object.values(kpis.filteredFacilities).map((item) => item.district).filter(Boolean)).size,
       blocks: kpis.globalBlockCount,
       facilities: csv.globalFacilityCount,
+      subCenters: csv.globalSubCenterCount ?? 0,
       sessionSites: csv.globalSessionSiteCount,
       analysedUnits: kpis.globalDen,
     },

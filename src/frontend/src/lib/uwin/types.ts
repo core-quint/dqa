@@ -61,6 +61,8 @@ export interface UwinParsedCSV {
   idxBenTdB: number | null;
   idxBenTd10: number | null;
   idxBenTd16: number | null;
+  // Sub Center Name column (drives sub-center-wise analysis mode)
+  idxSubCenter: number | null;
   // Session Site Name column (drives session-site-wise analysis mode)
   idxSessionSite: number | null;
   // Column indices matching a known vaccine-dose "target" indicator (BCG, Penta1-3,
@@ -73,6 +75,7 @@ export interface UwinParsedCSV {
   facilityData: Record<string, FacilityRecord>;
   allMonths: Record<string, string>;
   globalFacilityCount: number;
+  globalSubCenterCount: number;
   globalSessionSiteCount: number;
   globalBlockCount: number;
   publicCount: number;
@@ -100,6 +103,7 @@ export interface T8Row {
   district?: string;
   block: string;
   facility: string;
+  subcenter?: string;
   sessionsite?: string;
   months: Record<string, T8MonthData>;
   allMonths: T8MonthData;
@@ -120,7 +124,7 @@ export interface UwinComputedKpis {
   selVaxList: string[];
 
   // Analysis basis this result was computed with
-  analysisMode: 'facility' | 'sessionsite';
+  analysisMode: 'facility' | 'subcenter' | 'sessionsite';
 
   // Availability
   t0Rows: TableRows;

@@ -33,6 +33,7 @@ interface Props {
   csv: ParsedCSV;
   onClose: () => void;
   groups?: string[];
+  unitLabel?: string;
 }
 
 interface ComponentScore {
@@ -137,6 +138,7 @@ export function OverallScore({
   csv,
   onClose,
   groups = [...ALL_GROUPS],
+  unitLabel = "Facilities",
 }: Props) {
   const { overall, components } = computeOverallScore(kpis, groups);
   const overallRound = Math.round(overall);
@@ -253,7 +255,7 @@ export function OverallScore({
           <div className="grid gap-4 p-5 md:grid-cols-4 md:p-6">
             {[
               { label: "Blocks", value: String(kpis.globalBlockCount) },
-              { label: "Facilities", value: String(kpis.globalDen) },
+              { label: unitLabel, value: String(kpis.globalDen) },
               {
                 label: "Public / Private",
                 value: `${csv.publicCount} / ${csv.privateCount}`,
@@ -312,7 +314,7 @@ export function OverallScore({
             </div>
 
             <div className="mt-4 rounded-[24px] border border-slate-200/80 bg-slate-50/90 px-4 py-4 text-sm leading-7 text-slate-600">
-              Denominator: {kpis.globalDen} facilities. Component score =
+              Denominator: {kpis.globalDen} {unitLabel.toLowerCase()}. Component score =
               100 - worst KPI percentage. Overall score = average across the
               selected components.
             </div>
@@ -407,7 +409,7 @@ export function OverallScore({
                           <tr className="bg-slate-50 text-left font-semibold uppercase tracking-[0.14em] text-slate-500">
                             <th className="border border-slate-100 px-2 py-2">KPI</th>
                             <th className="border border-slate-100 px-2 py-2 text-right">
-                              Facilities
+                              {unitLabel}
                             </th>
                             <th className="border border-slate-100 px-2 py-2 text-right">
                               %

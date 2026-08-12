@@ -27,7 +27,7 @@ function severity(count: number) {
 export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const { blocks, hasSessionSites, hasDistricts } = useMemo(
+  const { blocks, hasSubCenters, hasSessionSites, hasDistricts } = useMemo(
     () => buildOverallSummary(cards, facilities),
     [cards, facilities],
   );
@@ -42,7 +42,7 @@ export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
   };
 
   const handleExport = () => {
-    downloadXLS(buildOverallExportRows(blocks, hasSessionSites, hasDistricts), exportName);
+    downloadXLS(buildOverallExportRows(blocks, hasSubCenters, hasSessionSites, hasDistricts), exportName);
   };
 
   const renderRow = (
@@ -88,7 +88,12 @@ export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
             >
               {node.label}
             </span>
-            {depth === (hasDistricts ? 3 : 2) ? (
+            {hasSubCenters && depth === (hasDistricts ? 3 : 2) ? (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Sub Center
+              </span>
+            ) : null}
+            {hasSessionSites && depth === (hasDistricts ? (hasSubCenters ? 4 : 3) : (hasSubCenters ? 3 : 2)) ? (
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                 Session site
               </span>
@@ -130,7 +135,8 @@ export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
           <div className="mt-1 text-sm text-slate-600">
             Distinct indicators flagged across all data quality components.
             Expand {hasDistricts ? "a district to see blocks and facilities" : "a block to see facilities"}
-            {hasSessionSites ? ", and a facility to see session sites" : ""}.
+            {hasSubCenters ? ", a facility to see sub-centers" : ""}
+            {hasSessionSites ? `${hasSubCenters ? ", and a sub-center" : ", and a facility"} to see session sites` : ""}.
           </div>
         </div>
         <button
@@ -165,7 +171,9 @@ export function OverallSummaryTable({ cards, facilities, exportName }: Props) {
             <thead className="sticky top-0 z-10 bg-slate-50">
               <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 <th className="px-4 py-3">
-                  {hasDistricts ? "District / " : ""}Block{hasSessionSites ? " / Facility / Session Site" : " / Facility"}
+                  {hasDistricts ? "District / " : ""}Block / Facility
+                  {hasSubCenters ? " / Sub Center" : ""}
+                  {hasSessionSites ? " / Session Site" : ""}
                 </th>
                 <th className="px-4 py-3 text-center">
                   No. of Data Quality Issues identified

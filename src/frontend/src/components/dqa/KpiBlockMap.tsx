@@ -35,9 +35,19 @@ interface Props {
   /** All block names present in the filtered CSV (regardless of flag status) */
   allDataBlocks: string[];
   maxCount: number;
+  unitSingular?: string;
+  unitPlural?: string;
 }
 
-export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlocks, maxCount }: Props) {
+export function KpiBlockMap({
+  stateName,
+  districtName,
+  blockCounts,
+  allDataBlocks,
+  maxCount,
+  unitSingular = "facility",
+  unitPlural = "facilities",
+}: Props) {
   const [topology, setTopology] = useState<Topology<BlockShapeProps> | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -295,10 +305,10 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
             {!hovered.inCsvData ? (
               <span className="text-white/50">Not in this analysis</span>
             ) : hovered.count === 0 ? (
-              <span className="text-emerald-400 font-medium">No flagged facilities</span>
+              <span className="text-emerald-400 font-medium">No flagged {unitPlural}</span>
             ) : (
               <span className="text-amber-300 font-medium">
-                {hovered.count} flagged {hovered.count === 1 ? "facility" : "facilities"}
+                {hovered.count} flagged {hovered.count === 1 ? unitSingular : unitPlural}
               </span>
             )}
           </div>
@@ -309,7 +319,7 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
       <div className="space-y-2 rounded-xl bg-slate-50/80 px-3 py-2.5">
         <div className="flex items-center justify-between gap-3">
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-            Flagged facilities per block
+            Flagged {unitPlural} per block
             {maxCount > 0 && (
               <span className="ml-1 font-normal text-slate-400">(max in dataset: {maxCount})</span>
             )}
@@ -336,21 +346,26 @@ export function KpiBlockMap({ stateName, districtName, blockCounts, allDataBlock
           </div>
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-          {buildLegendItems(maxCount).map(({ color, label }) => (
-            <div key={label} className="flex items-center gap-1.5">
-              <div
-                className="h-3 w-3 flex-none rounded-full border border-black/10"
-                style={{ backgroundColor: color }}
-              />
-              <span className="text-[11px] text-slate-500">{label}</span>
-            </div>
-          ))}
+          {buildLegendItems(maxCount).map(({ color, label }) => {
+            const unitLabel = label
+              .replace("facilities", unitPlural)
+              .replace("facility", unitSingular);
+            return (
+              <div key={label} className="flex items-center gap-1.5">
+                <div
+                  className="h-3 w-3 flex-none rounded-full border border-black/10"
+                  style={{ backgroundColor: color }}
+                />
+                <span className="text-[11px] text-slate-500">{unitLabel}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
 
       {totalFlagged > 0 && (
         <p className="text-[11px] text-slate-400">
-          {mappedFlagged} of {totalFlagged} blocks with flagged facilities matched to map
+          {mappedFlagged} of {totalFlagged} blocks with flagged {unitPlural} matched to map
           boundaries.
           {unmappedBlocks.length > 0 ? " Unmatched blocks are listed below." : ""}
         </p>

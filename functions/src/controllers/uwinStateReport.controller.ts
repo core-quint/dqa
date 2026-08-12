@@ -26,7 +26,7 @@ const createReportSchema = z.object({
   periodStart: monthSchema,
   periodEnd: monthSchema,
   sourceSignature: z.string().trim().min(1).max(1000),
-  analysisMode: z.enum(["facility", "sessionsite"]),
+  analysisMode: z.enum(["facility", "subcenter", "sessionsite"]),
   narrativeMode: z.enum(["DETERMINISTIC", "AI_ASSISTED"]).default("DETERMINISTIC"),
   filters: z.object({
     districts: z.array(z.string().trim().min(1)).max(200).default([]),
@@ -45,6 +45,9 @@ const createReportSchema = z.object({
     districts: z.number().int().min(0),
     blocks: z.number().int().min(0),
     facilities: z.number().int().min(0),
+    // Optional keeps report creation compatible with clients released before
+    // sub-center-wise analysis was available. Current clients always send it.
+    subCenters: z.number().int().min(0).optional(),
     sessionSites: z.number().int().min(0),
     analysedUnits: z.number().int().min(0),
   }),

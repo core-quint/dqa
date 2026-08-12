@@ -224,30 +224,42 @@ function AnalysisModeToggle({
   value,
   onChange,
   fullWidth,
+  showSubCenter,
+  showSessionSite,
 }: {
   value: FilterState["analysisMode"];
   onChange: (value: FilterState["analysisMode"]) => void;
   fullWidth?: boolean;
+  showSubCenter: boolean;
+  showSessionSite: boolean;
 }) {
   const options: { value: FilterState["analysisMode"]; label: string }[] = [
     { value: "facility", label: "Facility-wise" },
-    { value: "sessionsite", label: "Session Site-wise" },
+    ...(showSubCenter
+      ? [{ value: "subcenter" as const, label: "Sub Center-wise" }]
+      : []),
+    ...(showSessionSite
+      ? [{ value: "sessionsite" as const, label: "Session Site-wise" }]
+      : []),
   ];
   return (
     <div
       className={[
-        "inline-flex items-center gap-1 rounded-2xl border border-slate-200/80 bg-white/78 p-1 shadow-[0_12px_28px_rgba(15,23,42,0.06)]",
-        fullWidth ? "w-full" : "",
+        "gap-1 rounded-2xl border border-slate-200/80 bg-white/78 p-1 shadow-[0_12px_28px_rgba(15,23,42,0.06)]",
+        fullWidth
+          ? `grid w-full items-stretch ${options.length === 3 ? "grid-cols-3" : "grid-cols-2"}`
+          : "inline-flex items-center",
       ].join(" ")}
     >
       {options.map((opt) => (
         <button
           key={opt.value}
           type="button"
+          aria-pressed={value === opt.value}
           onClick={() => onChange(opt.value)}
           className={[
-            "rounded-xl px-3 py-2 text-xs font-semibold transition",
-            fullWidth ? "flex-1" : "",
+            "rounded-xl px-2 py-2 text-[11px] font-semibold leading-tight transition",
+            fullWidth ? "min-h-12 whitespace-normal" : "",
             value === opt.value
               ? "bg-slate-950 text-white"
               : "text-slate-600 hover:bg-slate-100",
@@ -271,7 +283,9 @@ export function FilterPanel({
   const isUwin = portal === "UWIN" || portal === "UWIN_STATE";
   const isStateUwin = portal === "UWIN_STATE";
   const uwinCsv = isUwin ? (csv as unknown as UwinParsedCSV) : null;
-  const showAnalysisModeToggle = isUwin && uwinCsv?.idxSessionSite !== null;
+  const showSubCenterMode = isUwin && uwinCsv?.idxSubCenter !== null;
+  const showSessionSiteMode = isUwin && uwinCsv?.idxSessionSite !== null;
+  const showAnalysisModeToggle = showSubCenterMode || showSessionSiteMode;
   const allDistricts = uwinCsv?.districts ?? [];
 
   const [f, setF] = useState<FilterState>(() =>
@@ -344,6 +358,8 @@ export function FilterPanel({
             value={f.analysisMode}
             onChange={(value) => setF((prev) => ({ ...prev, analysisMode: value }))}
             fullWidth={isRail}
+            showSubCenter={showSubCenterMode}
+            showSessionSite={showSessionSiteMode}
           />
         ) : null}
 

@@ -126,6 +126,16 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
   const showSummary = group === "completeness" || group === "accuracy";
   const style = resolveStyle(group, id);
   const isStateUwin = csv.portal === "UWIN_STATE";
+  const unitLabel = kpis.analysisMode === "sessionsite"
+    ? "Session Sites"
+    : kpis.analysisMode === "subcenter"
+      ? "Sub Centers"
+      : "Facilities";
+  const unitSingular = kpis.analysisMode === "sessionsite"
+    ? "session site"
+    : kpis.analysisMode === "subcenter"
+      ? "sub center"
+      : "facility";
   const selectedDistricts = useMemo(
     () => [...new Set(Object.values(kpis.filteredFacilities).map((row) => row.district).filter((value): value is string => Boolean(value)))],
     [kpis.filteredFacilities],
@@ -191,7 +201,7 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
     const summary = kpis.summaryByPid[id];
     if (!summary) return;
 
-    const rows: (string | number | null)[][] = [["Indicator", "Facilities", "%"]];
+    const rows: (string | number | null)[][] = [["Indicator", unitLabel, "%"]];
     const allSumRows = [
       ...(summary.any ?? []),
       ...(summary.all ?? []),
@@ -246,13 +256,13 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
     return (
       <div className="p-2">
         {summary.any && summary.any.length > 0 ? (
-          <SummaryTable rows={summary.any} label="Any month" />
+          <SummaryTable rows={summary.any} label="Any month" unitLabel={unitLabel} />
         ) : null}
         {summary.all && summary.all.length > 0 ? (
-          <SummaryTable rows={summary.all} label="All months" />
+          <SummaryTable rows={summary.all} label="All months" unitLabel={unitLabel} />
         ) : null}
         {summary.overall && summary.overall.length > 0 ? (
-          <SummaryTable rows={summary.overall} label="Overall" />
+          <SummaryTable rows={summary.overall} label="Overall" unitLabel={unitLabel} />
         ) : null}
       </div>
     );
@@ -409,14 +419,18 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
                 stateName={csv.stateName}
                 counts={blockCounts}
                 districts={csv.districts}
+                unitSingular={unitSingular}
+                unitPlural={unitLabel.toLowerCase()}
               />
             ) : (
               <KpiBlockMap
-              stateName={csv.stateName}
-              districtName={isStateUwin ? selectedDistricts[0] : csv.distName}
-              blockCounts={isStateUwin ? stateDrillBlockCounts : blockCounts}
-              allDataBlocks={allDataBlocks}
-              maxCount={maxCount}
+                stateName={csv.stateName}
+                districtName={isStateUwin ? selectedDistricts[0] : csv.distName}
+                blockCounts={isStateUwin ? stateDrillBlockCounts : blockCounts}
+                allDataBlocks={allDataBlocks}
+                maxCount={maxCount}
+                unitSingular={unitSingular}
+                unitPlural={unitLabel.toLowerCase()}
               />
             )
           ) : null}

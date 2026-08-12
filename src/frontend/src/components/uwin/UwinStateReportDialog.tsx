@@ -48,9 +48,20 @@ function formatDate(value: string | null) {
   });
 }
 
+function analysisUnitLabels(mode: UwinStateReportRecord["analysisMode"]) {
+  if (mode === "sessionsite") return { lower: "session sites", title: "Session sites" };
+  if (mode === "subcenter") return { lower: "sub centers", title: "Sub centers" };
+  return { lower: "facilities", title: "Facilities" };
+}
+
 function previousRevision(report: UwinStateReportRecord, reports: UwinStateReportRecord[]) {
   return reports
-    .filter((candidate) => candidate.periodStart === report.periodStart && candidate.periodEnd === report.periodEnd && candidate.version < report.version)
+    .filter((candidate) => (
+      candidate.periodStart === report.periodStart
+      && candidate.periodEnd === report.periodEnd
+      && candidate.analysisMode === report.analysisMode
+      && candidate.version < report.version
+    ))
     .sort((a, b) => b.version - a.version)[0] ?? null;
 }
 
@@ -67,6 +78,9 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo }: Props)
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const period = getUwinStateReportPeriod(csv);
+  const progressReports = latestReportPerPeriod(
+    allReports.filter((report) => report.analysisMode === kpis.analysisMode),
+  );
 
   const loadReports = useCallback(async () => {
     if (!period.periodStart || !period.periodEnd) return;
@@ -145,7 +159,7 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo }: Props)
           <div>
             <div className="text-sm font-semibold text-slate-900">Current analysis</div>
             <div className="mt-1 text-xs text-slate-600">
-              {kpis.globalDen.toLocaleString("en-IN")} {kpis.analysisMode === "sessionsite" ? "session sites" : "facilities"} analysed
+              {kpis.globalDen.toLocaleString("en-IN")} {analysisUnitLabels(kpis.analysisMode).lower} analysed
             </div>
           </div>
           <button
@@ -173,15 +187,15 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo }: Props)
           </button>
         </div>
 
-        {latestReportPerPeriod(allReports).length > 0 ? (
+        {progressReports.length > 0 ? (
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="text-sm font-semibold text-slate-900">Saved progress over time</div>
-            <div className="mt-1 text-xs text-slate-500">The latest saved version for each reporting period is shown.</div>
+            <div className="mt-1 text-xs text-slate-500">The latest saved version for each reporting period at the current analysis level is shown.</div>
             <div className="mt-3 overflow-x-auto">
               <table className="w-full min-w-[560px] text-left text-xs">
                 <thead className="text-slate-500"><tr><th className="pb-2">Period</th><th className="pb-2">Version</th><th className="pb-2">Overall</th><th className="pb-2">Availability</th><th className="pb-2">Accuracy</th><th className="pb-2">Consistency</th></tr></thead>
                 <tbody>
-                  {latestReportPerPeriod(allReports).slice(-6).map((item) => (
+                  {progressReports.slice(-6).map((item) => (
                     <tr key={item.id} className="border-t border-slate-200 text-slate-700">
                       <td className="py-2 font-semibold">{item.periodStart}–{item.periodEnd}</td><td>V{item.version}</td><td>{item.scores.overall.toFixed(1)}%</td><td>{item.scores.availability.toFixed(1)}%</td><td>{item.scores.accuracy.toFixed(1)}%</td><td>{item.scores.consistency.toFixed(1)}%</td>
                     </tr>
@@ -236,15 +250,15 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo }: Props)
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
                   {[
-                    ["Overall", report.scores.overall],
-                    ["Availability", report.scores.availability],
-                    ["Accuracy", report.scores.accuracy],
-                    ["Consistency", report.scores.consistency],
-                    ["Units", report.counts.analysedUnits],
-                  ].map(([label, value]) => (
-                    <div key={String(label)} className="rounded-lg bg-slate-50 px-3 py-2">
+                    { label: "Overall", value: report.scores.overall, score: true },
+                    { label: "Availability", value: report.scores.availability, score: true },
+                    { label: "Accuracy", value: report.scores.accuracy, score: true },
+                    { label: "Consistency", value: report.scores.consistency, score: true },
+                    { label: analysisUnitLabels(report.analysisMode).title, value: report.counts.analysedUnits, score: false },
+                  ].map(({ label, value, score }) => (
+                    <div key={label} className="rounded-lg bg-slate-50 px-3 py-2">
                       <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-                      <div className="mt-1 text-sm font-bold text-slate-900">{typeof value === "number" && label !== "Units" ? `${value.toFixed(1)}%` : Number(value).toLocaleString("en-IN")}</div>
+                      <div className="mt-1 text-sm font-bold text-slate-900">{score ? `${value.toFixed(1)}%` : value.toLocaleString("en-IN")}</div>
                     </div>
                   ))}
                 </div>

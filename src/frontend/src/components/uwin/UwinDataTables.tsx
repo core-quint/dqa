@@ -25,6 +25,7 @@ export function T8Table({ web }: { web: T8Web }) {
   const rowList = Object.values(rows);
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
   const showDistrict = rowList.some((row) => Boolean(row.district));
+  const showSubCenter = rowList[0]?.subcenter !== undefined;
   const showSessionSite = rowList[0]?.sessionsite !== undefined;
 
   const fmtAvg = (v: number | null) => (v !== null ? v.toFixed(1) : '');
@@ -36,6 +37,9 @@ export function T8Table({ web }: { web: T8Web }) {
           {showDistrict ? <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">District</th> : null}
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Block Name</th>
           <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Facility Name</th>
+          {showSubCenter ? (
+            <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Sub Center Name</th>
+          ) : null}
           {showSessionSite ? (
             <th rowSpan={2} className="border border-border px-2 py-1.5 bg-accent/60 font-bold">Session Site Name</th>
           ) : null}
@@ -65,6 +69,7 @@ export function T8Table({ web }: { web: T8Web }) {
             {showDistrict ? <td className="border border-border px-2 py-1">{row.district}</td> : null}
             <td className="border border-border px-2 py-1">{row.block}</td>
             <td className="border border-border px-2 py-1">{row.facility}</td>
+            {showSubCenter ? <td className="border border-border px-2 py-1">{row.subcenter}</td> : null}
             {showSessionSite ? <td className="border border-border px-2 py-1">{row.sessionsite}</td> : null}
             {months.map((mk) => {
               const d = row.months[mk];

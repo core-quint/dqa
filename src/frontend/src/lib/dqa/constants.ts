@@ -67,7 +67,7 @@ export const UWIN_DEFAULT_FILTERS = {
   inconsFrom: [] as string[],
   inconsTo: [] as string[],
   activeGroup: '' as string,
-  analysisMode: 'facility' as 'facility' | 'sessionsite',
+  analysisMode: 'facility' as 'facility' | 'subcenter' | 'sessionsite',
 };
 
 export const DEFAULT_FILTERS = {
@@ -86,5 +86,5 @@ export const DEFAULT_FILTERS = {
   inconsFrom: [] as string[],
   inconsTo: [] as string[],
   activeGroup: '' as string,
-  analysisMode: 'facility' as 'facility' | 'sessionsite',
+  analysisMode: 'facility' as 'facility' | 'subcenter' | 'sessionsite',
 };

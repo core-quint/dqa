@@ -26,9 +26,21 @@ function round(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+function analysisLevelLabel(mode: UwinStateReportRecord["analysisMode"]): string {
+  if (mode === "sessionsite") return "session site";
+  if (mode === "subcenter") return "sub center";
+  return "facility";
+}
+
 export function comparabilityReason(current: UwinStateReportRecord, previous: UwinStateReportRecord): string | null {
   if (current.state.trim().toLowerCase() !== previous.state.trim().toLowerCase()) return "Reports are for different states.";
-  if (current.analysisMode !== previous.analysisMode) return "Analysis levels differ (facility versus session site).";
+  if (current.analysisMode !== previous.analysisMode) {
+    const levels = new Set([current.analysisMode, previous.analysisMode]);
+    if (levels.has("facility") && levels.has("sessionsite") && levels.size === 2) {
+      return "Analysis levels differ (facility versus session site).";
+    }
+    return `Analysis levels differ (${analysisLevelLabel(current.analysisMode)} versus ${analysisLevelLabel(previous.analysisMode)}).`;
+  }
   if (current.rulesVersion !== previous.rulesVersion) return "DQA rules versions differ.";
   if (periodLength(current) !== periodLength(previous)) return "Reporting-period durations differ.";
   return null;

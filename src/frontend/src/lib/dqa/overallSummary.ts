@@ -1,8 +1,7 @@
 // ============================================================
 // Block-wise Overall Summary aggregation (pure, no React/DOM)
 // Rolls every flagged KPI indicator up the geography hierarchy:
-// block -> facility -> session site (session sites are U-WIN
-// session-site-wise analysis mode only).
+// block -> facility -> optional sub-center -> optional session site.
 // ============================================================
 
 import type { FacilityRecord, KpiCard } from './types';
@@ -32,8 +31,9 @@ export function sortNodes(map: Map<string, SummaryNode>): SummaryNode[] {
 export function buildOverallSummary(
   cards: KpiCard[],
   facilities: Record<string, FacilityRecord>,
-): { blocks: SummaryNode[]; hasSessionSites: boolean; hasDistricts: boolean } {
+): { blocks: SummaryNode[]; hasSubCenters: boolean; hasSessionSites: boolean; hasDistricts: boolean } {
   const blockMap = new Map<string, SummaryNode>();
+  let hasSubCenters = false;
   let hasSessionSites = false;
   const hasDistricts = Object.values(facilities).some((rec) => Boolean(rec.district));
 
@@ -44,18 +44,22 @@ export function buildOverallSummary(
     const block = hasDistricts
       ? nodeFor(root.children, rec.block || 'Unknown block')
       : root;
-    return { root, block };
+    const fac = nodeFor(block.children, rec.facility || 'Unknown facility');
+    const subcenter = rec.subcenter
+      ? nodeFor(fac.children, rec.subcenter)
+      : null;
+    const sessionsite = rec.sessionsite
+      ? nodeFor((subcenter ?? fac).children, rec.sessionsite)
+      : null;
+    return { root, block, fac, subcenter, sessionsite };
   };
 
   // Seed every entity in the filtered dataset so issue-free rows still
   // appear (with a zero count) instead of silently disappearing.
   for (const rec of Object.values(facilities)) {
-    const { block } = hierarchy(rec);
-    const fac = nodeFor(block.children, rec.facility || 'Unknown facility');
-    if (rec.sessionsite) {
-      hasSessionSites = true;
-      nodeFor(fac.children, rec.sessionsite);
-    }
+    hierarchy(rec);
+    if (rec.subcenter) hasSubCenters = true;
+    if (rec.sessionsite) hasSessionSites = true;
   }
 
   for (const card of cards) {
@@ -63,28 +67,28 @@ export function buildOverallSummary(
     for (const key of card.stat.facilityKeys) {
       const rec = facilities[key];
       if (!rec) continue;
-      const { root, block } = hierarchy(rec);
+      const { root, block, fac, subcenter, sessionsite } = hierarchy(rec);
       root.indicators.add(card.name);
       block.indicators.add(card.name);
-      const fac = nodeFor(block.children, rec.facility || 'Unknown facility');
       fac.indicators.add(card.name);
-      if (rec.sessionsite) {
-        nodeFor(fac.children, rec.sessionsite).indicators.add(card.name);
-      }
+      subcenter?.indicators.add(card.name);
+      sessionsite?.indicators.add(card.name);
     }
   }
 
-  return { blocks: sortNodes(blockMap), hasSessionSites, hasDistricts };
+  return { blocks: sortNodes(blockMap), hasSubCenters, hasSessionSites, hasDistricts };
 }
 
 export function buildOverallExportRows(
   blocks: SummaryNode[],
+  hasSubCenters: boolean,
   hasSessionSites: boolean,
   hasDistricts = false,
 ): (string | number | null)[][] {
   const header = [
     ...(hasDistricts ? ['District'] : []),
     'Block', 'Facility',
+    ...(hasSubCenters ? ['Sub Center'] : []),
     ...(hasSessionSites ? ['Session Site'] : []),
     'No. of Data Quality Issues identified', 'Indicators identified',
   ];
@@ -94,6 +98,7 @@ export function buildOverallExportRows(
     district: string,
     block: string,
     facility: string,
+    subcenter: string,
     session: string,
     node: SummaryNode,
   ) => {
@@ -102,6 +107,7 @@ export function buildOverallExportRows(
       [
         ...(hasDistricts ? [district] : []),
         block, facility,
+        ...(hasSubCenters ? [subcenter] : []),
         ...(hasSessionSites ? [session] : []),
         node.indicators.size, para,
       ],
@@ -110,14 +116,25 @@ export function buildOverallExportRows(
 
   for (const root of blocks) {
     const district = hasDistricts ? root.label : '';
-    if (hasDistricts) pushRow(district, '', '', '', root);
+    if (hasDistricts) pushRow(district, '', '', '', '', root);
     const blockNodes = hasDistricts ? sortNodes(root.children) : [root];
     for (const block of blockNodes) {
-      pushRow(district, block.label, '', '', block);
+      pushRow(district, block.label, '', '', '', block);
       for (const fac of sortNodes(block.children)) {
-        pushRow(district, block.label, fac.label, '', fac);
-        for (const site of sortNodes(fac.children)) {
-          pushRow(district, block.label, fac.label, site.label, site);
+        pushRow(district, block.label, fac.label, '', '', fac);
+        if (hasSubCenters) {
+          for (const subcenter of sortNodes(fac.children)) {
+            pushRow(district, block.label, fac.label, subcenter.label, '', subcenter);
+            if (hasSessionSites) {
+              for (const site of sortNodes(subcenter.children)) {
+                pushRow(district, block.label, fac.label, subcenter.label, site.label, site);
+              }
+            }
+          }
+        } else if (hasSessionSites) {
+          for (const site of sortNodes(fac.children)) {
+            pushRow(district, block.label, fac.label, '', site.label, site);
+          }
         }
       }
     }

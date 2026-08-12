@@ -1,8 +1,8 @@
 // ============================================================
 // UWIN KPI Computation Engine
 // Extends HMIS computeKpis with: t8 (Avg Beneficiaries/Session < 5),
-// t9 (Zero coverage session), and a facility-wise vs session-site-wise
-// analysis mode (filters.analysisMode).
+// t9 (Zero coverage session), and facility-, sub-center-, or session-site-wise
+// analysis (filters.analysisMode).
 // ============================================================
 
 import type {
@@ -84,17 +84,28 @@ function chartCountsByGeography(
   };
 }
 
-// Session-site-wise data (Block||Facility||Session Site, the parser's finest grain)
-// summed back up to Block||Facility for facility-wise analysis mode.
-function aggregateToFacilityLevel(
-  facilityData: Record<string, FacilityRecord>
+// Roll the parser's finest grain back up to the selected analysis level.
+function aggregateToLevel(
+  facilityData: Record<string, FacilityRecord>,
+  level: 'facility' | 'subcenter' | 'sessionsite',
 ): Record<string, FacilityRecord> {
   const out: Record<string, FacilityRecord> = {};
   for (const fd of Object.values(facilityData)) {
-    const key = `${fd.district ?? ''}||${fd.block}||${fd.facility}`;
+    const key = [
+      fd.district ?? '', fd.block, fd.facility,
+      ...(level === 'subcenter' ? [fd.subcenter ?? 'Unknown SC'] : []),
+      ...(level === 'sessionsite' ? [fd.sessionsite ?? ''] : []),
+    ].join('||');
     let agg = out[key];
     if (!agg) {
-      agg = { district: fd.district, block: fd.block, facility: fd.facility, ownership: '', ru: '', months: {} };
+      agg = {
+        district: fd.district,
+        block: fd.block,
+        facility: fd.facility,
+        ...(level === 'subcenter' ? { subcenter: fd.subcenter ?? 'Unknown SC' } : {}),
+        ...(level === 'sessionsite' ? { sessionsite: fd.sessionsite ?? '' } : {}),
+        ownership: '', ru: '', months: {},
+      };
       out[key] = agg;
     }
     if (fd.ownership) {
@@ -136,16 +147,15 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   } = csv;
 
   const analysisMode = filters.analysisMode ?? 'facility';
-  const facilityData = analysisMode === 'sessionsite'
-    ? csv.facilityData
-    : aggregateToFacilityLevel(csv.facilityData);
+  const facilityData = aggregateToLevel(csv.facilityData, analysisMode);
 
-  // ---- row identity columns (adds Session Site Name in session-site-wise mode) ----
+  // ---- row identity columns for the selected hierarchy level ----
   const stateLevel = csv.portal === 'UWIN_STATE';
   const idHeaderCols: string[] = [
     ...(stateLevel ? ['District'] : []),
     'Block Name',
     'Facility Name',
+    ...(analysisMode === 'subcenter' ? ['Sub Center Name'] : []),
     ...(analysisMode === 'sessionsite' ? ['Session Site Name'] : []),
   ];
   const idRowCols = (fd: FacilityRecord): (string | number | null)[] =>
@@ -153,12 +163,14 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       ...(stateLevel ? [fd.district ?? 'Unknown district'] : []),
       displayBlockLabel(fd.block),
       fd.facility,
+      ...(analysisMode === 'subcenter' ? [fd.subcenter ?? 'Unknown SC'] : []),
       ...(analysisMode === 'sessionsite' ? [fd.sessionsite ?? ''] : []),
     ];
-  const idObjCols = (fd: FacilityRecord): { district?: string; block: string; facility: string; sessionsite?: string } => ({
+  const idObjCols = (fd: FacilityRecord): { district?: string; block: string; facility: string; subcenter?: string; sessionsite?: string } => ({
     ...(stateLevel ? { district: fd.district ?? 'Unknown district' } : {}),
     block: displayBlockLabel(fd.block),
     facility: fd.facility,
+    ...(analysisMode === 'subcenter' ? { subcenter: fd.subcenter ?? 'Unknown SC' } : {}),
     ...(analysisMode === 'sessionsite' ? { sessionsite: fd.sessionsite ?? '' } : {}),
   });
 
@@ -186,7 +198,11 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     : BASE_VAX.filter((v) => indicatorMap[v] !== undefined);
 
   // ---- global counts ----
-  let globalDen = analysisMode === 'sessionsite' ? csv.globalSessionSiteCount : csv.globalFacilityCount;
+  let globalDen = analysisMode === 'sessionsite'
+    ? csv.globalSessionSiteCount
+    : analysisMode === 'subcenter'
+      ? csv.globalSubCenterCount
+      : csv.globalFacilityCount;
   let globalBlockCount = csv.globalBlockCount;
 
   // ---- apply global filters ----
