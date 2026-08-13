@@ -154,6 +154,10 @@ export async function downloadElementPNG(
     height,
     scale,
     useCORS: true,
+    // The app theme uses OKLCH colors, which html2canvas's default CSS parser
+    // cannot read. Let the browser render the cloned DOM so modern CSS colors
+    // work consistently for every dashboard graph.
+    foreignObjectRendering: true,
     logging: false,
     removeContainer: true,
   });

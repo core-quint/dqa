@@ -5,6 +5,8 @@ type PctsAccessProfile = Pick<
   "role" | "level" | "geoState" | "geoDistrict"
 >;
 
+type StateReviewAccessProfile = Pick<AuthState, "role" | "level">;
+
 const normalizeGeo = (value: string | null | undefined) =>
   (value ?? "").trim().toLowerCase();
 
@@ -46,6 +48,17 @@ export function canUseHmis(
   return !(
     normalizeGeo(auth.geoState) === "rajasthan" &&
     (auth.level === "STATE" || auth.level === "DISTRICT")
+  );
+}
+
+export function canUseStateReviews(
+  auth: StateReviewAccessProfile | null | undefined,
+): boolean {
+  if (!auth) return false;
+  return (
+    auth.role === "admin" ||
+    auth.level === "NATIONAL" ||
+    auth.level === "STATE"
   );
 }
 

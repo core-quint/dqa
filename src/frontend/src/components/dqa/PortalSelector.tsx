@@ -4,6 +4,7 @@ import { GlassPanel } from "../branding/GlassPanel";
 import {
   canUseHmis,
   canUsePcts,
+  canUseStateReviews,
 } from "../../lib/pcts/access";
 
 interface Props {
@@ -69,13 +70,15 @@ export function PortalSelector({
   onSelectStateHmis,
   onSelectPcts,
 }: Props) {
-  const isAdmin = auth.role === "admin";
   const hasHmisAccess = canUseHmis(auth);
   const hasPctsAccess = canUsePcts(auth);
+  const hasStateReviewAccess = canUseStateReviews(auth);
   const cards = PORTAL_CARDS.filter((card) => {
     if (card.key === "HMIS") return hasHmisAccess;
     if (card.key === "PCTS") return hasPctsAccess;
-    if (card.key === "HMIS-STATE" || card.key === "U-WIN-STATE") return auth.level === "STATE" || isAdmin;
+    if (card.key === "HMIS-STATE" || card.key === "U-WIN-STATE") {
+      return hasStateReviewAccess;
+    }
     return true;
   });
   return (

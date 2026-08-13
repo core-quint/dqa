@@ -43,6 +43,7 @@ import {
 import {
   canUseHmis,
   canUsePcts,
+  canUseStateReviews,
 } from "../../lib/pcts/access";
 
 function initialsFromEmail(email?: string) {
@@ -85,7 +86,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
 
   const isStateUwinView = appState.startsWith("state-uwin-") || (appState === "trend" && trendSource === "UWIN_STATE");
   const viewUwinData = isStateUwinView ? stateUwinData : uwinData;
-  const canUseStateUwin = auth?.role === "admin" || auth?.level === "STATE";
+  const hasStateReviewAccess = canUseStateReviews(auth);
   const portal = getPortalForView(appState, trendSource, csvData, viewUwinData, pctsData);
   const activeData =
     appState === "coverage" ? null : getPortalData(portal, csvData, viewUwinData, pctsData);
@@ -288,6 +289,15 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
                 HMIS Upload
               </CommandItem>
             )}
+            {hasStateReviewAccess && (
+              <CommandItem
+                keywords={["upload", "hmis", "state", "district", "xlsx"]}
+                onSelect={() => runCommand(() => setAppState("state-hmis-landing"))}
+              >
+                <Upload className="h-4 w-4" />
+                HMIS State Upload
+              </CommandItem>
+            )}
             {hasPctsAccess && (
               <CommandItem
                 keywords={["upload", "pcts", "rajasthan", "xlsx"]}
@@ -304,7 +314,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               <Upload className="h-4 w-4" />
               U-WIN Upload
             </CommandItem>
-            {canUseStateUwin ? (
+            {hasStateReviewAccess ? (
               <CommandItem
                 keywords={["upload", "uwin", "state", "district", "csv"]}
                 onSelect={() => runCommand(() => setAppState("state-uwin-landing"))}
@@ -388,7 +398,7 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
               <TrendingUp className="h-4 w-4" />
               U-WIN Trends
             </CommandItem>
-            {canUseStateUwin ? (
+            {hasStateReviewAccess ? (
               <CommandItem
                 keywords={["trend", "uwin", "state"]}
                 onSelect={() => runCommand(() => { setTrendSource("UWIN_STATE"); setAppState("trend"); })}
