@@ -154,9 +154,16 @@ export async function downloadElementPNG(
     height,
     scale,
     useCORS: true,
-    // The app theme uses OKLCH colors, which html2canvas's default CSS parser
-    // cannot read. Let the browser render the cloned DOM so modern CSS colors
-    // work consistently for every dashboard graph.
+    // html2canvas always parses the cloned document's root/body backgrounds,
+    // even when its browser-native renderer is used. The app defines both with
+    // OKLCH, which html2canvas 1.4 cannot parse, so normalize only those two
+    // colors in the disposable clone before rendering the graph.
+    onclone: (clonedDocument) => {
+      clonedDocument.documentElement.style.setProperty('background-color', backgroundColor, 'important');
+      clonedDocument.body?.style.setProperty('background-color', backgroundColor, 'important');
+    },
+    // The graph itself can retain all modern CSS colors because the browser,
+    // rather than html2canvas's legacy CSS parser, renders the cloned subtree.
     foreignObjectRendering: true,
     logging: false,
     removeContainer: true,
