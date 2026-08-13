@@ -143,6 +143,10 @@ export async function downloadElementPNG(
   const width = Math.ceil(Math.max(rect.width, source.scrollWidth));
   const height = Math.ceil(Math.max(rect.height, source.scrollHeight));
   if (width <= 0 || height <= 0) return false;
+  const scrollX = window.scrollX;
+  const scrollY = window.scrollY;
+  const documentX = rect.left + scrollX;
+  const documentY = rect.top + scrollY;
 
   await document.fonts?.ready;
   const { default: html2canvas } = await import('html2canvas');
@@ -153,6 +157,13 @@ export async function downloadElementPNG(
     width,
     height,
     scale,
+    // ForeignObjectRenderer serializes `source` at local (0, 0), but
+    // html2canvas otherwise crops it again at its document coordinates. Offset
+    // the public x/y inputs so the renderer's final crop origin is exactly 0.
+    x: -documentX,
+    y: -documentY,
+    scrollX,
+    scrollY,
     useCORS: true,
     // html2canvas always parses the cloned document's root/body backgrounds,
     // even when its browser-native renderer is used. The app defines both with
