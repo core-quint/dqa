@@ -15,9 +15,11 @@ import {
   AlertTriangle,
   ArrowLeft,
   CalendarClock,
+  CalendarRange,
   ChevronRight,
   Download,
   History,
+  Info,
   MapPin,
   RefreshCw,
   Trash2,
@@ -26,8 +28,20 @@ import {
 } from "lucide-react";
 import { apiFetch } from "../../api";
 import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
-import type { SnapshotDqaLevel, SnapshotRecord } from "../../lib/snapshots";
-import { getSnapshotBlock, getSnapshotDqaLevel, normalizePortal } from "../../lib/snapshots";
+import type { SnapshotDqaLevel, SnapshotRecord, TrendBasis } from "../../lib/snapshots";
+import {
+  dataDurationLabel,
+  dataPeriodLabel,
+  getDataPeriod,
+  getSnapshotBlock,
+  getSnapshotDqaLevel,
+  monthEndDate,
+  monthFullLabel,
+  monthsBetween,
+  normalizePortal,
+  snapshotOrderValue,
+  snapshotTrendMonths,
+} from "../../lib/snapshots";
 import { GlassPanel } from "../branding/GlassPanel";
 import type { AuthState } from "./LoginPage";
 
@@ -70,6 +84,10 @@ const METRICS: Array<{ value: Metric; label: string }> = [
   { value: "accuracy", label: "Accuracy" },
   { value: "consistency", label: "Consistency" },
 ];
+const BASES: Array<{ value: TrendBasis; label: string; hint: string }> = [
+  { value: "review", label: "Review date", hint: "Plots every review on the month its DQA was saved." },
+  { value: "period", label: "Data period", hint: "Plots every review across the months of data it analysed." },
+];
 const EMPTY_FILTERS: TrendFilters = {
   portal: "ALL",
   level: "ALL",
@@ -95,21 +113,9 @@ function formatDate(date: string) {
   return new Date(date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-function monthKey(date: string) {
-  const parsed = new Date(date);
-  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
-}
-
 function monthLabel(key: string) {
   const [year, month] = key.split("-").map(Number);
   return new Date(year, month - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
-}
-
-function nextMonth(key: string) {
-  const [year, month] = key.split("-").map(Number);
-  const nextYear = month === 12 ? year + 1 : year;
-  const nextValue = month === 12 ? 1 : month + 1;
-  return `${nextYear}-${String(nextValue).padStart(2, "0")}`;
 }
 
 function mean(values: number[]) {
@@ -201,6 +207,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
   const [loadError, setLoadError] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [metric, setMetric] = useState<Metric>("overall");
+  const [basis, setBasis] = useState<TrendBasis>("review");
   const [filters, setFilters] = useState<TrendFilters>({ ...EMPTY_FILTERS, portal: safeInitialPortal });
   const [activePreset, setActivePreset] = useState<"90" | "180" | "fy" | "all" | null>("all");
 
@@ -249,7 +256,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [accessible, filters.state, filters.district]);
 
-  const filtered = useMemo(() => accessible.filter((snapshot) => {
+  const scoped = useMemo(() => accessible.filter((snapshot) => {
     const portal = normalizePortal(snapshot.portal);
     const level = getSnapshotDqaLevel(snapshot);
     if (filters.portal !== "ALL" && portal !== filters.portal) return false;
@@ -258,33 +265,42 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
     if (filters.state && norm(snapshot.state) !== filters.state) return false;
     if (filters.district && norm(snapshot.district) !== filters.district) return false;
     if (filters.block && norm(getSnapshotBlock(snapshot)) !== filters.block) return false;
+    return true;
+  }), [accessible, filters]);
+
+  // The time window follows the selected axis: review dates on the "review" axis, and
+  // an overlap test on data months on the "period" axis.
+  const filtered = useMemo(() => scoped.filter((snapshot) => {
+    if (basis === "period") {
+      const period = getDataPeriod(snapshot);
+      if (!period) return !filters.dateFrom && !filters.dateTo;
+      if (filters.dateFrom && period.end < filters.dateFrom.slice(0, 7)) return false;
+      if (filters.dateTo && period.start > filters.dateTo.slice(0, 7)) return false;
+      return true;
+    }
     const time = new Date(snapshot.createdAt).getTime();
     if (filters.dateFrom && time < new Date(`${filters.dateFrom}T00:00:00`).getTime()) return false;
     if (filters.dateTo && time > new Date(`${filters.dateTo}T23:59:59.999`).getTime()) return false;
     return true;
-  }), [accessible, filters]);
+  }), [scoped, filters.dateFrom, filters.dateTo, basis]);
+
+  const missingPeriod = useMemo(() => scoped.filter((snapshot) => !getDataPeriod(snapshot)).length, [scoped]);
+  const bucketed = useMemo(() => filtered.map((snapshot) => ({ snapshot, months: snapshotTrendMonths(snapshot, basis) })), [filtered, basis]);
+  const placeable = useMemo(() => bucketed.filter((entry) => entry.months.length), [bucketed]);
+  const tableRows = useMemo(() => [...filtered].sort((a, b) => snapshotOrderValue(b, basis) - snapshotOrderValue(a, basis) || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [filtered, basis]);
 
   const months = useMemo(() => {
-    const observed = [...new Set(filtered.map((snapshot) => monthKey(snapshot.createdAt)))].sort();
-    if (!observed.length) return [];
-    const result: string[] = [];
-    let cursor = observed[0];
-    let guard = 0;
-    while (cursor <= observed.at(-1)! && guard < 240) {
-      result.push(cursor);
-      cursor = nextMonth(cursor);
-      guard += 1;
-    }
-    return result;
-  }, [filtered]);
-  const seriesPortals = filters.portal === "ALL" ? PORTALS.filter((portal) => filtered.some((snapshot) => normalizePortal(snapshot.portal) === portal)) : [filters.portal] as Exclude<TrendPortal, "ALL">[];
+    const observed = [...new Set(placeable.flatMap((entry) => entry.months))].sort();
+    return observed.length ? monthsBetween(observed[0], observed.at(-1)!) : [];
+  }, [placeable]);
+  const seriesPortals = filters.portal === "ALL" ? PORTALS.filter((portal) => placeable.some((entry) => normalizePortal(entry.snapshot.portal) === portal)) : [filters.portal] as Exclude<TrendPortal, "ALL">[];
   const chartData = useMemo(() => ({
     labels: months.map(monthLabel),
     datasets: seriesPortals.map((portal) => {
       const meta = PORTAL_META[portal];
       return {
         label: meta.label,
-        data: months.map((month) => mean(filtered.filter((snapshot) => normalizePortal(snapshot.portal) === portal && monthKey(snapshot.createdAt) === month).map((snapshot) => metricValue(snapshot, metric)).filter((value): value is number => value !== null))),
+        data: months.map((month) => mean(placeable.filter((entry) => normalizePortal(entry.snapshot.portal) === portal && entry.months.includes(month)).map((entry) => metricValue(entry.snapshot, metric)).filter((value): value is number => value !== null))),
         borderColor: meta.color,
         backgroundColor: `${meta.color}18`,
         pointBackgroundColor: meta.color,
@@ -298,7 +314,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
         fill: seriesPortals.length === 1,
       };
     }),
-  }), [filtered, metric, months, seriesPortals]);
+  }), [placeable, metric, months, seriesPortals]);
 
   const chartOptions: ChartOptions<"line"> = {
     responsive: true,
@@ -315,10 +331,10 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
   };
 
   const periodComparison = useMemo(() => {
-    const availableMonths = [...months].reverse().filter((month) => filtered.some((snapshot) => monthKey(snapshot.createdAt) === month && metricValue(snapshot, metric) !== null));
+    const availableMonths = [...months].reverse().filter((month) => placeable.some((entry) => entry.months.includes(month) && metricValue(entry.snapshot, metric) !== null));
     const latestMonth = availableMonths[0] ?? null;
     const previousMonth = availableMonths[1] ?? null;
-    const values = (month: string | null, component: Metric) => month ? filtered.filter((snapshot) => monthKey(snapshot.createdAt) === month).map((snapshot) => metricValue(snapshot, component)).filter((value): value is number => value !== null) : [];
+    const values = (month: string | null, component: Metric) => month ? placeable.filter((entry) => entry.months.includes(month)).map((entry) => metricValue(entry.snapshot, component)).filter((value): value is number => value !== null) : [];
     const current = mean(values(latestMonth, metric));
     const previous = mean(values(previousMonth, metric));
     const componentRows = METRICS.slice(1).map((component) => ({
@@ -327,17 +343,20 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
       previous: mean(values(previousMonth, component.value)),
     }));
     return { latestMonth, previousMonth, current, previous, delta: current !== null && previous !== null ? current - previous : null, componentRows };
-  }, [filtered, metric, months]);
+  }, [placeable, metric, months]);
 
   const regressions = useMemo(() => {
     const groups = new Map<string, SnapshotRecord[]>();
     for (const snapshot of filtered) {
+      // On the data-period axis a review with no recorded period has no place in the
+      // ordering, so it cannot take part in a like-for-like comparison.
+      if (basis === "period" && !getDataPeriod(snapshot)) continue;
       const list = groups.get(comparisonKey(snapshot)) ?? [];
       list.push(snapshot);
       groups.set(comparisonKey(snapshot), list);
     }
     return [...groups.values()].flatMap((list) => {
-      list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      list.sort((a, b) => snapshotOrderValue(a, basis) - snapshotOrderValue(b, basis) || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
       const latest = list.at(-1);
       const previous = list.at(-2);
       const current = latest ? metricValue(latest, metric) : null;
@@ -345,9 +364,9 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
       if (!latest || !previous || current === null || before === null) return [];
       return [{ latest, previous, current, before, delta: current - before }];
     }).sort((a, b) => a.delta - b.delta);
-  }, [filtered, metric]);
+  }, [filtered, metric, basis]);
 
-  const scores = filtered.map((snapshot) => metricValue(snapshot, metric)).filter((value): value is number => value !== null);
+  const scores = placeable.map((entry) => metricValue(entry.snapshot, metric)).filter((value): value is number => value !== null);
   const average = mean(scores);
   const critical = scores.filter((score) => score < 50).length;
   const improving = regressions.filter((row) => row.delta > 0).length;
@@ -371,11 +390,11 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
 
   function downloadExcel() {
     const esc = (value: unknown) => String(value ?? "-").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const headers = ["Date", "Portal", "DQA level", "State", "District / unit", "Period", "Designation", "Overall", "Availability", "Completeness", "Accuracy", "Consistency", "Saved by"];
-    const rows = [...filtered].reverse().map((snapshot) => [
-      formatDate(snapshot.createdAt), PORTAL_META[normalizePortal(snapshot.portal)].label, levelLabel(snapshot), titleGeo(snapshot.state), reviewUnit(snapshot), snapshot.reportingMonth, snapshot.kpiData?.designation ?? "-", snapshot.overallScore.toFixed(1), snapshot.kpiData?.availabilityScore?.toFixed(1) ?? "-", normalizePortal(snapshot.portal) === "UWIN" ? "N/A" : snapshot.kpiData?.completenessScore?.toFixed(1) ?? "-", snapshot.kpiData?.accuracyScore?.toFixed(1) ?? "-", snapshot.kpiData?.consistencyScore?.toFixed(1) ?? "-", snapshot.createdBy?.email ?? "-",
+    const headers = ["Review date", "Portal", "DQA level", "State", "District / unit", "Data period (months uploaded)", "Duration", "Designation", "Overall", "Availability", "Completeness", "Accuracy", "Consistency", "Saved by"];
+    const rows = tableRows.map((snapshot) => [
+      formatDate(snapshot.createdAt), PORTAL_META[normalizePortal(snapshot.portal)].label, levelLabel(snapshot), titleGeo(snapshot.state), reviewUnit(snapshot), dataPeriodLabel(snapshot) ?? "Not recorded", dataDurationLabel(snapshot), snapshot.kpiData?.designation ?? "-", snapshot.overallScore.toFixed(1), snapshot.kpiData?.availabilityScore?.toFixed(1) ?? "-", normalizePortal(snapshot.portal) === "UWIN" ? "N/A" : snapshot.kpiData?.completenessScore?.toFixed(1) ?? "-", snapshot.kpiData?.accuracyScore?.toFixed(1) ?? "-", snapshot.kpiData?.consistencyScore?.toFixed(1) ?? "-", snapshot.createdBy?.email ?? "-",
     ]);
-    const html = `<table><tr><td colspan="${headers.length}">DQA Trend History · ${METRICS.find((item) => item.value === metric)?.label} · exported ${new Date().toLocaleString("en-IN")}</td></tr><thead><tr>${headers.map((header) => `<th>${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    const html = `<table><tr><td colspan="${headers.length}">DQA Trend History · ${METRICS.find((item) => item.value === metric)?.label} · trend axis: ${basis === "period" ? "data period" : "review date"} · exported ${new Date().toLocaleString("en-IN")}</td></tr><thead><tr>${headers.map((header) => `<th>${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
     const url = URL.createObjectURL(new Blob([`<html><head><meta charset="UTF-8"></head><body>${html}</body></html>`], { type: "application/vnd.ms-excel;charset=utf-8" }));
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -396,7 +415,19 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
         </div>
 
         <GlassPanel className="p-4">
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Analysis controls</div><div className="mt-1 text-sm font-bold text-slate-900">Every visual and comparison follows this scope</div></div><div className="flex flex-wrap gap-1.5">{([{ id: "90", label: "90 days", value: 90 }, { id: "180", label: "6 months", value: 180 }, { id: "fy", label: "This FY", value: "fy" }, { id: "all", label: "All time", value: "all" }] as const).map((preset) => <button key={preset.id} type="button" onClick={() => { const range = periodRange(preset.value); setActivePreset(preset.id); setFilters((current) => ({ ...current, dateFrom: range.from, dateTo: range.to })); }} className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition ${activePreset === preset.id ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{preset.label}</button>)}</div></div>
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+            <div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Analysis controls</div><div className="mt-1 text-sm font-bold text-slate-900">Every visual and comparison follows this scope</div></div>
+            <div className="flex flex-wrap items-end gap-4">
+              <div>
+                <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Build trend on</div>
+                <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">{BASES.map((item) => <button key={item.value} type="button" title={item.hint} onClick={() => setBasis(item.value)} className={`inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-[11px] font-bold transition ${basis === item.value ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{item.value === "review" ? <CalendarClock className="h-3.5 w-3.5" /> : <CalendarRange className="h-3.5 w-3.5" />}{item.label}</button>)}</div>
+              </div>
+              <div>
+                <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{basis === "period" ? "Data window" : "Review window"}</div>
+                <div className="flex flex-wrap gap-1.5">{([{ id: "90", label: "90 days", value: 90 }, { id: "180", label: "6 months", value: 180 }, { id: "fy", label: "This FY", value: "fy" }, { id: "all", label: "All time", value: "all" }] as const).map((preset) => <button key={preset.id} type="button" onClick={() => { const range = periodRange(preset.value); setActivePreset(preset.id); setFilters((current) => ({ ...current, dateFrom: range.from, dateTo: range.to })); }} className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition ${activePreset === preset.id ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{preset.label}</button>)}</div>
+              </div>
+            </div>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Metric</span><select value={metric} onChange={(event) => setMetric(event.target.value as Metric)} className={selectClass}>{METRICS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Data source</span><select value={filters.portal} onChange={(event) => { const portal = event.target.value as TrendPortal; const statePortal = portal === "HMIS_STATE" || portal === "UWIN_STATE"; setFilters((current) => ({ ...current, portal, district: statePortal ? "" : current.district, block: statePortal ? "" : current.block })); }} className={selectClass}><option value="ALL">All sources</option>{hasHmisAccess ? <option value="HMIS">HMIS</option> : null}<option value="HMIS_STATE">State DQA</option><option value="UWIN">U-WIN</option><option value="UWIN_STATE">U-WIN State</option>{hasPctsAccess ? <option value="PCTS">PCTS</option> : null}</select></label>
@@ -407,7 +438,15 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Block</span><select value={filters.block} disabled={filters.level === "STATE" || filters.portal === "HMIS_STATE"} onChange={(event) => setFilters((current) => ({ ...current, block: event.target.value }))} className={selectClass}><option value="">All blocks</option>{blockOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
             <div className="flex items-end">{activeFilters || activePreset !== "all" ? <button type="button" onClick={() => { setFilters({ ...EMPTY_FILTERS, portal: safeInitialPortal }); setActivePreset("all"); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50">Clear filters</button> : <div className="pb-2.5 text-[11px] font-medium text-slate-400">Full accessible history</div>}</div>
           </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2"><label><span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">From review date</span><input type="date" value={filters.dateFrom} onChange={(event) => { setActivePreset(null); setFilters((current) => ({ ...current, dateFrom: event.target.value })); }} className={selectClass} /></label><label><span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">To review date</span><input type="date" value={filters.dateTo} onChange={(event) => { setActivePreset(null); setFilters((current) => ({ ...current, dateTo: event.target.value })); }} className={selectClass} /></label></div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label><span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{basis === "period" ? "From data month" : "From review date"}</span>{basis === "period" ? <input type="month" value={filters.dateFrom.slice(0, 7)} onChange={(event) => { setActivePreset(null); setFilters((current) => ({ ...current, dateFrom: event.target.value ? `${event.target.value}-01` : "" })); }} className={selectClass} /> : <input type="date" value={filters.dateFrom} onChange={(event) => { setActivePreset(null); setFilters((current) => ({ ...current, dateFrom: event.target.value })); }} className={selectClass} />}</label>
+            <label><span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{basis === "period" ? "To data month" : "To review date"}</span>{basis === "period" ? <input type="month" value={filters.dateTo.slice(0, 7)} onChange={(event) => { setActivePreset(null); setFilters((current) => ({ ...current, dateTo: event.target.value ? monthEndDate(event.target.value) : "" })); }} className={selectClass} /> : <input type="date" value={filters.dateTo} onChange={(event) => { setActivePreset(null); setFilters((current) => ({ ...current, dateTo: event.target.value })); }} className={selectClass} />}</label>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-[11px] font-medium text-slate-500">
+            <Info className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+            <span>{basis === "period" ? "Reviews are plotted across every month of data they analysed, so a 3-month upload counts towards all three months." : "Reviews are plotted on the month the DQA was saved, regardless of which months of data were analysed."}</span>
+            {basis === "period" && missingPeriod > 0 ? <span className="rounded-full bg-amber-50 px-2 py-1 font-bold text-amber-800">{nf.format(missingPeriod)} review{missingPeriod === 1 ? "" : "s"} in scope have no recorded data period and cannot be plotted on this axis</span> : null}
+          </div>
         </GlassPanel>
 
         {loading ? <GlassPanel className="p-12 text-center text-sm font-bold uppercase tracking-[0.18em] text-slate-500">Loading trend history…</GlassPanel> : null}
@@ -415,8 +454,8 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
 
         {!loading && !loadError && filtered.length > 0 ? <>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <StatCard label={`Latest monthly ${METRICS.find((item) => item.value === metric)?.label}`} value={periodComparison.current?.toFixed(1) ?? "—"} sub={periodComparison.latestMonth ? monthLabel(periodComparison.latestMonth) : "No scored month"} tone={periodComparison.current !== null && periodComparison.current >= 70 ? "green" : "amber"} />
-            <StatCard label="Change vs prior month" value={periodComparison.delta === null ? "—" : `${periodComparison.delta > 0 ? "+" : ""}${periodComparison.delta.toFixed(1)}`} sub={periodComparison.previousMonth ? `Compared with ${monthLabel(periodComparison.previousMonth)}` : "No earlier scored month"} tone={periodComparison.delta === null ? "slate" : periodComparison.delta < 0 ? "red" : "green"} />
+            <StatCard label={`Latest monthly ${METRICS.find((item) => item.value === metric)?.label}`} value={periodComparison.current?.toFixed(1) ?? "—"} sub={periodComparison.latestMonth ? `${monthFullLabel(periodComparison.latestMonth)} · ${basis === "period" ? "data month" : "review month"}` : "No scored month"} tone={periodComparison.current !== null && periodComparison.current >= 70 ? "green" : "amber"} />
+            <StatCard label="Change vs prior month" value={periodComparison.delta === null ? "—" : `${periodComparison.delta > 0 ? "+" : ""}${periodComparison.delta.toFixed(1)}`} sub={periodComparison.previousMonth ? `Compared with ${monthFullLabel(periodComparison.previousMonth)}` : "No earlier scored month"} tone={periodComparison.delta === null ? "slate" : periodComparison.delta < 0 ? "red" : "green"} />
             <StatCard label="Period average" value={average?.toFixed(1) ?? "—"} sub={`${nf.format(scores.length)} scored reviews`} />
             <StatCard label="Critical reviews" value={nf.format(critical)} sub="Scores below 50" tone={critical > 0 ? "red" : "green"} />
             <StatCard label="Comparable units" value={nf.format(regressions.length)} sub={`${improving} improving · ${declining} declining`} />
@@ -424,8 +463,8 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
 
           <div className="grid gap-4 lg:grid-cols-3">
             <GlassPanel className="p-5 lg:col-span-2">
-              <div className="mb-3 flex flex-wrap items-start justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Monthly movement</div><div className="mt-1 text-lg font-bold text-slate-950">Average {METRICS.find((item) => item.value === metric)?.label.toLowerCase()} score</div><p className="mt-1 text-[11px] text-slate-500">Separate source lines prevent unlike programmes from being blended into one trend.</p></div><span className={`rounded-full px-3 py-1 text-[11px] font-bold ${currentGrade.chip}`}>{currentGrade.label}</span></div>
-              <div className="h-[330px]">{scores.length ? <Line data={chartData} options={chartOptions} /> : <div className="flex h-full items-center justify-center rounded-2xl bg-slate-50 px-6 text-center text-sm font-semibold text-slate-500">{metric === "completeness" && filters.portal === "UWIN" ? "Completeness is not part of the U-WIN DQA framework and is shown as unavailable—not zero." : "No scored values are available for this metric and scope."}</div>}</div>
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Monthly movement</div><div className="mt-1 text-lg font-bold text-slate-950">Average {METRICS.find((item) => item.value === metric)?.label.toLowerCase()} score by {basis === "period" ? "data month" : "review month"}</div><p className="mt-1 text-[11px] text-slate-500">{basis === "period" ? "X-axis is the month the data belongs to." : "X-axis is the month the review was saved."} Separate source lines prevent unlike programmes from being blended into one trend.</p></div><span className={`rounded-full px-3 py-1 text-[11px] font-bold ${currentGrade.chip}`}>{currentGrade.label}</span></div>
+              <div className="h-[330px]">{scores.length ? <Line data={chartData} options={chartOptions} /> : <div className="flex h-full items-center justify-center rounded-2xl bg-slate-50 px-6 text-center text-sm font-semibold text-slate-500">{metric === "completeness" && filters.portal === "UWIN" ? "Completeness is not part of the U-WIN DQA framework and is shown as unavailable—not zero." : basis === "period" && missingPeriod > 0 ? "No review in this scope has a recorded data period. Switch the trend axis back to review date, or save a fresh review." : "No scored values are available for this metric and scope."}</div>}</div>
             </GlassPanel>
 
             <GlassPanel className="p-5">
@@ -437,13 +476,13 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
           </div>
 
           <GlassPanel className="overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Follow-up queue</div><div className="mt-1 text-lg font-bold text-slate-950">Largest like-for-like declines</div><p className="mt-1 text-[11px] text-slate-500">Only compares the same portal, DQA level, geography and State DQA file grain.</p></div><TrendingDown className="h-5 w-5 text-red-500" /></div>
-            {regressions.filter((row) => row.delta < 0).length ? <div className="grid divide-y divide-slate-100 md:grid-cols-2 md:divide-x md:divide-y-0 xl:grid-cols-4">{regressions.filter((row) => row.delta < 0).slice(0, 4).map((row) => <div key={row.latest.id} className="p-4"><div className="flex items-start justify-between gap-2">{portalBadge(row.latest)}<span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-1 text-xs font-extrabold tabular-nums text-red-700"><TrendingDown className="h-3 w-3" />{row.delta.toFixed(1)}</span></div><div className="mt-3 truncate text-sm font-bold text-slate-900" title={reviewUnit(row.latest)}>{reviewUnit(row.latest)}</div><div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500"><MapPin className="h-3 w-3" />{titleGeo(row.latest.state)} · {levelLabel(row.latest)}</div><div className="mt-3 text-xs text-slate-600"><span className="font-bold tabular-nums text-slate-900">{row.before.toFixed(1)}</span><ChevronRight className="mx-1 inline h-3 w-3" /><span className="font-bold tabular-nums text-red-700">{row.current.toFixed(1)}</span></div><div className="mt-1 text-[10px] text-slate-400">{formatDate(row.previous.createdAt)} to {formatDate(row.latest.createdAt)}</div></div>)}</div> : regressions.length ? <div className="flex items-center gap-2 px-5 py-6 text-sm font-semibold text-emerald-700"><TrendingUp className="h-4 w-4" />No comparable unit declined in this filtered view.</div> : <div className="flex items-center gap-2 px-5 py-6 text-sm font-semibold text-slate-500"><CalendarClock className="h-4 w-4" />At least two scored reviews of the same unit are required for a like-for-like comparison.</div>}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Follow-up queue</div><div className="mt-1 text-lg font-bold text-slate-950">Largest like-for-like declines</div><p className="mt-1 text-[11px] text-slate-500">Only compares the same portal, DQA level, geography and State DQA file grain — ordered by {basis === "period" ? "data period" : "review date"}.</p></div><TrendingDown className="h-5 w-5 text-red-500" /></div>
+            {regressions.filter((row) => row.delta < 0).length ? <div className="grid divide-y divide-slate-100 md:grid-cols-2 md:divide-x md:divide-y-0 xl:grid-cols-4">{regressions.filter((row) => row.delta < 0).slice(0, 4).map((row) => <div key={row.latest.id} className="p-4"><div className="flex items-start justify-between gap-2">{portalBadge(row.latest)}<span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-1 text-xs font-extrabold tabular-nums text-red-700"><TrendingDown className="h-3 w-3" />{row.delta.toFixed(1)}</span></div><div className="mt-3 truncate text-sm font-bold text-slate-900" title={reviewUnit(row.latest)}>{reviewUnit(row.latest)}</div><div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500"><MapPin className="h-3 w-3" />{titleGeo(row.latest.state)} · {levelLabel(row.latest)}</div><div className="mt-3 text-xs text-slate-600"><span className="font-bold tabular-nums text-slate-900">{row.before.toFixed(1)}</span><ChevronRight className="mx-1 inline h-3 w-3" /><span className="font-bold tabular-nums text-red-700">{row.current.toFixed(1)}</span></div><div className="mt-1 text-[10px] text-slate-400">{basis === "period" ? `${dataPeriodLabel(row.previous) ?? formatDate(row.previous.createdAt)} → ${dataPeriodLabel(row.latest) ?? formatDate(row.latest.createdAt)}` : `${formatDate(row.previous.createdAt)} → ${formatDate(row.latest.createdAt)}`}</div></div>)}</div> : regressions.length ? <div className="flex items-center gap-2 px-5 py-6 text-sm font-semibold text-emerald-700"><TrendingUp className="h-4 w-4" />No comparable unit declined in this filtered view.</div> : <div className="flex items-center gap-2 px-5 py-6 text-sm font-semibold text-slate-500"><CalendarClock className="h-4 w-4" />At least two scored reviews of the same unit are required for a like-for-like comparison.</div>}
           </GlassPanel>
 
           <GlassPanel className="overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Audit trail</div><div className="mt-1 text-lg font-bold text-slate-950">Saved review history</div></div><div className="text-xs font-semibold text-slate-500">{nf.format(filtered.length)} of {nf.format(accessible.length)} accessible records</div></div>
-            <div className="max-h-[560px] overflow-auto"><table className="w-full min-w-[1180px] text-sm"><thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500"><th className="px-4 py-3">Review date</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Level</th><th className="px-4 py-3">Geography</th><th className="px-4 py-3">Period</th><th className="px-4 py-3">Reviewed by</th>{METRICS.map((item) => <th key={item.value} className={`px-3 py-3 text-right ${metric === item.value ? "bg-slate-100 text-slate-900" : ""}`}>{item.label}</th>)}<th className="px-4 py-3">Saved by</th><th className="px-4 py-3 text-center">Action</th></tr></thead><tbody>{[...filtered].reverse().map((snapshot) => <tr key={snapshot.id} className="border-t border-slate-100 bg-white/50 transition hover:bg-white"><td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-700">{formatDate(snapshot.createdAt)}</td><td className="px-4 py-3">{portalBadge(snapshot)}</td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-600">{levelLabel(snapshot)}</td><td className="px-4 py-3"><div className="font-semibold text-slate-800">{reviewUnit(snapshot)}</div><div className="text-[10px] text-slate-400">{titleGeo(snapshot.state)}</div></td><td className="px-4 py-3 text-xs text-slate-500">{snapshot.reportingMonth}</td><td className="px-4 py-3 text-xs font-medium text-slate-600">{snapshot.kpiData?.designation ?? "—"}</td>{METRICS.map((item) => { const value = metricValue(snapshot, item.value); return <td key={item.value} className={`px-3 py-3 text-right font-bold tabular-nums ${metric === item.value ? "bg-slate-50 text-slate-950" : "text-slate-600"}`}>{value === null ? "N/A" : value.toFixed(1)}</td>; })}<td className="max-w-[180px] truncate px-4 py-3 text-xs text-slate-500" title={snapshot.createdBy?.email ?? ""}>{snapshot.createdBy?.email ?? "—"}</td><td className="px-4 py-3 text-center">{snapshot.canDelete ? <button type="button" onClick={() => handleDelete(snapshot.id)} disabled={deletingId === snapshot.id} className="rounded-xl p-2 text-red-500 transition hover:bg-red-50 hover:text-red-700 disabled:opacity-50" title="Delete snapshot"><Trash2 className="h-4 w-4" /></button> : <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">Read only</span>}</td></tr>)}</tbody></table></div>
+            <div className="max-h-[560px] overflow-auto"><table className="w-full min-w-[1320px] text-sm"><thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500"><th className="px-4 py-3">Review date</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Level</th><th className="px-4 py-3">Geography</th><th className="px-4 py-3">Data period</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Reviewed by</th>{METRICS.map((item) => <th key={item.value} className={`px-3 py-3 text-right ${metric === item.value ? "bg-slate-100 text-slate-900" : ""}`}>{item.label}</th>)}<th className="px-4 py-3">Saved by</th><th className="px-4 py-3 text-center">Action</th></tr></thead><tbody>{tableRows.map((snapshot) => <tr key={snapshot.id} className="border-t border-slate-100 bg-white/50 transition hover:bg-white"><td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-700">{formatDate(snapshot.createdAt)}</td><td className="px-4 py-3">{portalBadge(snapshot)}</td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-600">{levelLabel(snapshot)}</td><td className="px-4 py-3"><div className="font-semibold text-slate-800">{reviewUnit(snapshot)}</div><div className="text-[10px] text-slate-400">{titleGeo(snapshot.state)}</div></td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-700">{dataPeriodLabel(snapshot) ?? <span className="font-medium text-slate-400">Not recorded</span>}</td><td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{dataDurationLabel(snapshot)}</td><td className="px-4 py-3 text-xs font-medium text-slate-600">{snapshot.kpiData?.designation ?? "—"}</td>{METRICS.map((item) => { const value = metricValue(snapshot, item.value); return <td key={item.value} className={`px-3 py-3 text-right font-bold tabular-nums ${metric === item.value ? "bg-slate-50 text-slate-950" : "text-slate-600"}`}>{value === null ? "N/A" : value.toFixed(1)}</td>; })}<td className="max-w-[180px] truncate px-4 py-3 text-xs text-slate-500" title={snapshot.createdBy?.email ?? ""}>{snapshot.createdBy?.email ?? "—"}</td><td className="px-4 py-3 text-center">{snapshot.canDelete ? <button type="button" onClick={() => handleDelete(snapshot.id)} disabled={deletingId === snapshot.id} className="rounded-xl p-2 text-red-500 transition hover:bg-red-50 hover:text-red-700 disabled:opacity-50" title="Delete snapshot"><Trash2 className="h-4 w-4" /></button> : <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">Read only</span>}</td></tr>)}</tbody></table></div>
           </GlassPanel>
         </> : null}
 
