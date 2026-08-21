@@ -3,8 +3,16 @@
 // No React, no Firebase — keep it this way so the logic stays
 // verifiable with the esbuild+Node harness technique.
 // ============================================================
-import type { SnapshotRecord } from "./snapshots";
-import { getSnapshotBlock, getSnapshotDqaLevel, normalizePortal } from "./snapshots";
+import type { SnapshotRecord, TrendBasis } from "./snapshots";
+import {
+  getDataPeriod,
+  getSnapshotBlock,
+  getSnapshotDqaLevel,
+  monthsBetween,
+  normalizePortal,
+} from "./snapshots";
+
+export type { TrendBasis };
 
 export const NOT_RECORDED = "Not recorded";
 
@@ -40,6 +48,10 @@ export interface DashboardRecord {
   monthKey: string; // YYYY-MM of the review date (local time)
   periodStart: string | null;
   periodEnd: string | null;
+  /** Every month of data the review analysed; empty when the period was never recorded. */
+  periodMonths: string[];
+  /** How many months of data this one DQA session covered; null when unrecorded. */
+  durationMonths: number | null;
   designation: string;
   purpose: string;
   purposeDetail: string | null;
@@ -64,6 +76,10 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
   const block = getSnapshotBlock(s);
   const isStateDqa = portal === "HMIS_STATE" || portal === "UWIN_STATE" || dqaLevel === "STATE";
   const monthKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}`;
+  // Validated in lib/snapshots — no createdAt fallback, so a review is never
+  // attributed to months it did not analyse.
+  const period = getDataPeriod(s);
+  const periodMonths = period ? monthsBetween(period.start, period.end) : [];
   return {
     id: s.id,
     portal,
@@ -77,8 +93,10 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
     analysisGranularity: s.kpiData?.analysisGranularity ?? null,
     createdAtMs: created.getTime(),
     monthKey,
-    periodStart: s.kpiData?.periodStart ?? null,
-    periodEnd: s.kpiData?.periodEnd ?? null,
+    periodStart: period?.start ?? null,
+    periodEnd: period?.end ?? null,
+    periodMonths,
+    durationMonths: periodMonths.length || null,
     designation: s.kpiData?.designation?.trim() || NOT_RECORDED,
     purpose: s.kpiData?.purpose?.trim() || NOT_RECORDED,
     purposeDetail: s.kpiData?.purposeDetail?.trim() || null,
@@ -100,6 +118,13 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
 // ---------------------------------------------------------------
 
 export interface DashboardFilters {
+  /**
+   * Which time axis the whole dashboard is built on — the month a review was
+   * saved ("review") or the months of data it analysed ("period").
+   */
+  basis: TrendBasis;
+  /** Duration bucket key from `durationBucketKey`, "" = all durations. */
+  duration: string;
   portal: "ALL" | "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
   dqaLevel: "ALL" | "STATE" | "DISTRICT" | "BLOCK";
   granularity: "ALL" | "DISTRICT" | "BLOCK";
@@ -113,6 +138,8 @@ export interface DashboardFilters {
 }
 
 export const EMPTY_DASHBOARD_FILTERS: DashboardFilters = {
+  basis: "review",
+  duration: "",
   portal: "ALL",
   dqaLevel: "ALL",
   granularity: "ALL",
@@ -131,7 +158,10 @@ export function applyDashboardFilters(
 ): DashboardRecord[] {
   const fromMs = f.dateFrom ? new Date(`${f.dateFrom}T00:00:00`).getTime() : null;
   const toMs = f.dateTo ? new Date(`${f.dateTo}T23:59:59.999`).getTime() : null;
+  const fromMonth = f.dateFrom ? f.dateFrom.slice(0, 7) : "";
+  const toMonth = f.dateTo ? f.dateTo.slice(0, 7) : "";
   return records.filter((r) => {
+    if (f.duration && durationBucketKey(r) !== f.duration) return false;
     if (f.portal !== "ALL" && r.portal !== f.portal) return false;
     if (f.dqaLevel !== "ALL" && r.dqaLevel !== f.dqaLevel) return false;
     if (f.granularity !== "ALL" && r.analysisGranularity !== f.granularity) return false;
@@ -140,10 +170,23 @@ export function applyDashboardFilters(
     if (f.block && r.blockKey !== f.block) return false;
     if (f.designation && r.designation !== f.designation) return false;
     if (f.purpose && r.purpose !== f.purpose) return false;
+    if (f.basis === "period") {
+      // Month-grain overlap: keep any review whose analysed period intersects the
+      // window. A review with no recorded period can only survive an open window.
+      if (r.periodMonths.length === 0) return !fromMonth && !toMonth;
+      if (fromMonth && r.periodEnd! < fromMonth) return false;
+      if (toMonth && r.periodStart! > toMonth) return false;
+      return true;
+    }
     if (fromMs !== null && r.createdAtMs < fromMs) return false;
     if (toMs !== null && r.createdAtMs > toMs) return false;
     return true;
   });
+}
+
+/** Month buckets a record contributes to on the selected axis. */
+export function recordMonths(r: DashboardRecord, basis: TrendBasis): string[] {
+  return basis === "review" ? [r.monthKey] : r.periodMonths;
 }
 
 // ---------------------------------------------------------------
@@ -335,22 +378,31 @@ function nextMonthKey(key: string): string {
   return `${ny}-${String(nm).padStart(2, "0")}`;
 }
 
-export function groupByMonth(records: DashboardRecord[]): MonthBucket[] {
+/**
+ * On the "period" axis a review that analysed Apr–Jun counts in all three months,
+ * because its score describes that whole window. Reviews with no recorded period
+ * contribute to no month at all and simply drop out of the time charts.
+ */
+export function groupByMonth(records: DashboardRecord[], basis: TrendBasis = "review"): MonthBucket[] {
   if (records.length === 0) return [];
   const byMonth = new Map<
     string,
     { hmis: number; uwin: number; pcts: number; stateHmis: number; scores: number[] }
   >();
   for (const r of records) {
-    const bucket = byMonth.get(r.monthKey) ?? { hmis: 0, uwin: 0, pcts: 0, stateHmis: 0, scores: [] };
-    if (r.portal === "HMIS_STATE") bucket.stateHmis += 1;
-    else if (r.portal === "UWIN_STATE" || r.portal === "UWIN") bucket.uwin += 1;
-    else if (r.portal === "PCTS") bucket.pcts += 1;
-    else bucket.hmis += 1;
-    bucket.scores.push(r.overall);
-    byMonth.set(r.monthKey, bucket);
+    for (const month of recordMonths(r, basis)) {
+      const bucket = byMonth.get(month) ?? { hmis: 0, uwin: 0, pcts: 0, stateHmis: 0, scores: [] };
+      if (r.portal === "HMIS_STATE") bucket.stateHmis += 1;
+      else if (r.portal === "UWIN_STATE" || r.portal === "UWIN") bucket.uwin += 1;
+      else if (r.portal === "PCTS") bucket.pcts += 1;
+      else bucket.hmis += 1;
+      bucket.scores.push(r.overall);
+      byMonth.set(month, bucket);
+    }
   }
   const keys = [...byMonth.keys()].sort();
+  // Every record may lack a period on the data axis, leaving nothing to plot.
+  if (keys.length === 0) return [];
   const result: MonthBucket[] = [];
   // Fill gaps so the time axis is continuous (empty months render as zero).
   let cursor = keys[0];
@@ -372,6 +424,145 @@ export function groupByMonth(records: DashboardRecord[]): MonthBucket[] {
     guard += 1;
   }
   return result;
+}
+
+// ---------------------------------------------------------------
+// Review depth — how many months of data one DQA session covered
+// ---------------------------------------------------------------
+
+/**
+ * Durations past a year are rare and long-tailed, so everything above
+ * MAX_DURATION_BUCKET collapses into one "12+ months" bin rather than stretching
+ * the axis with mostly-empty columns.
+ */
+export const MAX_DURATION_BUCKET = 12;
+export const DURATION_OVERFLOW_KEY = `${MAX_DURATION_BUCKET}+`;
+export const DURATION_UNKNOWN_KEY = "unknown";
+
+/** Stable bucket id for one record — also what the duration filter matches on. */
+export function durationBucketKey(r: Pick<DashboardRecord, "durationMonths">): string {
+  if (r.durationMonths === null) return DURATION_UNKNOWN_KEY;
+  return r.durationMonths > MAX_DURATION_BUCKET ? DURATION_OVERFLOW_KEY : String(r.durationMonths);
+}
+
+export function durationBucketLabel(key: string): string {
+  if (key === DURATION_UNKNOWN_KEY) return NOT_RECORDED;
+  if (key === DURATION_OVERFLOW_KEY) return `More than ${MAX_DURATION_BUCKET} months`;
+  return `${key} month${key === "1" ? "" : "s"}`;
+}
+
+/** Compact axis tick, e.g. "1 mo", "12+". */
+export function durationBucketShort(key: string): string {
+  if (key === DURATION_UNKNOWN_KEY) return "Not rec.";
+  if (key === DURATION_OVERFLOW_KEY) return DURATION_OVERFLOW_KEY;
+  return `${key} mo`;
+}
+
+export interface DurationRow {
+  key: string;
+  label: string;
+  short: string;
+  /** Exact month count, null for the overflow and unrecorded bins. */
+  months: number | null;
+  total: number;
+  hmis: number;
+  uwin: number;
+  pcts: number;
+  stateHmis: number;
+  avgOverall: number | null;
+  /** Distinct people who saved a review of this length. */
+  reviewers: number;
+  /** Share of all records in the slice, 0–100. */
+  share: number;
+}
+
+export interface DurationBreakdown {
+  rows: DurationRow[];
+  /** Records that actually carry a period — the base for mode/median/mean. */
+  scored: number;
+  /** Records with no recorded period; excluded from mode/median/mean. */
+  missing: number;
+  /** Most common duration in months, null when nothing is recorded. */
+  modeMonths: number | null;
+  medianMonths: number | null;
+  meanMonths: number | null;
+  maxMonths: number | null;
+  /** Total months of data reviewed across the slice. */
+  totalMonthsReviewed: number;
+}
+
+/**
+ * Distribution of "how long a window did one DQA session cover" — one bin per
+ * month count. Bins run contiguously from 1 to the longest observed duration so
+ * an empty middle bin still shows as a gap in the histogram rather than being
+ * silently dropped; unrecorded reviews get their own trailing bin.
+ */
+export function groupByDuration(records: DashboardRecord[]): DurationBreakdown {
+  const byKey = new Map<string, DashboardRecord[]>();
+  const durations: number[] = [];
+  for (const r of records) {
+    const key = durationBucketKey(r);
+    const list = byKey.get(key) ?? [];
+    list.push(r);
+    byKey.set(key, list);
+    if (r.durationMonths !== null) durations.push(r.durationMonths);
+  }
+
+  const maxObserved = durations.length ? Math.max(...durations) : 0;
+  const contiguousTop = Math.min(maxObserved, MAX_DURATION_BUCKET);
+  const keys: string[] = [];
+  for (let m = 1; m <= contiguousTop; m += 1) keys.push(String(m));
+  if (byKey.has(DURATION_OVERFLOW_KEY)) keys.push(DURATION_OVERFLOW_KEY);
+  if (byKey.has(DURATION_UNKNOWN_KEY)) keys.push(DURATION_UNKNOWN_KEY);
+
+  const total = records.length;
+  const rows: DurationRow[] = keys.map((key) => {
+    const list = byKey.get(key) ?? [];
+    return {
+      key,
+      label: durationBucketLabel(key),
+      short: durationBucketShort(key),
+      months: key === DURATION_OVERFLOW_KEY || key === DURATION_UNKNOWN_KEY ? null : Number(key),
+      total: list.length,
+      hmis: list.filter((r) => r.portal === "HMIS").length,
+      uwin: list.filter((r) => r.portal === "UWIN" || r.portal === "UWIN_STATE").length,
+      pcts: list.filter((r) => r.portal === "PCTS").length,
+      stateHmis: list.filter((r) => r.portal === "HMIS_STATE").length,
+      avgOverall: mean(list.map((r) => r.overall)),
+      reviewers: new Set(list.map((r) => r.savedBy).filter(Boolean)).size,
+      share: total === 0 ? 0 : (list.length / total) * 100,
+    };
+  });
+
+  const sorted = [...durations].sort((a, b) => a - b);
+  let modeMonths: number | null = null;
+  let bestCount = 0;
+  const counts = new Map<number, number>();
+  for (const d of durations) counts.set(d, (counts.get(d) ?? 0) + 1);
+  // Ties resolve to the shorter duration — the conservative reading of "typical".
+  for (const monthCount of [...counts.keys()].sort((a, b) => a - b)) {
+    const c = counts.get(monthCount)!;
+    if (c > bestCount) {
+      bestCount = c;
+      modeMonths = monthCount;
+    }
+  }
+  const medianMonths = sorted.length
+    ? sorted.length % 2 === 1
+      ? sorted[(sorted.length - 1) / 2]
+      : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+    : null;
+
+  return {
+    rows,
+    scored: durations.length,
+    missing: records.length - durations.length,
+    modeMonths,
+    medianMonths,
+    meanMonths: mean(durations),
+    maxMonths: sorted.length ? sorted[sorted.length - 1] : null,
+    totalMonthsReviewed: durations.reduce((a, b) => a + b, 0),
+  };
 }
 
 // ---------------------------------------------------------------

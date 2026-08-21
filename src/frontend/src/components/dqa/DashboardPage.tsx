@@ -4,10 +4,13 @@ import {
   AlertTriangle,
   Building2,
   CalendarClock,
+  CalendarRange,
   ChevronRight,
   ClipboardList,
   Download,
   Gauge,
+  Hourglass,
+  Info,
   Layers3,
   LayoutDashboard,
   MapPin,
@@ -21,18 +24,23 @@ import type { SnapshotRecord } from "../../lib/snapshots";
 import {
   applyDashboardFilters,
   computeDashboardStats,
+  durationBucketLabel,
   EMPTY_DASHBOARD_FILTERS,
   groupByCategory,
+  groupByDuration,
   groupByGeo,
   groupByMonth,
+  NOT_RECORDED,
   presetRange,
   toDashboardRecord,
   type CategoryRow,
   type DashboardFilters,
   type DashboardRecord,
   type DatePreset,
+  type DurationBreakdown,
   type GeoLevel,
   type MonthBucket,
+  type TrendBasis,
 } from "../../lib/dashboard";
 import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
 import { downloadElementPNG } from "../../lib/dqa/exportUtils";
@@ -51,6 +59,17 @@ const AXIS_TEXT = "#64748b";
 
 interface Props {
   auth: AuthState;
+}
+
+const BASES: Array<{ value: TrendBasis; label: string; hint: string }> = [
+  { value: "review", label: "Review date", hint: "Every review counts in the month its DQA was saved." },
+  { value: "period", label: "Data period", hint: "Every review counts across the months of data it analysed." },
+];
+
+/** Last calendar day of a month key — built by hand so IST never rolls it back a day. */
+function monthEnd(key: string): string {
+  const [year, month] = key.split("-").map(Number);
+  return `${key}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
 }
 
 const nf = new Intl.NumberFormat("en-IN");
@@ -441,13 +460,20 @@ function PortalLegend({
 // Monthly activity — stacked columns (SVG)
 // ---------------------------------------------------------------
 
-function niceMax(n: number): number {
-  if (n <= 4) return 4;
-  const pow = 10 ** Math.floor(Math.log10(n));
-  for (const m of [1, 2, 2.5, 5, 10]) {
-    if (n <= m * pow) return Math.ceil(m * pow);
-  }
-  return n;
+/**
+ * Count axis: the smallest "nice" step (1/2/5 x a power of ten) that keeps the
+ * gridline count to five or fewer, with the plot topping out at the first
+ * multiple of that step above the data. Gridlines are always whole reviews.
+ */
+function countScale(maxValue: number): { max: number; ticks: number[] } {
+  const value = Math.max(1, Math.ceil(maxValue));
+  const pow = 10 ** Math.max(0, Math.floor(Math.log10(value / 4)));
+  const steps = [1, 2, 5, 10].map((m) => m * pow);
+  const step = steps.find((candidate) => Math.ceil(value / candidate) <= 5) ?? steps[steps.length - 1];
+  const max = step * Math.ceil(value / step);
+  const ticks: number[] = [];
+  for (let tick = 0; tick <= max; tick += step) ticks.push(tick);
+  return { max, ticks };
 }
 
 function MonthlyActivityChart({
@@ -469,11 +495,10 @@ function MonthlyActivityChart({
   const PAD_B = 26;
   const plotW = W - PAD_L - PAD_R;
   const plotH = H - PAD_T - PAD_B;
-  const maxTotal = niceMax(Math.max(1, ...months.map((m) => m.total)));
+  const { max: maxTotal, ticks } = countScale(Math.max(1, ...months.map((m) => m.total)));
   const band = plotW / Math.max(1, months.length);
   const barW = Math.min(24, Math.max(6, band * 0.55));
   const y = (v: number) => PAD_T + plotH - (v / maxTotal) * plotH;
-  const ticks = [0, maxTotal / 4, maxTotal / 2, (3 * maxTotal) / 4, maxTotal].map((t) => Math.round(t));
   const labelEvery = Math.max(1, Math.ceil(months.length / 12));
   const hovered = hover !== null ? months[hover] : null;
 
@@ -490,7 +515,7 @@ function MonthlyActivityChart({
       />
       <div ref={exportRef} className="relative">
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="DQA reviews per month, stacked by data source">
-        {[...new Set(ticks)].map((t) => (
+        {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke={GRID} strokeWidth={1} />
             <text x={PAD_L - 6} y={y(t) + 3} textAnchor="end" fontSize={10} fill={AXIS_TEXT} style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -1058,6 +1083,249 @@ function ScoreDistribution({ records }: { records: DashboardRecord[] }) {
 }
 
 // ---------------------------------------------------------------
+// Review depth — months of data analysed per DQA session (histogram)
+// ---------------------------------------------------------------
+
+function DurationHistogram({
+  breakdown,
+  showHmis,
+  showStateHmis,
+  activeKey,
+  onSelect,
+}: {
+  breakdown: DurationBreakdown;
+  showHmis: boolean;
+  showStateHmis: boolean;
+  activeKey?: string;
+  onSelect?: (key: string) => void;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
+  const rows = breakdown.rows;
+  const W = 720;
+  const H = 244;
+  const PAD_L = 36;
+  const PAD_R = 8;
+  const PAD_T = 24; // headroom for the direct count labels above a full-height bar
+  const PAD_B = 26;
+  const plotW = W - PAD_L - PAD_R;
+  const plotH = H - PAD_T - PAD_B;
+  const { max: maxTotal, ticks } = countScale(Math.max(1, ...rows.map((r) => r.total)));
+  const band = plotW / Math.max(1, rows.length);
+  const barW = Math.min(46, Math.max(8, band * 0.6));
+  const y = (v: number) => PAD_T + plotH - (v / maxTotal) * plotH;
+  // A number above every column is only legible while the bins stay few; past
+  // that the axis and the tooltip carry the values.
+  const showValueLabels = rows.length <= 10;
+  const hovered = hover !== null ? rows[hover] : null;
+
+  if (rows.length === 0) {
+    return <div className="flex h-[200px] items-center justify-center text-sm font-medium text-slate-400">No reviews in this slice.</div>;
+  }
+
+  return (
+    <div>
+      <GraphDownloadButton
+        label="months of data per review"
+        onDownload={async () => {
+          setHover(null);
+          await waitForPaint();
+          await downloadDashboardGraph(exportRef.current, "Months of data per review");
+        }}
+      />
+      <div ref={exportRef} className="relative">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Number of DQA reviews by how many months of data each review analysed, stacked by data source">
+          {ticks.map((t) => (
+            <g key={t}>
+              <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke={GRID} strokeWidth={1} />
+              <text x={PAD_L - 6} y={y(t) + 3} textAnchor="end" fontSize={10} fill={AXIS_TEXT} style={{ fontVariantNumeric: "tabular-nums" }}>
+                {fmtCount(t)}
+              </text>
+            </g>
+          ))}
+          {rows.map((row, i) => {
+            const cx = PAD_L + band * i + band / 2;
+            const x0 = cx - barW / 2;
+            const hmisH = (row.hmis / maxTotal) * plotH;
+            const uwinH = (row.uwin / maxTotal) * plotH;
+            const pctsH = (row.pcts / maxTotal) * plotH;
+            const stateH = (row.stateHmis / maxTotal) * plotH;
+            // 2px surface gaps separate stacked segments — never a stroke.
+            const gapUwin = row.uwin > 0 && row.hmis > 0 ? 2 : 0;
+            const gapPcts = row.pcts > 0 && (row.hmis > 0 || row.uwin > 0) ? 2 : 0;
+            const gapState = row.stateHmis > 0 && (row.hmis > 0 || row.uwin > 0 || row.pcts > 0) ? 2 : 0;
+            const hmisY = PAD_T + plotH - hmisH;
+            const uwinY = hmisY - gapUwin - uwinH;
+            const pctsY = uwinY - gapPcts - pctsH;
+            const stateY = pctsY - gapState - stateH;
+            const topY = row.stateHmis > 0 ? stateY : row.pcts > 0 ? pctsY : row.uwin > 0 ? uwinY : hmisY;
+            const isActive = activeKey === row.key;
+            const capR = 4;
+            return (
+              <g key={row.key} opacity={activeKey && !isActive ? 0.45 : 1}>
+                {row.hmis > 0 ? (
+                  row.uwin > 0 || row.pcts > 0 || row.stateHmis > 0 ? (
+                    <rect x={x0} y={hmisY} width={barW} height={hmisH} fill={HMIS_COLOR} />
+                  ) : (
+                    <path d={roundedTopBar(x0, hmisY, barW, hmisH, capR)} fill={HMIS_COLOR} />
+                  )
+                ) : null}
+                {row.uwin > 0 ? (
+                  row.pcts > 0 || row.stateHmis > 0 ? (
+                    <rect x={x0} y={uwinY} width={barW} height={uwinH} fill={UWIN_COLOR} />
+                  ) : (
+                    <path d={roundedTopBar(x0, uwinY, barW, uwinH, capR)} fill={UWIN_COLOR} />
+                  )
+                ) : null}
+                {row.pcts > 0 ? (
+                  row.stateHmis > 0 ? (
+                    <rect x={x0} y={pctsY} width={barW} height={pctsH} fill={PCTS_COLOR} />
+                  ) : (
+                    <path d={roundedTopBar(x0, pctsY, barW, pctsH, capR)} fill={PCTS_COLOR} />
+                  )
+                ) : null}
+                {row.stateHmis > 0 ? <path d={roundedTopBar(x0, stateY, barW, stateH, capR)} fill={STATE_HMIS_COLOR} /> : null}
+                {showValueLabels && row.total > 0 ? (
+                  <text x={cx} y={topY - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={INK} style={{ fontVariantNumeric: "tabular-nums" }}>
+                    {fmtCount(row.total)}
+                  </text>
+                ) : null}
+                <text x={cx} y={H - 8} textAnchor="middle" fontSize={10} fill={AXIS_TEXT}>
+                  {row.short}
+                </text>
+                <rect
+                  x={PAD_L + band * i}
+                  y={PAD_T}
+                  width={band}
+                  height={plotH}
+                  fill="transparent"
+                  tabIndex={0}
+                  role={onSelect ? "button" : undefined}
+                  style={{ cursor: onSelect ? "pointer" : "default" }}
+                  aria-label={`${row.label}: ${row.total} review${row.total === 1 ? "" : "s"} by ${row.reviewers} reviewer${row.reviewers === 1 ? "" : "s"} (${row.share.toFixed(0)}% of this slice)`}
+                  onMouseEnter={() => setHover(i)}
+                  onMouseLeave={() => setHover(null)}
+                  onFocus={() => setHover(i)}
+                  onBlur={() => setHover(null)}
+                  onClick={() => onSelect?.(row.key)}
+                />
+                {hover === i && row.total > 0 ? (
+                  <rect
+                    x={x0 - 2}
+                    y={topY - 2}
+                    width={barW + 4}
+                    height={4 + hmisH + uwinH + pctsH + stateH + gapUwin + gapPcts + gapState}
+                    fill="none"
+                    stroke={INK}
+                    strokeOpacity={0.25}
+                    strokeWidth={1}
+                    rx={5}
+                  />
+                ) : null}
+              </g>
+            );
+          })}
+          <line x1={PAD_L} x2={W - PAD_R} y1={PAD_T + plotH} y2={PAD_T + plotH} stroke="#cbd5e1" strokeWidth={1} />
+        </svg>
+        {hovered ? (
+          <div
+            className="pointer-events-none absolute z-10 min-w-[170px] rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg"
+            style={{
+              left: `${(((PAD_L + band * (hover as number) + band / 2) / W) * 100).toFixed(2)}%`,
+              top: 0,
+              transform: "translateX(-50%)",
+            }}
+          >
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{hovered.label}</div>
+            <div className="mt-1 space-y-0.5">
+              {showHmis ? (
+                <div className="flex items-center justify-between gap-4 text-sm">
+                  <span className="inline-flex items-center gap-1.5 text-xs text-slate-500"><span className="h-0.5 w-3 rounded" style={{ background: HMIS_COLOR }} /> HMIS</span>
+                  <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.hmis)}</span>
+                </div>
+              ) : null}
+              {showStateHmis ? (
+                <div className="flex items-center justify-between gap-4 text-sm">
+                  <span className="inline-flex items-center gap-1.5 text-xs text-slate-500"><span className="h-0.5 w-3 rounded" style={{ background: STATE_HMIS_COLOR }} /> State DQA</span>
+                  <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.stateHmis)}</span>
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="inline-flex items-center gap-1.5 text-xs text-slate-500"><span className="h-0.5 w-3 rounded" style={{ background: UWIN_COLOR }} /> U-WIN</span>
+                <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.uwin)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="inline-flex items-center gap-1.5 text-xs text-slate-500"><span className="h-0.5 w-3 rounded" style={{ background: PCTS_COLOR }} /> PCTS</span>
+                <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.pcts)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 border-t border-slate-100 pt-0.5 text-sm">
+                <span className="text-xs text-slate-500">Reviews</span>
+                <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.total)} · {hovered.share.toFixed(0)}%</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="text-xs text-slate-500">Reviewers</span>
+                <span className="font-bold tabular-nums text-slate-900">{fmtCount(hovered.reviewers)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="text-xs text-slate-500">Avg score</span>
+                <span className="font-bold tabular-nums text-slate-900">{fmtScore(hovered.avgOverall)}</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DurationSummary({ breakdown }: { breakdown: DurationBreakdown }) {
+  const modeRow = breakdown.modeMonths === null
+    ? null
+    : breakdown.rows.find((r) => r.months === breakdown.modeMonths) ?? null;
+  const fmtMonths = (value: number | null) =>
+    value === null ? "—" : `${Number.isInteger(value) ? value : value.toFixed(1)} month${value === 1 ? "" : "s"}`;
+  const stat = (label: string, value: string, hint?: string) => (
+    <div className="flex items-baseline justify-between gap-3 border-t border-slate-100 py-2">
+      <span className="text-xs font-semibold text-slate-600">{label}</span>
+      <span className="text-right">
+        <span className="text-sm font-bold tabular-nums text-slate-900">{value}</span>
+        {hint ? <span className="ml-1.5 text-[11px] font-medium text-slate-400">{hint}</span> : null}
+      </span>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Typical depth</div>
+      <div className="mt-1 flex items-end gap-2">
+        <span className="text-4xl font-extrabold tabular-nums text-slate-950">
+          {breakdown.modeMonths === null ? "—" : breakdown.modeMonths}
+        </span>
+        <span className="pb-1.5 text-sm font-semibold text-slate-500">
+          {breakdown.modeMonths === 1 ? "month of data" : "months of data"}
+        </span>
+      </div>
+      <div className="mt-1 text-[11px] font-medium text-slate-500">
+        {modeRow
+          ? `${fmtCount(modeRow.total)} of ${fmtCount(breakdown.scored)} dated review${breakdown.scored === 1 ? "" : "s"} (${modeRow.share.toFixed(0)}% of this slice)${modeRow.reviewers > 0 ? `, by ${fmtCount(modeRow.reviewers)} reviewer${modeRow.reviewers === 1 ? "" : "s"}` : ""}`
+          : "No review in this slice has a recorded data period."}
+      </div>
+      <div className="mt-4">
+        {stat("Median", fmtMonths(breakdown.medianMonths))}
+        {stat("Average", fmtMonths(breakdown.meanMonths))}
+        {stat("Longest single review", fmtMonths(breakdown.maxMonths))}
+        {stat("Total months reviewed", fmtCount(breakdown.totalMonthsReviewed), "months of data")}
+      </div>
+      {breakdown.missing > 0 ? (
+        <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-900">
+          {fmtCount(breakdown.missing)} review{breakdown.missing === 1 ? "" : "s"} predate data-period capture and are shown separately as “{NOT_RECORDED}”.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
 // The page
 // ---------------------------------------------------------------
 
@@ -1076,6 +1344,7 @@ export function DashboardPage({ auth }: Props) {
   const [activePreset, setActivePreset] = useState<DatePreset | null>("all");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "total", dir: -1 });
   const [activityTable, setActivityTable] = useState(false);
+  const [durationTable, setDurationTable] = useState(false);
 
   const fetchSnapshots = useCallback(async () => {
     try {
@@ -1121,7 +1390,17 @@ export function DashboardPage({ auth }: Props) {
 
   const filtered = useMemo(() => applyDashboardFilters(records, filters), [records, filters]);
   const stats = useMemo(() => computeDashboardStats(filtered), [filtered]);
-  const months = useMemo(() => groupByMonth(filtered), [filtered]);
+  const months = useMemo(() => groupByMonth(filtered, filters.basis), [filtered, filters.basis]);
+  const durations = useMemo(() => groupByDuration(filtered), [filtered]);
+  const isPeriodBasis = filters.basis === "period";
+  const axisNoun = isPeriodBasis ? "data month" : "review month";
+  // Counted before the date window so the notice still shows when the window
+  // itself is what excluded the period-less records.
+  const scopedMissingPeriod = useMemo(
+    () => applyDashboardFilters(records, { ...filters, dateFrom: "", dateTo: "" }).filter((r) => r.durationMonths === null).length,
+    [records, filters],
+  );
+  const durationOptions = useMemo(() => groupByDuration(records).rows.filter((r) => r.total > 0), [records]);
 
   // ---- filter options (cascading, derived from the scoped data) ----
   const stateOptions = useMemo(() => {
@@ -1307,6 +1586,8 @@ export function DashboardPage({ auth }: Props) {
       fmtDay(r.lastAtMs),
     ]);
     const filterLine = [
+      `Time axis: ${isPeriodBasis ? "data period (months uploaded)" : "review date"}`,
+      filters.duration ? `Review duration: ${durationBucketLabel(filters.duration)}` : "",
       `Source: ${filters.portal}`,
       `DQA type: ${filters.dqaLevel}`,
       filters.granularity !== "ALL" ? `State analysis grain: ${filters.granularity}` : "",
@@ -1392,9 +1673,43 @@ export function DashboardPage({ auth }: Props) {
 
         {/* ── Filter band (scopes everything below) ── */}
         <GlassPanel className="p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Build analytics on</span>
+              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">
+                {BASES.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    title={item.hint}
+                    onClick={() => setFilter({ basis: item.value })}
+                    className={`inline-flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-[11px] font-bold transition ${
+                      filters.basis === item.value ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {item.value === "review" ? <CalendarClock className="h-3.5 w-3.5" /> : <CalendarRange className="h-3.5 w-3.5" />}
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-500">
+              <Info className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              <span>
+                {isPeriodBasis
+                  ? "Time charts place each review across every month of data it analysed."
+                  : "Time charts place each review on the month its DQA was saved."}
+              </span>
+              {isPeriodBasis && scopedMissingPeriod > 0 ? (
+                <span className="rounded-full bg-amber-50 px-2 py-1 font-bold text-amber-800">
+                  {fmtCount(scopedMissingPeriod)} review{scopedMissingPeriod === 1 ? "" : "s"} have no recorded data period and cannot be placed on this axis
+                </span>
+              ) : null}
+            </div>
+          </div>
           <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
             <label className="block lg:col-span-2">
-              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Review date</span>
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{isPeriodBasis ? "Data period" : "Review date"}</span>
               <div className="flex items-center gap-1.5">
                 {presets.map((p) => (
                   <button
@@ -1417,28 +1732,52 @@ export function DashboardPage({ auth }: Props) {
               </div>
             </label>
             <label className="block">
-              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">From</span>
-              <input
-                type="date"
-                value={filters.dateFrom}
-                onChange={(e) => {
-                  setActivePreset(null);
-                  setFilter({ dateFrom: e.target.value });
-                }}
-                className={selectClass}
-              />
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{isPeriodBasis ? "From month" : "From"}</span>
+              {isPeriodBasis ? (
+                <input
+                  type="month"
+                  value={filters.dateFrom.slice(0, 7)}
+                  onChange={(e) => {
+                    setActivePreset(null);
+                    setFilter({ dateFrom: e.target.value ? `${e.target.value}-01` : "" });
+                  }}
+                  className={selectClass}
+                />
+              ) : (
+                <input
+                  type="date"
+                  value={filters.dateFrom}
+                  onChange={(e) => {
+                    setActivePreset(null);
+                    setFilter({ dateFrom: e.target.value });
+                  }}
+                  className={selectClass}
+                />
+              )}
             </label>
             <label className="block">
-              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">To</span>
-              <input
-                type="date"
-                value={filters.dateTo}
-                onChange={(e) => {
-                  setActivePreset(null);
-                  setFilter({ dateTo: e.target.value });
-                }}
-                className={selectClass}
-              />
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{isPeriodBasis ? "To month" : "To"}</span>
+              {isPeriodBasis ? (
+                <input
+                  type="month"
+                  value={filters.dateTo.slice(0, 7)}
+                  onChange={(e) => {
+                    setActivePreset(null);
+                    setFilter({ dateTo: e.target.value ? monthEnd(e.target.value) : "" });
+                  }}
+                  className={selectClass}
+                />
+              ) : (
+                <input
+                  type="date"
+                  value={filters.dateTo}
+                  onChange={(e) => {
+                    setActivePreset(null);
+                    setFilter({ dateTo: e.target.value });
+                  }}
+                  className={selectClass}
+                />
+              )}
             </label>
             <label className="block">
               <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Data source</span>
@@ -1552,6 +1891,19 @@ export function DashboardPage({ auth }: Props) {
                 ))}
               </select>
             </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Review duration</span>
+              <select
+                value={filters.duration}
+                onChange={(e) => setFilter({ duration: e.target.value })}
+                className={selectClass}
+              >
+                <option value="">Any duration</option>
+                {durationOptions.map((row) => (
+                  <option key={row.key} value={row.key}>{row.label}</option>
+                ))}
+              </select>
+            </label>
             <div className="flex items-end">
               {hasActiveFilters ? (
                 <button
@@ -1640,7 +1992,7 @@ export function DashboardPage({ auth }: Props) {
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">DQA activity</div>
-                      <div className="text-sm font-bold text-slate-900">Reviews per month</div>
+                      <div className="text-sm font-bold text-slate-900">Reviews per {axisNoun}</div>
                     </div>
                     <div className="flex items-center gap-3">
                       <PortalLegend hmis={showHmis} stateHmis={showStateHmis} uwin={showUwin} pcts={showPcts} />
@@ -1655,13 +2007,17 @@ export function DashboardPage({ auth }: Props) {
                     </div>
                   </div>
                   {months.length === 0 ? (
-                    <div className="flex h-[200px] items-center justify-center text-sm font-medium text-slate-400">No reviews in this slice.</div>
+                    <div className="flex h-[200px] items-center justify-center px-6 text-center text-sm font-medium text-slate-400">
+                      {isPeriodBasis && scopedMissingPeriod > 0
+                        ? "No review in this slice has a recorded data period — switch the axis back to review date."
+                        : "No reviews in this slice."}
+                    </div>
                   ) : activityTable ? (
                     <div className="max-h-[240px] overflow-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                            <th className="px-2 py-1.5">Month</th>
+                            <th className="px-2 py-1.5">{isPeriodBasis ? "Data month" : "Review month"}</th>
                             {showHmis ? <th className="px-2 py-1.5 text-right">HMIS</th> : null}
                             {showStateHmis ? <th className="px-2 py-1.5 text-right">State DQA</th> : null}
                             <th className="px-2 py-1.5 text-right">U-WIN</th>
@@ -1692,13 +2048,89 @@ export function DashboardPage({ auth }: Props) {
                 <GlassPanel data-dashboard-graph="average-score-by-month" className="p-5">
                   <div className="mb-3">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Data quality</div>
-                    <div className="text-sm font-bold text-slate-900">Average overall score by month</div>
+                    <div className="text-sm font-bold text-slate-900">Average overall score by {axisNoun}</div>
                   </div>
                   {months.length === 0 ? (
                     <div className="flex h-[200px] items-center justify-center text-sm font-medium text-slate-400">No reviews in this slice.</div>
                   ) : (
                     <ScoreTrendChart months={months} />
                   )}
+                </GlassPanel>
+              </div>
+
+              {/* ── Review depth ──────────────────── */}
+              <div className="grid gap-4 lg:grid-cols-3">
+                <GlassPanel data-dashboard-graph="months-of-data-per-review" className="p-5 lg:col-span-2">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Review depth</div>
+                      <div className="text-sm font-bold text-slate-900">Months of data analysed per review</div>
+                      <div className="mt-0.5 text-[11px] text-slate-500">How long a window each single DQA session covered — click a column to scope the dashboard to it.</div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <PortalLegend hmis={showHmis} stateHmis={showStateHmis} uwin={showUwin} pcts={showPcts} />
+                      <button
+                        type="button"
+                        onClick={() => setDurationTable((v) => !v)}
+                        data-html2canvas-ignore="true"
+                        className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                      >
+                        {durationTable ? "Chart" : "Table"}
+                      </button>
+                    </div>
+                  </div>
+                  {durationTable ? (
+                    <div className="max-h-[260px] overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            <th className="px-2 py-1.5">Duration</th>
+                            {showHmis ? <th className="px-2 py-1.5 text-right">HMIS</th> : null}
+                            {showStateHmis ? <th className="px-2 py-1.5 text-right">State DQA</th> : null}
+                            <th className="px-2 py-1.5 text-right">U-WIN</th>
+                            <th className="px-2 py-1.5 text-right">PCTS</th>
+                            <th className="px-2 py-1.5 text-right">Reviews</th>
+                            <th className="px-2 py-1.5 text-right">Reviewers</th>
+                            <th className="px-2 py-1.5 text-right">Share</th>
+                            <th className="px-2 py-1.5 text-right">Avg score</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {durations.rows.map((row) => (
+                            <tr key={row.key} className="border-t border-slate-100">
+                              <td className="px-2 py-1.5 font-medium text-slate-700">{row.label}</td>
+                              {showHmis ? <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(row.hmis)}</td> : null}
+                              {showStateHmis ? <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(row.stateHmis)}</td> : null}
+                              <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(row.uwin)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(row.pcts)}</td>
+                              <td className="px-2 py-1.5 text-right font-bold tabular-nums text-slate-900">{fmtCount(row.total)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(row.reviewers)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{row.share.toFixed(0)}%</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtScore(row.avgOverall)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <DurationHistogram
+                      breakdown={durations}
+                      showHmis={showHmis}
+                      showStateHmis={showStateHmis}
+                      activeKey={filters.duration || undefined}
+                      onSelect={(key) => setFilter({ duration: filters.duration === key ? "" : key })}
+                    />
+                  )}
+                </GlassPanel>
+                <GlassPanel className="p-5">
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Session depth</div>
+                      <div className="text-sm font-bold text-slate-900">How much data one DQA covers</div>
+                    </div>
+                    <Hourglass className="h-5 w-5 shrink-0 text-slate-400" />
+                  </div>
+                  <DurationSummary breakdown={durations} />
                 </GlassPanel>
               </div>
 
