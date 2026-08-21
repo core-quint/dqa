@@ -9,6 +9,7 @@ import {
   RefreshCcw,
   RotateCcw,
   Route,
+  Tag,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -80,6 +81,16 @@ interface CoverageMetric {
   totalUnits?: number;
 }
 
+/** What each region prints on the map face. */
+type LabelMode = "off" | "name" | "value" | "both";
+
+const LABEL_MODES: Array<{ value: LabelMode; label: string; hint: string }> = [
+  { value: "off", label: "Off", hint: "No labels on the map" },
+  { value: "name", label: "Name", hint: "Region name only" },
+  { value: "value", label: "Value", hint: "Indicator value only" },
+  { value: "both", label: "Both", hint: "Region name and indicator value" },
+];
+
 interface HoverState {
   x: number;
   y: number;
@@ -144,6 +155,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   const [toMonth, setToMonth] = useState("");
   const [indicator, setIndicator] = useState<CoverageIndicator>("count");
   const [hovered, setHovered] = useState<HoverState | null>(null);
+  const [labelMode, setLabelMode] = useState<LabelMode>("name");
   const [zoomBounds, setZoomBounds] = useState<Bounds | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -568,7 +580,6 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   const effectiveBounds = zoomBounds ?? mapBounds;
   boundsRef.current = effectiveBounds;
 
-  const showLabels = visibleFeatures.length > 0 && visibleFeatures.length <= 55;
   const labelFontSize = (effectiveBounds[2] - effectiveBounds[0]) / 52;
 
   const [topRegions, bottomRegions] = useMemo(() => {
@@ -670,25 +681,54 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   }
 
   // Download
-  function downloadSVG() {
+  /**
+   * Serializes the live map with the ocean rect removed, so exports carry the
+   * shapes only and sit on whatever background they are pasted onto. Explicit
+   * width/height are set on the clone because a raster target needs an
+   * intrinsic size — without it the browser rasterizes at the default 300px
+   * and the result is blurry however large the canvas is.
+   */
+  function exportSvgMarkup(pixelWidth?: number, pixelHeight?: number) {
     const svgEl = svgRef.current;
-    if (!svgEl) return;
-    const serializer = new XMLSerializer();
-    const source = serializer.serializeToString(svgEl);
+    if (!svgEl) return null;
+    const clone = svgEl.cloneNode(true) as SVGSVGElement;
+    clone.removeAttribute("class");
+    clone.removeAttribute("style");
+    for (const node of [...clone.querySelectorAll("[data-map-background]")]) node.remove();
+    if (pixelWidth && pixelHeight) {
+      clone.setAttribute("width", String(pixelWidth));
+      clone.setAttribute("height", String(pixelHeight));
+    } else {
+      clone.setAttribute("width", String(Math.round(svgEl.clientWidth)));
+      clone.setAttribute("height", String(Math.round(svgEl.clientHeight)));
+    }
+    return new XMLSerializer().serializeToString(clone);
+  }
+
+  function downloadSVG() {
+    const source = exportSvgMarkup();
+    if (!source) return;
     const blob = new Blob(['<?xml version="1.0" encoding="utf-8"?>\n', source], {
       type: "image/svg+xml",
     });
-    triggerDownload(URL.createObjectURL(blob), buildFilename("svg"));
+    const url = URL.createObjectURL(blob);
+    triggerDownload(url, buildFilename("svg"));
+    // Deferred: revoking in the same tick can cancel the download in some browsers.
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
   function downloadPNG() {
     const svgEl = svgRef.current;
     if (!svgEl) return;
-    const serializer = new XMLSerializer();
-    const source = serializer.serializeToString(svgEl);
-    const scale = 2;
-    const w = svgEl.clientWidth * scale;
-    const h = svgEl.clientHeight * scale;
+    const cssW = Math.max(1, svgEl.clientWidth);
+    const cssH = Math.max(1, svgEl.clientHeight);
+    // Aim for a ~3200px long edge so the map stays sharp on a projector or in
+    // print, clamped so a very small or very large viewport stays sane.
+    const scale = Math.min(6, Math.max(2, 3200 / cssW));
+    const w = Math.round(cssW * scale);
+    const h = Math.round(cssH * scale);
+    const source = exportSvgMarkup(w, h);
+    if (!source) return;
     const blob = new Blob(['<?xml version="1.0" encoding="utf-8"?>\n', source], {
       type: "image/svg+xml",
     });
@@ -699,11 +739,15 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d")!;
-      ctx.fillStyle = "#f1f5f9";
-      ctx.fillRect(0, 0, w, h);
+      // No fillRect: the canvas starts transparent and PNG keeps the alpha, so
+      // the map arrives with no background of its own.
       ctx.drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(url);
       triggerDownload(canvas.toDataURL("image/png"), buildFilename("png"));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      setSnapshotError("The map could not be rendered as a PNG. Try the SVG download instead.");
     };
     img.src = url;
   }
@@ -1022,11 +1066,37 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                   </div>
                 </div>
 
+                {/* Data label control */}
+                <div>
+                  <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    <Tag className="h-3 w-3" />
+                    Data labels
+                  </div>
+                  <div className="inline-flex rounded-xl border border-slate-200 bg-white/90 p-0.5">
+                    {LABEL_MODES.map((mode) => (
+                      <button
+                        key={mode.value}
+                        type="button"
+                        title={mode.hint}
+                        aria-pressed={labelMode === mode.value}
+                        onClick={() => setLabelMode(mode.value)}
+                        className={`rounded-[10px] px-2.5 py-1.5 text-[11px] font-bold transition ${
+                          labelMode === mode.value
+                            ? "bg-slate-900 text-white"
+                            : "text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Download buttons */}
                 <div className="flex gap-1.5">
                   <button
                     onClick={downloadSVG}
-                    title="Download as SVG"
+                    title="Download as SVG with a transparent background"
                     className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
                   >
                     <Download className="h-3.5 w-3.5" />
@@ -1034,7 +1104,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                   </button>
                   <button
                     onClick={downloadPNG}
-                    title="Download as PNG"
+                    title="Download as a high-resolution PNG with a transparent background"
                     className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
                   >
                     <Download className="h-3.5 w-3.5" />
@@ -1115,8 +1185,10 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                   onMouseUp={handleMouseUp}
                   onMouseLeave={handleMouseUp}
                 >
-                  {/* Ocean/background fill */}
+                  {/* Ocean/background fill — stripped from both exports so the
+                      downloaded map drops onto any slide or document background. */}
                   <rect
+                    data-map-background="true"
                     x={effectiveBounds[0] - 5}
                     y={effectiveBounds[1] - 5}
                     width={effectiveBounds[2] - effectiveBounds[0] + 10}
@@ -1198,7 +1270,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                   </g>
 
                   {/* Label layer */}
-                  {showLabels &&
+                  {labelMode !== "off" &&
                     visibleFeatures.map((feature) => {
                       const cx = (feature.bounds[0] + feature.bounds[2]) / 2;
                       const cy = (feature.bounds[1] + feature.bounds[3]) / 2;
@@ -1207,7 +1279,25 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                       if (featureW < viewW * 0.035) return null;
 
                       const raw = featurePrimaryLabel(feature, displayGrain);
-                      const label = raw.length > 14 ? raw.slice(0, 12) + "…" : raw;
+                      const name = raw.length > 14 ? raw.slice(0, 12) + "…" : raw;
+                      const metric = metricsByFeature.get(feature.id);
+                      // A region with no review has nothing to print — the grey
+                      // fill and the "No data" chip already say so, and stamping an
+                      // em-dash on every uncovered region (sea islands included) is
+                      // pure noise.
+                      const value =
+                        metric?.value !== null && metric?.value !== undefined
+                          ? formatMetric(metric.value, indicator)
+                          : null;
+
+                      // Names are far wider than the shapes they sit in, so cull a
+                      // name that would sprawl across its neighbours. Values are
+                      // short enough that the width test above is enough.
+                      const wideEnoughForName =
+                        name.length * labelFontSize * 0.55 <= featureW * 2;
+                      const withName = labelMode !== "value" && wideEnoughForName;
+                      const withValue = labelMode !== "name" && value !== null;
+                      if (!withName && !withValue) return null;
 
                       return (
                         <text
@@ -1226,7 +1316,16 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                           paintOrder="stroke"
                           style={{ pointerEvents: "none", userSelect: "none" }}
                         >
-                          {label}
+                          {withName && withValue ? (
+                            <>
+                              <tspan x={cx} dy={-labelFontSize * 0.55}>{name}</tspan>
+                              <tspan x={cx} dy={labelFontSize * 1.15} fontWeight="700">{value}</tspan>
+                            </>
+                          ) : withName ? (
+                            name
+                          ) : (
+                            value
+                          )}
                         </text>
                       );
                     })}
