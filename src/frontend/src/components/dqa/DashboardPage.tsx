@@ -42,6 +42,13 @@ import {
   type MonthBucket,
   type TrendBasis,
 } from "../../lib/dashboard";
+import {
+  DISTRICT_SCOPE_OPTIONS,
+  PRIORITY_DISTRICT_TOTAL,
+  districtScopeLabel,
+  inDistrictScope,
+  type DistrictScope,
+} from "../../lib/maps/priorityDistricts";
 import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
 import { downloadElementPNG } from "../../lib/dqa/exportUtils";
 
@@ -356,13 +363,16 @@ function AreaCoverageCard({
   districts,
   blocks,
   facilities,
+  scope,
 }: {
   districts: number;
   blocks: number;
   facilities: number;
+  scope: DistrictScope;
 }) {
+  const priority = scope === "PRIORITY";
   const metrics = [
-    { label: "Districts", value: districts, icon: <MapPin className="h-4 w-4" />, tone: "bg-sky-50 text-sky-700" },
+    { label: priority ? "Priority districts" : "Districts", value: districts, icon: <MapPin className="h-4 w-4" />, tone: "bg-sky-50 text-sky-700" },
     { label: "Blocks", value: blocks, icon: <Layers3 className="h-4 w-4" />, tone: "bg-amber-50 text-amber-700" },
     { label: "Facilities", value: facilities, icon: <Building2 className="h-4 w-4" />, tone: "bg-rose-50 text-rose-700" },
   ];
@@ -379,7 +389,11 @@ function AreaCoverageCard({
             <h2 id="area-covered-kpi" className="mt-1 text-xl font-extrabold tracking-tight text-slate-950">
               Area covered
             </h2>
-            <p className="mt-1 text-xs text-slate-500">Estimated unique district, block and facility footprint</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {priority
+                ? `Footprint inside the ${PRIORITY_DISTRICT_TOTAL} Gavi priority districts`
+                : "Estimated unique district, block and facility footprint"}
+            </p>
           </div>
           <div aria-hidden className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-violet-100 bg-violet-50 text-violet-700">
             <MapPin className="h-5 w-5" />
@@ -1389,7 +1403,7 @@ export function DashboardPage({ auth }: Props) {
   );
 
   const filtered = useMemo(() => applyDashboardFilters(records, filters), [records, filters]);
-  const stats = useMemo(() => computeDashboardStats(filtered), [filtered]);
+  const stats = useMemo(() => computeDashboardStats(filtered, filters.districtScope), [filtered, filters.districtScope]);
   const months = useMemo(() => groupByMonth(filtered, filters.basis), [filtered, filters.basis]);
   const durations = useMemo(() => groupByDuration(filtered), [filtered]);
   const isPeriodBasis = filters.basis === "period";
@@ -1403,30 +1417,37 @@ export function DashboardPage({ auth }: Props) {
   const durationOptions = useMemo(() => groupByDuration(records).rows.filter((r) => r.total > 0), [records]);
 
   // ---- filter options (cascading, derived from the scoped data) ----
+  // Options come from the scoped pool, so narrowing to the Gavi districts never
+  // leaves an excluded geography selectable.
+  const scopedRecords = useMemo(
+    () => records.filter((r) => inDistrictScope(filters.districtScope, r.stateKey, r.districtKey)),
+    [records, filters.districtScope],
+  );
+
   const stateOptions = useMemo(() => {
     const map = new Map<string, string>();
-    for (const r of records) if (r.stateKey) map.set(r.stateKey, r.state);
+    for (const r of scopedRecords) if (r.stateKey) map.set(r.stateKey, r.state);
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [records]);
+  }, [scopedRecords]);
 
   const districtOptions = useMemo(() => {
     const map = new Map<string, string>();
-    for (const r of records) {
+    for (const r of scopedRecords) {
       if (filters.state && r.stateKey !== filters.state) continue;
       if (r.districtKey) map.set(r.districtKey, r.district);
     }
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [records, filters.state]);
+  }, [scopedRecords, filters.state]);
 
   const blockOptions = useMemo(() => {
     const map = new Map<string, string>();
-    for (const r of records) {
+    for (const r of scopedRecords) {
       if (filters.state && r.stateKey !== filters.state) continue;
       if (filters.district && r.districtKey !== filters.district) continue;
       if (r.blockKey && r.block) map.set(r.blockKey, r.block);
     }
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [records, filters.state, filters.district]);
+  }, [scopedRecords, filters.state, filters.district]);
 
   const designationOptions = useMemo(
     () => [...new Set(records.map((r) => r.designation))].sort(),
@@ -1438,13 +1459,13 @@ export function DashboardPage({ auth }: Props) {
   );
 
   // ---- geographic drill level ----
-  const uniqueStates = useMemo(() => new Set(records.map((r) => r.stateKey)).size, [records]);
+  const uniqueStates = useMemo(() => new Set(scopedRecords.map((r) => r.stateKey)).size, [scopedRecords]);
   const geoLevel: GeoLevel = filters.district
     ? "block"
     : filters.state || uniqueStates <= 1
       ? "district"
       : "state";
-  const geo = useMemo(() => groupByGeo(filtered, geoLevel), [filtered, geoLevel]);
+  const geo = useMemo(() => groupByGeo(filtered, geoLevel, filters.districtScope), [filtered, geoLevel, filters.districtScope]);
 
   const designations = useMemo(
     () => groupByCategory(filtered, (r) => r.designation),
@@ -1458,6 +1479,24 @@ export function DashboardPage({ auth }: Props) {
   const setFilter = useCallback((patch: Partial<DashboardFilters>) => {
     setFilters((prev) => ({ ...prev, ...patch }));
   }, []);
+
+  // A geography the scope no longer offers must not stay selected, or every
+  // panel empties with nothing on screen explaining why.
+  useEffect(() => {
+    setFilters((current) => {
+      if (current.districtScope === "ALL") return current;
+      const stateOk = !current.state || stateOptions.some(([key]) => key === current.state);
+      const districtOk = stateOk && (!current.district || districtOptions.some(([key]) => key === current.district));
+      const blockOk = districtOk && (!current.block || blockOptions.some(([key]) => key === current.block));
+      if (stateOk && districtOk && blockOk) return current;
+      return {
+        ...current,
+        state: stateOk ? current.state : "",
+        district: districtOk ? current.district : "",
+        block: blockOk ? current.block : "",
+      };
+    });
+  }, [blockOptions, districtOptions, stateOptions]);
 
   const handleGeoDrill = useCallback(
     (row: BarListRow) => {
@@ -1591,6 +1630,7 @@ export function DashboardPage({ auth }: Props) {
       `Source: ${filters.portal}`,
       `DQA type: ${filters.dqaLevel}`,
       filters.granularity !== "ALL" ? `State analysis grain: ${filters.granularity}` : "",
+      `District scope: ${districtScopeLabel(filters.districtScope)}`,
       filters.state ? `State: ${stateLabel}` : "All states",
       filters.district ? `District: ${districtLabel}` : "",
       filters.designation ? `Designation: ${filters.designation}` : "",
@@ -1647,6 +1687,7 @@ export function DashboardPage({ auth }: Props) {
                 <h1 className="text-lg font-semibold text-slate-900">DQA Analytics Dashboard</h1>
                 <div className="text-xs text-slate-500">
                   {scopeText} · based on saved DQA reviews · {fmtCount(records.length)} record{records.length !== 1 ? "s" : ""} accessible
+                  {filters.districtScope === "PRIORITY" ? " · Gavi priority districts only" : ""}
                 </div>
               </div>
             </div>
@@ -1827,6 +1868,18 @@ export function DashboardPage({ auth }: Props) {
               </select>
             </label>
             <label className="block">
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">District scope</span>
+              <select
+                value={filters.districtScope}
+                onChange={(e) => setFilter({ districtScope: e.target.value as DistrictScope })}
+                className={selectClass}
+              >
+                {DISTRICT_SCOPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
               <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">State</span>
               <select
                 value={filters.state}
@@ -1952,6 +2005,7 @@ export function DashboardPage({ auth }: Props) {
                 <AverageScoreCard overall={stats.avgOverall} metrics={scoreMetrics} />
                 <div className="md:col-span-2 xl:col-span-1">
                   <AreaCoverageCard
+                    scope={filters.districtScope}
                     districts={stats.districts}
                     blocks={stats.blocks}
                     facilities={stats.facilities}
@@ -2322,6 +2376,9 @@ export function DashboardPage({ auth }: Props) {
                 </div>
                 <div className="border-t border-slate-200/70 px-5 py-3 text-[11px] font-medium text-slate-500">
                   * Coverage estimates: snapshots store dataset totals, not identity lists, so each geography uses its single widest review across data sources. Statewide totals are reconciled against their district roll-up, preventing repeat and cross-portal inflation.
+                  {filters.districtScope === "PRIORITY"
+                    ? ` Under the Gavi scope a statewide review's district count is capped at the districts the programme names in that state; its block and facility totals still describe the whole state dataset.`
+                    : ""}
                 </div>
               </GlassPanel>
             </div>

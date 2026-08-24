@@ -11,8 +11,10 @@ import {
   monthsBetween,
   normalizePortal,
 } from "./snapshots";
+import type { DistrictScope } from "./maps/priorityDistricts";
+import { inDistrictScope, priorityDistrictNames } from "./maps/priorityDistricts";
 
-export type { TrendBasis };
+export type { TrendBasis, DistrictScope };
 
 export const NOT_RECORDED = "Not recorded";
 
@@ -128,6 +130,8 @@ export interface DashboardFilters {
   portal: "ALL" | "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
   dqaLevel: "ALL" | "STATE" | "DISTRICT" | "BLOCK";
   granularity: "ALL" | "DISTRICT" | "BLOCK";
+  /** "PRIORITY" keeps only reviews inside the Gavi intervention districts. */
+  districtScope: DistrictScope;
   state: string; // stateKey, "" = all
   district: string; // districtKey, "" = all
   block: string; // blockKey, "" = all
@@ -143,6 +147,7 @@ export const EMPTY_DASHBOARD_FILTERS: DashboardFilters = {
   portal: "ALL",
   dqaLevel: "ALL",
   granularity: "ALL",
+  districtScope: "ALL",
   state: "",
   district: "",
   block: "",
@@ -165,6 +170,8 @@ export function applyDashboardFilters(
     if (f.portal !== "ALL" && r.portal !== f.portal) return false;
     if (f.dqaLevel !== "ALL" && r.dqaLevel !== f.dqaLevel) return false;
     if (f.granularity !== "ALL" && r.analysisGranularity !== f.granularity) return false;
+    // State DQAs carry no district of their own, so they qualify on their state.
+    if (!inDistrictScope(f.districtScope, r.stateKey, r.districtKey)) return false;
     if (f.state && r.stateKey !== f.state) return false;
     if (f.district && r.districtKey !== f.district) return false;
     if (f.block && r.blockKey !== f.block) return false;
@@ -225,7 +232,10 @@ function mean(values: number[]): number | null {
 // review at each geography across every portal, then reconcile state totals
 // against their district roll-up. Repeat reviews and cross-portal snapshots of
 // the same geography therefore never add to the footprint more than once.
-export function computeDashboardStats(records: DashboardRecord[]): DashboardStats {
+export function computeDashboardStats(
+  records: DashboardRecord[],
+  scope: DistrictScope = "ALL",
+): DashboardStats {
   const states = new Set<string>();
   const reviewers = new Set<string>();
 
@@ -258,7 +268,14 @@ export function computeDashboardStats(records: DashboardRecord[]): DashboardStat
       explicitDistrictsByState.set(r.stateKey, set);
     }
     if (stateLevel && r.stateKey && r.districtCount !== null) {
-      maxStateDistrictCount.set(r.stateKey, Math.max(maxStateDistrictCount.get(r.stateKey) ?? 0, r.districtCount));
+      // A statewide review's dataset spans every district in the state. Under
+      // the Gavi scope only the programme's districts count, so cap the claim
+      // at how many of that state's districts the programme actually names.
+      const cap = scope === "PRIORITY" ? priorityDistrictNames(r.stateKey).length : r.districtCount;
+      maxStateDistrictCount.set(
+        r.stateKey,
+        Math.max(maxStateDistrictCount.get(r.stateKey) ?? 0, Math.min(r.districtCount, cap)),
+      );
     }
     if (r.savedBy) reviewers.add(r.savedBy);
 
@@ -594,7 +611,11 @@ export interface GeoBreakdown {
   unattributed: number;
 }
 
-export function groupByGeo(records: DashboardRecord[], level: GeoLevel): GeoBreakdown {
+export function groupByGeo(
+  records: DashboardRecord[],
+  level: GeoLevel,
+  scope: DistrictScope = "ALL",
+): GeoBreakdown {
   const groups = new Map<string, DashboardRecord[]>();
   let unattributed = 0;
   for (const r of records) {
@@ -620,7 +641,7 @@ export function groupByGeo(records: DashboardRecord[], level: GeoLevel): GeoBrea
   }
 
   const rows: GeoRow[] = [...groups.entries()].map(([key, list]) => {
-    const stats = computeDashboardStats(list);
+    const stats = computeDashboardStats(list, scope);
     const first = list[0];
     const label =
       level === "state" ? first.state || "(Unspecified)"

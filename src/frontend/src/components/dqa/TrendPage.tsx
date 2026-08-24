@@ -42,6 +42,12 @@ import {
   snapshotOrderValue,
   snapshotTrendMonths,
 } from "../../lib/snapshots";
+import {
+  DISTRICT_SCOPE_OPTIONS,
+  PRIORITY_DISTRICT_TOTAL,
+  inDistrictScope,
+  type DistrictScope,
+} from "../../lib/maps/priorityDistricts";
 import { GlassPanel } from "../branding/GlassPanel";
 import type { AuthState } from "./LoginPage";
 
@@ -62,6 +68,8 @@ interface TrendFilters {
   portal: TrendPortal;
   level: "ALL" | SnapshotDqaLevel;
   granularity: Granularity;
+  /** "PRIORITY" keeps only reviews inside the Gavi intervention districts. */
+  districtScope: DistrictScope;
   state: string;
   district: string;
   block: string;
@@ -92,6 +100,7 @@ const EMPTY_FILTERS: TrendFilters = {
   portal: "ALL",
   level: "ALL",
   granularity: "ALL",
+  districtScope: "ALL",
   state: "",
   district: "",
   block: "",
@@ -231,32 +240,59 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
     return (hasHmisAccess || portal !== "HMIS") && (hasPctsAccess || portal !== "PCTS");
   }), [snapshots, hasHmisAccess, hasPctsAccess]);
 
+  // Every option list is drawn from the scoped pool, so narrowing to the Gavi
+  // districts cannot leave an excluded geography selectable in a dropdown.
+  const inScope = useMemo(() => (snapshot: SnapshotRecord) => inDistrictScope(
+    filters.districtScope,
+    snapshot.state,
+    getSnapshotDqaLevel(snapshot) === "STATE" ? null : snapshot.district,
+  ), [filters.districtScope]);
+  const scopedPool = useMemo(() => accessible.filter(inScope), [accessible, inScope]);
+
   const stateOptions = useMemo(() => {
     const map = new Map<string, string>();
-    for (const snapshot of accessible) if (snapshot.state) map.set(norm(snapshot.state), titleGeo(snapshot.state));
+    for (const snapshot of scopedPool) if (snapshot.state) map.set(norm(snapshot.state), titleGeo(snapshot.state));
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [accessible]);
+  }, [scopedPool]);
   const districtOptions = useMemo(() => {
     const map = new Map<string, string>();
-    for (const snapshot of accessible) {
+    for (const snapshot of scopedPool) {
       if (filters.state && norm(snapshot.state) !== filters.state) continue;
       if (getSnapshotDqaLevel(snapshot) === "STATE") continue;
       if (snapshot.district) map.set(norm(snapshot.district), titleGeo(snapshot.district));
     }
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [accessible, filters.state]);
+  }, [scopedPool, filters.state]);
   const blockOptions = useMemo(() => {
     const map = new Map<string, string>();
-    for (const snapshot of accessible) {
+    for (const snapshot of scopedPool) {
       if (filters.state && norm(snapshot.state) !== filters.state) continue;
       if (filters.district && norm(snapshot.district) !== filters.district) continue;
       const block = getSnapshotBlock(snapshot);
       if (block) map.set(norm(block), titleGeo(block));
     }
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [accessible, filters.state, filters.district]);
+  }, [scopedPool, filters.state, filters.district]);
 
-  const scoped = useMemo(() => accessible.filter((snapshot) => {
+  // A geography the scope no longer offers must not stay selected, or the chart
+  // empties with nothing on screen explaining why.
+  useEffect(() => {
+    setFilters((current) => {
+      if (current.districtScope === "ALL") return current;
+      const stateOk = !current.state || stateOptions.some(([key]) => key === current.state);
+      const districtOk = stateOk && (!current.district || districtOptions.some(([key]) => key === current.district));
+      const blockOk = districtOk && (!current.block || blockOptions.some(([key]) => key === current.block));
+      if (stateOk && districtOk && blockOk) return current;
+      return {
+        ...current,
+        state: stateOk ? current.state : "",
+        district: districtOk ? current.district : "",
+        block: blockOk ? current.block : "",
+      };
+    });
+  }, [blockOptions, districtOptions, stateOptions]);
+
+  const scoped = useMemo(() => scopedPool.filter((snapshot) => {
     const portal = normalizePortal(snapshot.portal);
     const level = getSnapshotDqaLevel(snapshot);
     if (filters.portal !== "ALL" && portal !== filters.portal) return false;
@@ -266,7 +302,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
     if (filters.district && norm(snapshot.district) !== filters.district) return false;
     if (filters.block && norm(getSnapshotBlock(snapshot)) !== filters.block) return false;
     return true;
-  }), [accessible, filters]);
+  }), [scopedPool, filters]);
 
   // The time window follows the selected axis: review dates on the "review" axis, and
   // an overlap test on data months on the "period" axis.
@@ -428,11 +464,12 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
               </div>
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Metric</span><select value={metric} onChange={(event) => setMetric(event.target.value as Metric)} className={selectClass}>{METRICS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Data source</span><select value={filters.portal} onChange={(event) => { const portal = event.target.value as TrendPortal; const statePortal = portal === "HMIS_STATE" || portal === "UWIN_STATE"; setFilters((current) => ({ ...current, portal, district: statePortal ? "" : current.district, block: statePortal ? "" : current.block })); }} className={selectClass}><option value="ALL">All sources</option>{hasHmisAccess ? <option value="HMIS">HMIS</option> : null}<option value="HMIS_STATE">State DQA</option><option value="UWIN">U-WIN</option><option value="UWIN_STATE">U-WIN State</option>{hasPctsAccess ? <option value="PCTS">PCTS</option> : null}</select></label>
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">DQA level</span><select value={filters.level} onChange={(event) => { const level = event.target.value as TrendFilters["level"]; setFilters((current) => ({ ...current, level, district: level === "STATE" ? "" : current.district, block: level === "STATE" ? "" : current.block })); }} className={selectClass}><option value="ALL">All levels</option><option value="STATE">State DQA</option><option value="DISTRICT">District DQA</option><option value="BLOCK">Block DQA</option></select></label>
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">State file grain</span><select value={filters.granularity} onChange={(event) => setFilters((current) => ({ ...current, granularity: event.target.value as Granularity }))} className={selectClass}><option value="ALL">District & block-wise</option><option value="DISTRICT">District-wise</option><option value="BLOCK">Block-wise</option></select></label>
+            <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">District scope</span><select value={filters.districtScope} onChange={(event) => setFilters((current) => ({ ...current, districtScope: event.target.value as DistrictScope }))} className={selectClass}>{DISTRICT_SCOPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">State</span><select value={filters.state} onChange={(event) => setFilters((current) => ({ ...current, state: event.target.value, district: "", block: "" }))} className={selectClass}><option value="">All states</option>{stateOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">District</span><select value={filters.district} disabled={filters.level === "STATE" || filters.portal === "HMIS_STATE"} onChange={(event) => setFilters((current) => ({ ...current, district: event.target.value, block: "" }))} className={selectClass}><option value="">All districts</option>{districtOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
             <label><span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Block</span><select value={filters.block} disabled={filters.level === "STATE" || filters.portal === "HMIS_STATE"} onChange={(event) => setFilters((current) => ({ ...current, block: event.target.value }))} className={selectClass}><option value="">All blocks</option>{blockOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
@@ -446,6 +483,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
             <Info className="h-3.5 w-3.5 shrink-0 text-slate-400" />
             <span>{basis === "period" ? "Reviews are plotted across every month of data they analysed, so a 3-month upload counts towards all three months." : "Reviews are plotted on the month the DQA was saved, regardless of which months of data were analysed."}</span>
             {basis === "period" && missingPeriod > 0 ? <span className="rounded-full bg-amber-50 px-2 py-1 font-bold text-amber-800">{nf.format(missingPeriod)} review{missingPeriod === 1 ? "" : "s"} in scope have no recorded data period and cannot be plotted on this axis</span> : null}
+            {filters.districtScope === "PRIORITY" ? <span className="rounded-full bg-sky-50 px-2 py-1 font-bold text-sky-800">Limited to the {PRIORITY_DISTRICT_TOTAL} Gavi priority districts</span> : null}
           </div>
         </GlassPanel>
 

@@ -40,6 +40,14 @@ import {
   normalizeGeoName,
   resolveOptionValue,
 } from "../../lib/maps/geoNames";
+import {
+  DISTRICT_SCOPE_OPTIONS,
+  PRIORITY_DISTRICT_TOTAL,
+  districtScopeLabel,
+  isPriorityState,
+  priorityRoster,
+  type DistrictScope,
+} from "../../lib/maps/priorityDistricts";
 
 type PortalFilter = "ALL" | "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
 type CoverageIndicator =
@@ -154,6 +162,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   const [fromMonth, setFromMonth] = useState("");
   const [toMonth, setToMonth] = useState("");
   const [indicator, setIndicator] = useState<CoverageIndicator>("count");
+  const [districtScope, setDistrictScope] = useState<DistrictScope>("ALL");
   const [hovered, setHovered] = useState<HoverState | null>(null);
   const [labelMode, setLabelMode] = useState<LabelMode>("name");
   const [zoomBounds, setZoomBounds] = useState<Bounds | null>(null);
@@ -270,8 +279,9 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     [blocksTopology],
   );
 
-  // Denominator for "% of districts covered": every district the boundary file
-  // knows about in each state, regardless of whether it was ever reviewed.
+  // Every district the boundary file knows about in each state, regardless of
+  // whether it was ever reviewed. `rosterByState` below narrows this to the
+  // scope actually being measured.
   const districtsByState = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const feature of districtFeatures) {
@@ -283,12 +293,45 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     return map;
   }, [districtFeatures]);
 
+  // The roster every denominator on this page measures against. In "Gavi
+  // priority districts" scope it keeps only the intervention districts, so the
+  // numerator and denominator of each percentage move together. Keys are
+  // already normalized, and normalizeGeoName is idempotent, so they double as
+  // the state name the priority lookup expects.
+  const rosterByState = useMemo(() => {
+    if (districtScope === "ALL") return districtsByState;
+    const map = new Map<string, string[]>();
+    for (const [stateKey, roster] of districtsByState) {
+      const scoped = priorityRoster(stateKey, roster);
+      if (scoped.length > 0) map.set(stateKey, scoped);
+    }
+    return map;
+  }, [districtScope, districtsByState]);
+
+  /** True when a shape belongs to the scope currently being measured. */
+  const inScope = useMemo(() => {
+    const priorityKeys = new Map<string, Set<string>>();
+    if (districtScope === "PRIORITY") {
+      for (const [stateKey, roster] of rosterByState) {
+        priorityKeys.set(stateKey, new Set(roster.map(normalizeGeoName)));
+      }
+    }
+    return (stateName: string, districtName?: string | null) => {
+      if (districtScope === "ALL") return true;
+      const stateKey = normalizeGeoName(stateName);
+      const districts = priorityKeys.get(stateKey);
+      if (!districts) return false;
+      const district = normalizeGeoName(districtName);
+      return district ? districts.has(district) : true;
+    };
+  }, [districtScope, rosterByState]);
+
   const allStateNames = useMemo(
     () =>
-      [...new Set(stateFeatures.map((f) => f.properties.state_name))].sort((a, b) =>
-        a.localeCompare(b),
-      ),
-    [stateFeatures],
+      [...new Set(stateFeatures.map((f) => f.properties.state_name))]
+        .filter((name) => districtScope === "ALL" || isPriorityState(name))
+        .sort((a, b) => a.localeCompare(b)),
+    [districtScope, stateFeatures],
   );
 
   const resolvedScopedState = useMemo(() => {
@@ -308,17 +351,31 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     }
   }, [auth.level, auth.role, resolvedScopedState, selectedState]);
 
+  // Narrowing the scope must not leave a now-excluded state selected — the map
+  // would render an empty view with no way back except Reset. Only for users
+  // who may look nationally: clearing a geography-scoped user's own state would
+  // widen their view to every priority state instead of narrowing it.
+  useEffect(() => {
+    if (auth.role !== "admin" && auth.level !== "NATIONAL") return;
+    if (districtScope === "ALL" || selectedState === "ALL") return;
+    if (!isPriorityState(selectedState)) {
+      setSelectedState("ALL");
+      setSelectedDistrict("ALL");
+    }
+  }, [auth.level, auth.role, districtScope, selectedState]);
+
   const districtPool = useMemo(() => {
     if (selectedState === "ALL") return [];
     return districtFeatures
       .filter(
         (f) =>
-          normalizeGeoName(f.properties.state_name) === normalizeGeoName(selectedState),
+          normalizeGeoName(f.properties.state_name) === normalizeGeoName(selectedState) &&
+          inScope(f.properties.state_name, f.properties.district_name),
       )
       .map((f) => f.properties.district_name)
       .filter(uniqueValue)
       .sort((a, b) => a.localeCompare(b));
-  }, [districtFeatures, selectedState]);
+  }, [districtFeatures, inScope, selectedState]);
 
   const resolvedScopedDistrict = useMemo(() => {
     if (auth.level !== "DISTRICT" && auth.level !== "BLOCK") return null;
@@ -406,9 +463,14 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
         normalizeGeoName(f.properties.district_name) !== normalizeGeoName(visibleDistrictValue)
       )
         return false;
-      return true;
+      // Out-of-scope shapes leave the map entirely rather than showing as
+      // "no data": in Gavi scope they are not part of the denominator either.
+      return inScope(
+        f.properties.state_name,
+        "district_name" in f.properties ? (f.properties as DistrictShapeProps).district_name : null,
+      );
     });
-  }, [blockFeatures, displayGrain, districtFeatures, stateFeatures, visibleDistrictValue, visibleStateValue]);
+  }, [blockFeatures, displayGrain, districtFeatures, inScope, stateFeatures, visibleDistrictValue, visibleStateValue]);
 
   const outlineFeatures = useMemo(() => {
     if (displayGrain === "STATE") return [];
@@ -427,9 +489,12 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
           normalizeGeoName(visibleDistrictValue)
       )
         return false;
-      return true;
+      return inScope(
+        f.properties.state_name,
+        displayGrain === "BLOCK" ? (f.properties as DistrictShapeProps).district_name : null,
+      );
     });
-  }, [displayGrain, districtFeatures, stateFeatures, visibleDistrictValue, visibleStateValue]);
+  }, [displayGrain, districtFeatures, inScope, stateFeatures, visibleDistrictValue, visibleStateValue]);
 
   const filteredSnapshots = useMemo(() => {
     return snapshots.filter((s) => {
@@ -451,9 +516,11 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       const period = getSnapshotPeriod(s);
       if (fromMonth && period.end < fromMonth) return false;
       if (toMonth && period.start > toMonth) return false;
+      // State DQAs carry no district, so they qualify on their state alone.
+      if (!inScope(s.state, level === "STATE" ? null : s.district)) return false;
       return true;
     });
-  }, [fromMonth, hasHmisAccess, hasPctsAccess, level, portal, snapshots, toMonth, visibleDistrictValue, visibleStateValue]);
+  }, [fromMonth, hasHmisAccess, hasPctsAccess, inScope, level, portal, snapshots, toMonth, visibleDistrictValue, visibleStateValue]);
 
   const featureLookup = useMemo(
     () => buildFeatureLookup(displayGrain, visibleFeatures),
@@ -485,7 +552,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       const bucket = buckets.get(feature.id);
       if (!bucket) continue;
       if (isDistrictCoverage) {
-        const roster = districtsByState.get(normalizeGeoName(feature.properties.state_name)) ?? [];
+        const roster = rosterByState.get(normalizeGeoName(feature.properties.state_name)) ?? [];
         const coverage = districtCoverage(bucket.districtNames, roster);
         metrics.set(feature.id, {
           featureId: feature.id,
@@ -508,7 +575,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       });
     }
     return metrics;
-  }, [districtsByState, displayGrain, featureLookup, filteredSnapshots, indicator, isDistrictCoverage, visibleFeatures]);
+  }, [displayGrain, featureLookup, filteredSnapshots, indicator, isDistrictCoverage, rosterByState, visibleFeatures]);
 
   const valueExtent = useMemo(() => {
     const values = [...metricsByFeature.values()]
@@ -546,12 +613,12 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     let covered = 0;
     let total = 0;
     for (const feature of visibleFeatures) {
-      const roster = districtsByState.get(normalizeGeoName(feature.properties.state_name)) ?? [];
+      const roster = rosterByState.get(normalizeGeoName(feature.properties.state_name)) ?? [];
       total += new Set(roster.map(normalizeGeoName)).size;
       covered += metricsByFeature.get(feature.id)?.coveredUnits ?? 0;
     }
     return { covered, total, percent: total > 0 ? (covered / total) * 100 : 0 };
-  }, [districtsByState, isDistrictCoverage, metricsByFeature, visibleFeatures]);
+  }, [isDistrictCoverage, metricsByFeature, rosterByState, visibleFeatures]);
 
   const averageValue = useMemo(() => {
     const values = [...metricsByFeature.values()]
@@ -767,6 +834,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     if (visibleDistrictValue !== "ALL")
       parts.push(visibleDistrictValue.toLowerCase().replace(/\s+/g, "-"));
     parts.push(indicator);
+    if (districtScope === "PRIORITY") parts.push("gavi");
     return `${parts.join("-")}.${ext}`;
   }
 
@@ -845,14 +913,14 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
               </span>
             ) : null}
             <span className="text-xs text-white/60">
-              {scopeLabel} · {portalLabelMap[portal]} · {level === "STATE" ? "State DQA" : level === "DISTRICT" ? "District DQA" : "Block DQA"}
+              {scopeLabel} · {portalLabelMap[portal]} · {level === "STATE" ? "State DQA" : level === "DISTRICT" ? "District DQA" : "Block DQA"} · {districtScopeLabel(districtScope)}
             </span>
           </div>
         </div>
 
         {/* Filters card */}
         <GlassPanel className="p-5">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-8">
             <Field label="Level of DQA">
               <select
                 value={level}
@@ -896,6 +964,20 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 <option value="UWIN">U-WIN</option>
                 <option value="UWIN_STATE">U-WIN State</option>
                 {hasPctsAccess ? <option value="PCTS">PCTS</option> : null}
+              </select>
+            </Field>
+
+            <Field label="District scope">
+              <select
+                value={districtScope}
+                onChange={(e) => setDistrictScope(e.target.value as DistrictScope)}
+                className={selectClassName}
+              >
+                {DISTRICT_SCOPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
             </Field>
 
@@ -979,6 +1061,9 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
               {isDistrictCoverage
                 ? " Each state is shaded by the share of its districts with at least one review."
                 : ""}
+              {districtScope === "PRIORITY"
+                ? ` Every count and percentage on this page uses the ${PRIORITY_DISTRICT_TOTAL} Gavi priority districts as its denominator; districts outside the programme are hidden.`
+                : ""}
             </div>
             <button
               type="button"
@@ -986,6 +1071,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 setPortal("ALL");
                 setLevel("DISTRICT");
                 setIndicator("count");
+                setDistrictScope("ALL");
                 setHovered(null);
                 setFromMonth("");
                 setToMonth("");
