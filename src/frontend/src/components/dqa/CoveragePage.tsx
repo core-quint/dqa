@@ -44,7 +44,6 @@ import {
   DISTRICT_SCOPE_OPTIONS,
   PRIORITY_DISTRICT_TOTAL,
   districtScopeLabel,
-  isPriorityState,
   priorityRoster,
   type DistrictScope,
 } from "../../lib/maps/priorityDistricts";
@@ -138,11 +137,22 @@ const portalLabelMap: Record<PortalFilter, string> = {
 /** Deepest zoom the +/- buttons allow, as a multiple of the home view width. */
 const MAX_ZOOM = 24;
 
-// 5-step discrete diverging scale (ColorBrewer RdYlBu, colorblind-safe):
-// red (low) → pale yellow (mid) → blue (high). Red↔green is unreadable for
-// deutan/protan viewers, so green is deliberately not used here.
-const COLOR_SCALE = ["#d7191c", "#fdae61", "#ffffbf", "#abd9e9", "#2c7bb6"];
+// 5-step single-hue sequential teal: light = low, dark = high. A sequential
+// ramp reads as one ordered quantity, which a diverging red↔blue scale does
+// not — and one hue stays legible under any colour-vision deficiency, since
+// only lightness carries the ordering. Validated with ΔE2000: adjacent steps
+// are 10.0 / 10.6 / 17.5 / 14.7 apart, all far above the ~3 just-noticeable
+// threshold, and the lightest band sits ΔE 14.9 from NO_DATA_FILL.
+const COLOR_SCALE = ["#cdece7", "#95d3cb", "#54b3a9", "#217f79", "#0b544f"];
 const LEGEND_BANDS = ["0–20", "20–40", "40–60", "60–80", "80–100"];
+/** In scope, but no saved review. ΔE 9.1 from the ocean, so it reads as land. */
+const NO_DATA_FILL = "#b8c2ce";
+/** Gavi scope only: shown for context, deliberately never carries data. */
+const OUT_OF_SCOPE_FILL = "#eef2f6";
+// No pale fill separates from the ocean — every candidate landed at ΔE 3.6–5.3,
+// and rendering the national map confirmed the country silhouette dissolved.
+// The border carries the geography instead: ΔE 16.7 against the fill.
+const OUT_OF_SCOPE_STROKE = "#b0bcc8";
 
 export function CoveragePage({ auth }: { auth: AuthState }) {
   const hasHmisAccess = canUseHmis(auth);
@@ -328,10 +338,10 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
   const allStateNames = useMemo(
     () =>
-      [...new Set(stateFeatures.map((f) => f.properties.state_name))]
-        .filter((name) => districtScope === "ALL" || isPriorityState(name))
-        .sort((a, b) => a.localeCompare(b)),
-    [districtScope, stateFeatures],
+      [...new Set(stateFeatures.map((f) => f.properties.state_name))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [stateFeatures],
   );
 
   const resolvedScopedState = useMemo(() => {
@@ -351,31 +361,17 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     }
   }, [auth.level, auth.role, resolvedScopedState, selectedState]);
 
-  // Narrowing the scope must not leave a now-excluded state selected — the map
-  // would render an empty view with no way back except Reset. Only for users
-  // who may look nationally: clearing a geography-scoped user's own state would
-  // widen their view to every priority state instead of narrowing it.
-  useEffect(() => {
-    if (auth.role !== "admin" && auth.level !== "NATIONAL") return;
-    if (districtScope === "ALL" || selectedState === "ALL") return;
-    if (!isPriorityState(selectedState)) {
-      setSelectedState("ALL");
-      setSelectedDistrict("ALL");
-    }
-  }, [auth.level, auth.role, districtScope, selectedState]);
-
   const districtPool = useMemo(() => {
     if (selectedState === "ALL") return [];
     return districtFeatures
       .filter(
         (f) =>
-          normalizeGeoName(f.properties.state_name) === normalizeGeoName(selectedState) &&
-          inScope(f.properties.state_name, f.properties.district_name),
+          normalizeGeoName(f.properties.state_name) === normalizeGeoName(selectedState),
       )
       .map((f) => f.properties.district_name)
       .filter(uniqueValue)
       .sort((a, b) => a.localeCompare(b));
-  }, [districtFeatures, inScope, selectedState]);
+  }, [districtFeatures, selectedState]);
 
   const resolvedScopedDistrict = useMemo(() => {
     if (auth.level !== "DISTRICT" && auth.level !== "BLOCK") return null;
@@ -463,14 +459,30 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
         normalizeGeoName(f.properties.district_name) !== normalizeGeoName(visibleDistrictValue)
       )
         return false;
-      // Out-of-scope shapes leave the map entirely rather than showing as
-      // "no data": in Gavi scope they are not part of the denominator either.
-      return inScope(
-        f.properties.state_name,
-        "district_name" in f.properties ? (f.properties as DistrictShapeProps).district_name : null,
-      );
+      return true;
     });
-  }, [blockFeatures, displayGrain, districtFeatures, inScope, stateFeatures, visibleDistrictValue, visibleStateValue]);
+  }, [blockFeatures, displayGrain, districtFeatures, stateFeatures, visibleDistrictValue, visibleStateValue]);
+
+  // The geography always draws in full — the scope decides which shapes carry
+  // data and form the denominators, not which shapes exist. Out-of-programme
+  // regions stay on the map for context in OUT_OF_SCOPE_FILL.
+  const scopedFeatures = useMemo(
+    () =>
+      visibleFeatures.filter((f) =>
+        inScope(
+          f.properties.state_name,
+          "district_name" in f.properties
+            ? (f.properties as DistrictShapeProps).district_name
+            : null,
+        ),
+      ),
+    [inScope, visibleFeatures],
+  );
+
+  const scopedFeatureIds = useMemo(
+    () => new Set(scopedFeatures.map((f) => f.id)),
+    [scopedFeatures],
+  );
 
   const outlineFeatures = useMemo(() => {
     if (displayGrain === "STATE") return [];
@@ -489,12 +501,9 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
           normalizeGeoName(visibleDistrictValue)
       )
         return false;
-      return inScope(
-        f.properties.state_name,
-        displayGrain === "BLOCK" ? (f.properties as DistrictShapeProps).district_name : null,
-      );
+      return true;
     });
-  }, [displayGrain, districtFeatures, inScope, stateFeatures, visibleDistrictValue, visibleStateValue]);
+  }, [displayGrain, districtFeatures, stateFeatures, visibleDistrictValue, visibleStateValue]);
 
   const filteredSnapshots = useMemo(() => {
     return snapshots.filter((s) => {
@@ -548,7 +557,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     }
 
     const metrics = new Map<string, CoverageMetric>();
-    for (const feature of visibleFeatures) {
+    for (const feature of scopedFeatures) {
       const bucket = buckets.get(feature.id);
       if (!bucket) continue;
       if (isDistrictCoverage) {
@@ -575,7 +584,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       });
     }
     return metrics;
-  }, [displayGrain, featureLookup, filteredSnapshots, indicator, isDistrictCoverage, rosterByState, visibleFeatures]);
+  }, [displayGrain, featureLookup, filteredSnapshots, indicator, isDistrictCoverage, rosterByState, scopedFeatures]);
 
   const valueExtent = useMemo(() => {
     const values = [...metricsByFeature.values()]
@@ -591,14 +600,14 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     [metricsByFeature],
   );
   const uncoveredRegions = useMemo(
-    () => visibleFeatures
+    () => scopedFeatures
       .filter((feature) => (metricsByFeature.get(feature.id)?.snapshots ?? 0) === 0)
       .map((feature) => featurePrimaryLabel(feature, displayGrain))
       .sort((a, b) => a.localeCompare(b)),
-    [displayGrain, metricsByFeature, visibleFeatures],
+    [displayGrain, metricsByFeature, scopedFeatures],
   );
-  const coveragePercent = visibleFeatures.length
-    ? (regionsWithData / visibleFeatures.length) * 100
+  const coveragePercent = scopedFeatures.length
+    ? (regionsWithData / scopedFeatures.length) * 100
     : 0;
   const mappedSnapshotCount = [...metricsByFeature.values()].reduce(
     (sum, metric) => sum + metric.snapshots,
@@ -612,13 +621,13 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     if (!isDistrictCoverage) return { covered: 0, total: 0, percent: 0 };
     let covered = 0;
     let total = 0;
-    for (const feature of visibleFeatures) {
+    for (const feature of scopedFeatures) {
       const roster = rosterByState.get(normalizeGeoName(feature.properties.state_name)) ?? [];
       total += new Set(roster.map(normalizeGeoName)).size;
       covered += metricsByFeature.get(feature.id)?.coveredUnits ?? 0;
     }
     return { covered, total, percent: total > 0 ? (covered / total) * 100 : 0 };
-  }, [isDistrictCoverage, metricsByFeature, rosterByState, visibleFeatures]);
+  }, [isDistrictCoverage, metricsByFeature, rosterByState, scopedFeatures]);
 
   const averageValue = useMemo(() => {
     const values = [...metricsByFeature.values()]
@@ -895,7 +904,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
               Records: <strong className="font-semibold text-white">{filteredSnapshots.length}</strong>
             </span>
             <span className="text-xs text-white/60">
-              Regions covered: <strong className="font-semibold text-white">{regionsWithData} / {visibleFeatures.length}</strong>
+              Regions covered: <strong className="font-semibold text-white">{regionsWithData} / {scopedFeatures.length}</strong>
             </span>
             <span className="text-xs text-white/60">
               Indicator: <strong className="font-semibold text-white">{INDICATOR_OPTIONS.find((o) => o.value === indicator)?.label ?? "Number of DQA"}</strong>
@@ -1062,7 +1071,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 ? " Each state is shaded by the share of its districts with at least one review."
                 : ""}
               {districtScope === "PRIORITY"
-                ? ` Every count and percentage on this page uses the ${PRIORITY_DISTRICT_TOTAL} Gavi priority districts as its denominator; districts outside the programme are hidden.`
+                ? ` The whole map still draws, but only the ${PRIORITY_DISTRICT_TOTAL} Gavi priority districts carry data and form the denominators — regions outside the programme are shown pale for context.`
                 : ""}
             </div>
             <button
@@ -1118,7 +1127,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                         {valueExtent[0]} – {Math.round(valueExtent[1])}
                       </span>
                     </div>
-                    <div className="h-3.5 rounded-full bg-[linear-gradient(90deg,#d7191c_0%,#fdae61_25%,#ffffbf_50%,#abd9e9_75%,#2c7bb6_100%)]" />
+                    <div className="h-3.5 rounded-full bg-[linear-gradient(90deg,#cdece7_0%,#95d3cb_25%,#54b3a9_50%,#217f79_75%,#0b544f_100%)]" />
                   </div>
                 ) : (
                   <div className="min-w-[210px]">
@@ -1145,11 +1154,19 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100 px-3 py-1">
-                    <div className="h-2.5 w-2.5 rounded-full bg-[#cbd5e1]" />
+                    <div className="h-2.5 w-2.5 rounded-full bg-[#b8c2ce]" />
                     <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                       No data
                     </span>
                   </div>
+                  {districtScope === "PRIORITY" ? (
+                    <div className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1">
+                      <div className="h-2.5 w-2.5 rounded-full border border-slate-300 bg-[#eef2f6]" />
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        Outside programme
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
 
                 {/* Data label control */}
@@ -1286,7 +1303,11 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                   <g>
                     {visibleFeatures.map((feature) => {
                       const metric = metricsByFeature.get(feature.id);
-                      const fill = heatColor(metric?.value ?? null, valueExtent[1]);
+                      const outOfScope = !scopedFeatureIds.has(feature.id);
+                      const fill = outOfScope
+                        ? OUT_OF_SCOPE_FILL
+                        : heatColor(metric?.value ?? null, valueExtent[1]);
+                      const emptyLabel = outOfScope ? "Outside the programme" : "No data";
                       const isActive = hovered?.featureId === feature.id;
 
                       return (
@@ -1294,11 +1315,17 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                           key={feature.id}
                           role="button"
                           tabIndex={0}
-                          aria-label={`${featurePrimaryLabel(feature, displayGrain)}: ${metric?.value !== null && metric?.value !== undefined ? formatMetric(metric.value, indicator) : "No data"}${metric?.totalUnits !== undefined ? ` (${metric.coveredUnits ?? 0} of ${metric.totalUnits} districts reviewed)` : ""}`}
+                          aria-label={`${featurePrimaryLabel(feature, displayGrain)}: ${metric?.value !== null && metric?.value !== undefined ? formatMetric(metric.value, indicator) : emptyLabel}${metric?.totalUnits !== undefined ? ` (${metric.coveredUnits ?? 0} of ${metric.totalUnits} districts reviewed)` : ""}`}
                           d={feature.path}
                           fill={fill}
                           fillRule="evenodd"
-                          stroke={isActive ? "#0f172a" : "rgba(255,255,255,0.82)"}
+                          stroke={
+                            isActive
+                              ? "#0f172a"
+                              : outOfScope
+                                ? OUT_OF_SCOPE_STROKE
+                                : "rgba(255,255,255,0.82)"
+                          }
                           strokeWidth={isActive ? 2.5 : 1}
                           vectorEffect="non-scaling-stroke"
                           style={{ transition: "fill 180ms ease" }}
@@ -1313,7 +1340,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                               valueLabel:
                                 metric?.value !== null && metric?.value !== undefined
                                   ? formatMetric(metric.value, indicator)
-                                  : "No data",
+                                  : emptyLabel,
                               snapshots: metric?.snapshots ?? 0,
                               detail:
                                 metric?.totalUnits !== undefined
@@ -1740,7 +1767,7 @@ function getIndicatorValue(snapshot: SnapshotRecord, indicator: CoverageIndicato
 }
 
 function heatColor(value: number | null, max: number) {
-  if (value === null || !Number.isFinite(value)) return "#cbd5e1";
+  if (value === null || !Number.isFinite(value)) return NO_DATA_FILL;
   const ratio = Math.min(1, Math.max(0, value / Math.max(max, 1)));
   const step = Math.min(4, Math.floor(ratio * 5));
   return COLOR_SCALE[step];
