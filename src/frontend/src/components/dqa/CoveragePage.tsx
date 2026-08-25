@@ -22,6 +22,7 @@ import {
   getSnapshotBlock,
   getSnapshotDqaLevel,
   getSnapshotPeriod,
+  monthEndDate,
   normalizePortal,
 } from "../../lib/snapshots";
 import {
@@ -169,8 +170,10 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   const [portal, setPortal] = useState<PortalFilter>("ALL");
   const [selectedState, setSelectedState] = useState(initialStateValue(auth));
   const [selectedDistrict, setSelectedDistrict] = useState(initialDistrictValue(auth));
-  const [fromMonth, setFromMonth] = useState("");
-  const [toMonth, setToMonth] = useState("");
+  // Calendar dates, "YYYY-MM-DD". Reviews only record which months they covered,
+  // so a picked day is measured against that month's first/last calendar day.
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [indicator, setIndicator] = useState<CoverageIndicator>("count");
   const [districtScope, setDistrictScope] = useState<DistrictScope>("ALL");
   const [hovered, setHovered] = useState<HoverState | null>(null);
@@ -523,13 +526,14 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       )
         return false;
       const period = getSnapshotPeriod(s);
-      if (fromMonth && period.end < fromMonth) return false;
-      if (toMonth && period.start > toMonth) return false;
+      // A review qualifies when the months it analysed overlap the chosen dates.
+      if (fromDate && monthEndDate(period.end) < fromDate) return false;
+      if (toDate && `${period.start}-01` > toDate) return false;
       // State DQAs carry no district, so they qualify on their state alone.
       if (!inScope(s.state, level === "STATE" ? null : s.district)) return false;
       return true;
     });
-  }, [fromMonth, hasHmisAccess, hasPctsAccess, inScope, level, portal, snapshots, toMonth, visibleDistrictValue, visibleStateValue]);
+  }, [fromDate, hasHmisAccess, hasPctsAccess, inScope, level, portal, snapshots, toDate, visibleDistrictValue, visibleStateValue]);
 
   const featureLookup = useMemo(
     () => buildFeatureLookup(displayGrain, visibleFeatures),
@@ -1027,18 +1031,20 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
             <Field label="Duration from">
               <input
-                type="month"
-                value={fromMonth}
-                onChange={(e) => setFromMonth(e.target.value)}
+                type="date"
+                value={fromDate}
+                max={toDate || undefined}
+                onChange={(e) => setFromDate(e.target.value)}
                 className={selectClassName}
               />
             </Field>
 
             <Field label="Duration to">
               <input
-                type="month"
-                value={toMonth}
-                onChange={(e) => setToMonth(e.target.value)}
+                type="date"
+                value={toDate}
+                min={fromDate || undefined}
+                onChange={(e) => setToDate(e.target.value)}
                 className={selectClassName}
               />
             </Field>
@@ -1082,8 +1088,8 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 setIndicator("count");
                 setDistrictScope("ALL");
                 setHovered(null);
-                setFromMonth("");
-                setToMonth("");
+                setFromDate("");
+                setToDate("");
                 setSelectedState(initialStateValue(auth));
                 setSelectedDistrict(initialDistrictValue(auth));
                 setZoomBounds(null);
