@@ -13,6 +13,7 @@ import {
   Info,
   Layers3,
   LayoutDashboard,
+  ListChecks,
   MapPin,
   RefreshCw,
   Users,
@@ -23,6 +24,8 @@ import type { AuthState } from "./LoginPage";
 import type { SnapshotRecord } from "../../lib/snapshots";
 import {
   applyDashboardFilters,
+  buildLinelistRows,
+  buildLinelistXlsHtml,
   computeDashboardStats,
   durationBucketLabel,
   EMPTY_DASHBOARD_FILTERS,
@@ -101,6 +104,26 @@ function waitForPaint(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   });
+}
+
+const escXls = (value: unknown): string =>
+  String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * Excel reads the HTML blob, so every bit of formatting has to be an inline
+ * style attribute — a <style> block / CSS class is dropped on open.
+ */
+function downloadXlsTable(tableHtml: string, filename: string): void {
+  const blob = new Blob(
+    [`<html><head><meta charset="UTF-8"></head><body>${tableHtml}</body></html>`],
+    { type: "application/vnd.ms-excel;charset=utf-8" },
+  );
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 async function downloadDashboardGraph(source: HTMLElement | null, title: string): Promise<void> {
@@ -1595,6 +1618,26 @@ export function DashboardPage({ auth }: Props) {
 
   const levelNoun = geoLevel === "state" ? "State" : geoLevel === "district" ? "District" : "Block";
 
+  /** The scope every export is taken under — same line on both sheets. */
+  function exportFilterLine(): string {
+    return [
+      `Time axis: ${isPeriodBasis ? "data period (months uploaded)" : "review date"}`,
+      filters.duration ? `Review duration: ${durationBucketLabel(filters.duration)}` : "",
+      `Source: ${filters.portal}`,
+      `DQA type: ${filters.dqaLevel}`,
+      filters.granularity !== "ALL" ? `State analysis grain: ${filters.granularity}` : "",
+      `District scope: ${districtScopeLabel(filters.districtScope)}`,
+      filters.state ? `State: ${stateLabel}` : "All states",
+      filters.district ? `District: ${districtLabel}` : "",
+      filters.designation ? `Designation: ${filters.designation}` : "",
+      filters.purpose ? `Purpose: ${filters.purpose}` : "",
+      filters.dateFrom ? `From: ${filters.dateFrom}` : "",
+      filters.dateTo ? `To: ${filters.dateTo}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  }
+
   function handleDownloadExcel() {
     const headers = [
       levelNoun,
@@ -1624,41 +1667,28 @@ export function DashboardPage({ auth }: Props) {
       r.avgOverall === null ? "-" : r.avgOverall.toFixed(1),
       fmtDay(r.lastAtMs),
     ]);
-    const filterLine = [
-      `Time axis: ${isPeriodBasis ? "data period (months uploaded)" : "review date"}`,
-      filters.duration ? `Review duration: ${durationBucketLabel(filters.duration)}` : "",
-      `Source: ${filters.portal}`,
-      `DQA type: ${filters.dqaLevel}`,
-      filters.granularity !== "ALL" ? `State analysis grain: ${filters.granularity}` : "",
-      `District scope: ${districtScopeLabel(filters.districtScope)}`,
-      filters.state ? `State: ${stateLabel}` : "All states",
-      filters.district ? `District: ${districtLabel}` : "",
-      filters.designation ? `Designation: ${filters.designation}` : "",
-      filters.purpose ? `Purpose: ${filters.purpose}` : "",
-      filters.dateFrom ? `From: ${filters.dateFrom}` : "",
-      filters.dateTo ? `To: ${filters.dateTo}` : "",
-    ]
-      .filter(Boolean)
-      .join(" | ");
-    const esc = (v: string | number) =>
-      String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const tableHtml = `
       <table>
-        <tr><td colspan="${headers.length}">DQA Analytics Dashboard — exported ${new Date().toLocaleString("en-IN")}</td></tr>
-        <tr><td colspan="${headers.length}">${esc(filterLine)}</td></tr>
-        <thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
-        <tbody>${rows.map((row) => `<tr>${row.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody>
+        <tr><td colspan="${headers.length}">DQA Analytics Dashboard — summary by ${escXls(levelNoun.toLowerCase())} — exported ${escXls(new Date().toLocaleString("en-IN"))}</td></tr>
+        <tr><td colspan="${headers.length}">${escXls(exportFilterLine())}</td></tr>
+        <thead><tr>${headers.map((h) => `<th>${escXls(h)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((row) => `<tr>${row.map((c) => `<td>${escXls(c)}</td>`).join("")}</tr>`).join("")}</tbody>
       </table>`;
-    const blob = new Blob(
-      [`<html><head><meta charset="UTF-8"></head><body>${tableHtml}</body></html>`],
-      { type: "application/vnd.ms-excel;charset=utf-8" },
-    );
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `DQA_Dashboard_${new Date().toISOString().slice(0, 10)}.xls`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadXlsTable(tableHtml, `DQA_Dashboard_Summary_${new Date().toISOString().slice(0, 10)}.xls`);
+  }
+
+  /**
+   * Line list: one row per saved DQA review with every detail the review
+   * recorded — the summary sheet rolls these same rows up by geography.
+   */
+  function handleDownloadLinelist() {
+    const rows = buildLinelistRows(filtered);
+    const html = buildLinelistXlsHtml(rows, [
+      `DQA Analytics Dashboard — review line list — exported ${new Date().toLocaleString("en-IN")}`,
+      exportFilterLine(),
+      `${rows.length} saved DQA review${rows.length === 1 ? "" : "s"} · ${scopeText}`,
+    ]);
+    downloadXlsTable(html, `DQA_Linelist_${new Date().toISOString().slice(0, 10)}.xls`);
   }
 
   const scopeText =
@@ -1703,10 +1733,20 @@ export function DashboardPage({ auth }: Props) {
               <button
                 onClick={handleDownloadExcel}
                 disabled={filtered.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                title={`Summary sheet: reviews and coverage rolled up by ${levelNoun.toLowerCase()}`}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Download className="h-3.5 w-3.5" />
                 Download Excel
+              </button>
+              <button
+                onClick={handleDownloadLinelist}
+                disabled={filtered.length === 0}
+                title="Line list: one row per saved DQA review with every recorded detail"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+                Download Linelist
               </button>
             </div>
           </div>

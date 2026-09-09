@@ -12,7 +12,12 @@ import {
   normalizePortal,
 } from "./snapshots";
 import type { DistrictScope } from "./maps/priorityDistricts";
-import { inDistrictScope, priorityDistrictNames } from "./maps/priorityDistricts";
+import {
+  inDistrictScope,
+  isPriorityDistrict,
+  isPriorityState,
+  priorityDistrictNames,
+} from "./maps/priorityDistricts";
 
 export type { TrendBasis, DistrictScope };
 
@@ -58,6 +63,12 @@ export interface DashboardRecord {
   purpose: string;
   purposeDetail: string | null;
   savedBy: string | null;
+  /** Level of the account that saved the review (NATIONAL / STATE / ...). */
+  savedByLevel: string | null;
+  /** The saving account's own geography, e.g. "Uttar Pradesh / Agra". */
+  savedByGeo: string | null;
+  /** The duration label stored with the snapshot ("Apr 2025 - Jun 2025", "3 months", ...). */
+  reportingMonth: string;
   overall: number;
   availability: number | null;
   completeness: number | null; // always null for U-WIN (portal has no completeness KPIs)
@@ -103,6 +114,13 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
     purpose: s.kpiData?.purpose?.trim() || NOT_RECORDED,
     purposeDetail: s.kpiData?.purposeDetail?.trim() || null,
     savedBy: s.createdBy?.email ?? null,
+    savedByLevel: s.createdBy?.level?.trim() || null,
+    savedByGeo:
+      [s.createdBy?.geoState, s.createdBy?.geoDistrict, s.createdBy?.geoBlock]
+        .map((part) => titleCaseGeo(part))
+        .filter(Boolean)
+        .join(" / ") || null,
+    reportingMonth: s.reportingMonth?.trim() || "",
     overall: s.overallScore ?? 0,
     availability: s.kpiData?.availabilityScore ?? null,
     completeness: portal === "UWIN" || portal === "UWIN_STATE" ? null : (s.kpiData?.completenessScore ?? null),
@@ -741,4 +759,195 @@ export function presetRange(preset: DatePreset, now = new Date()): { from: strin
   const from = new Date(now);
   from.setDate(from.getDate() - days);
   return { from: fmtDate(from), to: fmtDate(now) };
+}
+
+// ---------------------------------------------------------------
+// Line list — one row per saved DQA review, with every detail the
+// review actually stored. Kept here (pure) so the column set stays
+// verifiable without a browser.
+// ---------------------------------------------------------------
+
+export const PORTAL_LABELS: Record<DashboardRecord["portal"], string> = {
+  HMIS: "HMIS",
+  HMIS_STATE: "State DQA (HMIS)",
+  UWIN: "U-WIN",
+  UWIN_STATE: "U-WIN State",
+  PCTS: "PCTS",
+};
+
+export const DQA_LEVEL_LABELS: Record<DashboardRecord["dqaLevel"], string> = {
+  STATE: "State DQA",
+  DISTRICT: "District DQA",
+  BLOCK: "Block DQA",
+};
+
+/** Same bands as the dashboard's score chips. */
+export function performanceBand(score: number | null): string {
+  if (score === null) return "";
+  if (score >= 85) return "Excellent";
+  if (score >= 70) return "Good";
+  if (score >= 50) return "Moderate";
+  return "Needs attention";
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** "17 Apr 2025" in the viewer's local time — the same day the UI shows. */
+export function linelistDate(ms: number): string {
+  const d = new Date(ms);
+  return `${pad2(d.getDate())} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** "14:32", local time. */
+export function linelistTime(ms: number): string {
+  const d = new Date(ms);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** "Apr 2025" from a YYYY-MM key; "" when the key is missing/invalid. */
+function fullMonthLabel(key: string | null): string {
+  if (!key) return "";
+  const [y, m] = key.split("-").map(Number);
+  if (!y || !m || m < 1 || m > 12) return key;
+  return `${MONTH_NAMES[m - 1]} ${y}`;
+}
+
+/**
+ * Whether the review sits in the Gavi intervention scope. State reviews carry
+ * no district of their own, so they are reported at state grain.
+ */
+function priorityFlag(r: DashboardRecord): string {
+  if (!r.stateKey) return "";
+  if (!r.districtKey) return isPriorityState(r.stateKey) ? "Priority state" : "No";
+  return isPriorityDistrict(r.stateKey, r.districtKey) ? "Yes" : "No";
+}
+
+export const LINELIST_HEADERS = [
+  "S. No.",
+  "Review date",
+  "Review time",
+  "Review month",
+  "Source",
+  "Type of DQA",
+  "State analysis grain",
+  "State",
+  "District",
+  "Block",
+  "Gavi priority district",
+  "Data period from",
+  "Data period to",
+  "Months of data",
+  "Duration label (as saved)",
+  "Designation",
+  "Purpose",
+  "Purpose detail",
+  "Overall score",
+  "Performance band",
+  "Availability",
+  "Completeness",
+  "Accuracy",
+  "Consistency",
+  "Districts in dataset",
+  "Blocks in dataset",
+  "Facilities in dataset",
+  "Session sites in dataset",
+  "Saved by",
+  "Saved by level",
+  "Saved by geography",
+  "Review ID",
+] as const;
+
+export type LinelistCell = string | number;
+
+const score = (v: number | null): LinelistCell => (v === null ? "" : Number(v.toFixed(1)));
+const count = (v: number | null): LinelistCell => (v === null ? "" : v);
+
+/**
+ * One row per review, newest first. Blank cells (not "-") wherever a value was
+ * never recorded, so the sheet stays sortable and countable in Excel.
+ */
+export function buildLinelistRows(records: DashboardRecord[]): LinelistCell[][] {
+  return [...records]
+    .sort((a, b) => b.createdAtMs - a.createdAtMs)
+    .map((r, index) => [
+      index + 1,
+      linelistDate(r.createdAtMs),
+      linelistTime(r.createdAtMs),
+      fullMonthLabel(r.monthKey),
+      PORTAL_LABELS[r.portal],
+      DQA_LEVEL_LABELS[r.dqaLevel],
+      r.analysisGranularity ? (r.analysisGranularity === "BLOCK" ? "Block-wise" : "District-wise") : "",
+      r.state,
+      r.district,
+      r.block ?? "",
+      priorityFlag(r),
+      fullMonthLabel(r.periodStart),
+      fullMonthLabel(r.periodEnd),
+      r.durationMonths ?? "",
+      r.reportingMonth,
+      r.designation === NOT_RECORDED ? "" : r.designation,
+      r.purpose === NOT_RECORDED ? "" : r.purpose,
+      r.purposeDetail ?? "",
+      Number(r.overall.toFixed(1)),
+      performanceBand(r.overall),
+      score(r.availability),
+      // U-WIN has no completeness KPIs at all — say so rather than leaving a
+      // blank that reads as "not recorded".
+      r.portal === "UWIN" || r.portal === "UWIN_STATE" ? "N/A" : score(r.completeness),
+      score(r.accuracy),
+      score(r.consistency),
+      count(r.districtCount),
+      count(r.blockCount),
+      count(r.facilityCount),
+      count(r.sessionSiteCount),
+      r.savedBy ?? "",
+      r.savedByLevel ?? "",
+      r.savedByGeo ?? "",
+      r.id,
+    ]);
+}
+
+/**
+ * Excel re-reads unformatted cell text, which would turn a review ID or a
+ * "Apr 2025" period into a number or a date of its own — so text is pinned to
+ * the text format. The review date is the deliberate exception: it is handed
+ * over as a real date so the sheet can be sorted and filtered on it.
+ */
+function cellStyle(cell: LinelistCell, isDate: boolean): string {
+  if (typeof cell === "number") return "text-align:right;";
+  if (isDate && cell) return "mso-number-format:'dd mmm yyyy';";
+  return "mso-number-format:'\\@';";
+}
+
+const escapeXls = (value: LinelistCell): string =>
+  String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * The line list as an Excel-readable HTML table. Excel drops <style> blocks and
+ * CSS classes when it opens an .xls HTML file, so every bit of formatting here
+ * has to be an inline style attribute.
+ */
+export function buildLinelistXlsHtml(rows: LinelistCell[][], contextLines: string[]): string {
+  const span = LINELIST_HEADERS.length;
+  const context = contextLines
+    .filter(Boolean)
+    .map(
+      (line, index) =>
+        `<tr><td colspan="${span}" style="${index === 0 ? "font-weight:bold;font-size:11pt;" : "font-size:9pt;color:#475569;"}">${escapeXls(line)}</td></tr>`,
+    )
+    .join("");
+  const head = LINELIST_HEADERS.map(
+    (header) =>
+      `<th style="background-color:#0f172a;color:#ffffff;font-weight:bold;text-align:left;vertical-align:middle;padding:4px;white-space:nowrap;">${escapeXls(header)}</th>`,
+  ).join("");
+  const dateColumn = LINELIST_HEADERS.indexOf("Review date");
+  const body = rows
+    .map(
+      (row) =>
+        `<tr>${row
+          .map((cell, column) => `<td style="${cellStyle(cell, column === dateColumn)}">${escapeXls(cell)}</td>`)
+          .join("")}</tr>`,
+    )
+    .join("");
+  return `<table border="1" style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:10pt;">${context}<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
