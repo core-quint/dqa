@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   UserPlus,
+  Pencil,
+  KeyRound,
   Trash2,
   RefreshCw,
   AlertCircle,
@@ -17,6 +19,7 @@ import Papa from "papaparse";
 import type { AuthState } from "./LoginPage";
 import { apiFetch } from "../../api";
 import { GlassPanel } from "../branding/GlassPanel";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../ui/dialog";
 
 interface GeoEntry {
   id: string;
@@ -84,6 +87,53 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
   const [newDistrict, setNewDistrict] = useState("");
   const [newBlock, setNewBlock] = useState("");
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [resetUser, setResetUser] = useState<UserRecord | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState("");
+
+  const clearUserForm = () => {
+    setEditing(null);
+    setNewEmail("");
+    setNewPassword("");
+    setNewLevel("NATIONAL");
+    setNewState("");
+    setNewDistrict("");
+    setNewBlock("");
+  };
+
+  const handleEdit = (user: UserRecord) => {
+    setEditing(user.id);
+    setNewEmail(user.email);
+    setNewPassword("");
+    setNewLevel(user.level as UserLevel);
+    setNewState(user.geoState ?? "");
+    setNewDistrict(user.geoDistrict ?? "");
+    setNewBlock(user.geoBlock ?? "");
+    document.getElementById("admin-user-form")?.scrollIntoView({ behavior: "smooth" });
+    document.getElementById("admin-user-email")?.focus({ preventScroll: true });
+  };
+
+  const handleResetPassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!resetUser || resetting) return;
+    if (resetPassword !== confirmPassword) { setResetError("Passwords do not match."); return; }
+    setResetting(true);
+    setResetError("");
+    try {
+      await apiFetch(`/api/admin/users/${resetUser.id}/reset-password`, {
+        method: "POST", body: JSON.stringify({ password: resetPassword }),
+      });
+      showFeedback({ type: "success", message: `Password reset for "${resetUser.email}".` });
+      setResetUser(null);
+      setResetPassword("");
+      setConfirmPassword("");
+    } catch (error) {
+      setResetError(error instanceof Error ? error.message : "Password reset failed.");
+    } finally { setResetting(false); }
+  };
   const [geoEntries, setGeoEntries] = useState<GeoEntry[]>([]);
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoUploading, setGeoUploading] = useState(false);
@@ -151,7 +201,7 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmail.trim() || !newPassword.trim()) {
+    if (!newEmail.trim() || (!editing && !newPassword.trim())) {
       showFeedback({ type: "error", message: "Email and password are required." });
       return;
     }
@@ -159,20 +209,21 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
     try {
       const body: Record<string, string> = {
         email: newEmail.trim(),
-        password: newPassword,
         level: newLevel,
       };
+      if (!editing) body.password = newPassword;
       if (newLevel !== "NATIONAL") body.geoState = newState;
       if (newLevel === "DISTRICT" || newLevel === "BLOCK") {
         body.geoDistrict = newDistrict;
       }
       if (newLevel === "BLOCK") body.geoBlock = newBlock;
 
-      await apiFetch("/api/admin/users", {
-        method: "POST",
+      await apiFetch(editing ? `/api/admin/users/${editing}` : "/api/admin/users", {
+        method: editing ? "PATCH" : "POST",
         body: JSON.stringify(body),
       });
-      showFeedback({ type: "success", message: `User "${newEmail}" created.` });
+      showFeedback({ type: "success", message: `User "${newEmail}" ${editing ? "updated" : "created"}.` });
+      setEditing(null);
       setNewEmail("");
       setNewPassword("");
       setNewLevel("NATIONAL");
@@ -528,6 +579,27 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-6 md:px-6 md:py-8">
+      <Dialog open={Boolean(resetUser)} onOpenChange={(open) => {
+        if (!open && !resetting) { setResetUser(null); setResetPassword(""); setConfirmPassword(""); setResetError(""); }
+      }}>
+        <DialogContent showCloseButton={!resetting}>
+          <DialogTitle>Reset password</DialogTitle>
+          <DialogDescription>Set a new password for {resetUser?.email}. Share it with the user so they can sign in.</DialogDescription>
+          <form onSubmit={handleResetPassword} className="space-y-4">
+            <fieldset disabled={resetting} className="space-y-4">
+              <label className="block">New password
+                <input type="password" required minLength={8} autoComplete="new-password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} className={inputClassName} />
+              </label>
+              <p className="text-sm text-slate-500">Use at least 8 characters.</p>
+              <label className="block">Confirm password
+                <input type="password" required minLength={8} autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className={inputClassName} />
+              </label>
+              {resetError && <p role="alert" className="text-sm text-red-600">{resetError}</p>}
+              <button type="submit" className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{resetting ? "Resetting..." : "Reset password"}</button>
+            </fieldset>
+          </form>
+        </DialogContent>
+      </Dialog>
       <div className="space-y-5">
         <div className="border-b border-slate-200 bg-white px-6 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -610,36 +682,42 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
               <div className="mb-5 flex items-center gap-2">
                 <UserPlus className="h-4 w-4 text-slate-500" />
                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Create user
+                  {editing ? "Edit user" : "Create user"}
                 </div>
               </div>
 
-              <form onSubmit={handleCreateUser} className="space-y-5">
+              <form id="admin-user-form" onSubmit={handleCreateUser} className="space-y-5">
+                <fieldset disabled={adding} className="space-y-5">
                 <div className="grid gap-4 md:grid-cols-2">
                   <label className="block">
                     <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Email
+                      User ID (email)
                     </span>
                     <input
                       type="email"
+                      id="admin-user-email"
+                      required
                       value={newEmail}
                       onChange={(event) => setNewEmail(event.target.value)}
                       placeholder="Email address"
                       className={inputClassName}
                     />
                   </label>
-                  <label className="block">
+                  {!editing && <label className="block">
                     <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                       Password
                     </span>
                     <input
                       type="password"
+                      required
+                      minLength={8}
+                      autoComplete="new-password"
                       value={newPassword}
                       onChange={(event) => setNewPassword(event.target.value)}
                       placeholder="Password"
                       className={inputClassName}
                     />
-                  </label>
+                  </label>}
                 </div>
 
                 <div>
@@ -781,8 +859,10 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
                   ) : (
                     <UserPlus className="h-4 w-4" />
                   )}
-                  {adding ? "Creating..." : "Create user"}
+                  {adding ? "Saving..." : editing ? "Save changes" : "Create user"}
                 </button>
+                {editing && <button type="button" onClick={clearUserForm} className="ml-3 rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold">Cancel editing</button>}
+                </fieldset>
               </form>
             </GlassPanel>
 
@@ -1003,7 +1083,7 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-white/60 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        <th className="px-4 py-3">Email</th>
+                        <th className="px-4 py-3">User ID (email)</th>
                         <th className="px-4 py-3">Role</th>
                         <th className="px-4 py-3">Level</th>
                         <th className="px-4 py-3">Geo scope</th>
@@ -1053,10 +1133,17 @@ export function AdminPage({ authState, onBack, onLogout }: Props) {
                             })}
                           </td>
                           <td className="px-4 py-3 text-center">
+                            <button type="button" onClick={() => handleEdit(user)} disabled={adding || deleting === user.id} className="inline-flex items-center gap-1 rounded-xl p-2 text-slate-700 hover:bg-slate-100 disabled:opacity-50" aria-label={`Edit ${user.email}`}>
+                              <Pencil className="h-4 w-4" /> Edit
+                            </button>
+                            <button type="button" onClick={() => { setResetUser(user); setResetPassword(""); setConfirmPassword(""); setResetError(""); }} disabled={deleting === user.id} className="inline-flex items-center gap-1 rounded-xl p-2 text-slate-700 hover:bg-slate-100 disabled:opacity-50" aria-label={`Reset password for ${user.email}`}>
+                              <KeyRound className="h-4 w-4" /> Reset password
+                            </button>
                             {user.email !== authState.email ? (
                               <button
                                 onClick={() => handleDelete(user.id, user.email)}
-                                disabled={deleting === user.id}
+                                disabled={deleting === user.id || adding || editing === user.id}
+                                aria-label={`Delete ${user.email}`}
                                 className="rounded-2xl p-2 text-red-500 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 <Trash2 className="h-4 w-4" />

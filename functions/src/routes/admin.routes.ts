@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../middleware/auth.middleware";
 import { requireAdmin } from "../middleware/role.middleware";
-import { listUsers, createUser, bulkCreateUsers, deleteUser, uploadGeoDataset, getGeoData } from "../controllers/admin.controller";
+import { listUsers, createUser, bulkCreateUsers, updateUser, resetUserPassword, deleteUser, uploadGeoDataset, getGeoData } from "../controllers/admin.controller";
 
 const router = Router();
 
@@ -10,6 +10,8 @@ router.use(authenticate, requireAdmin);
 router.get("/users", listUsers);
 router.post("/users", createUser);
 router.post("/users/bulk", bulkCreateUsers);
+router.patch("/users/:id", updateUser);
+router.post("/users/:id/reset-password", resetUserPassword);
 router.delete("/users/:id", deleteUser);
 
 router.post("/geo", uploadGeoDataset);
