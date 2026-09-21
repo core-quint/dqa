@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "../../api";
 import { GlassPanel } from "../branding/GlassPanel";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import type { AuthState } from "./LoginPage";
 import type { SnapshotRecord } from "../../lib/snapshots";
 import {
@@ -28,19 +29,23 @@ import {
   buildLinelistXlsHtml,
   computeDashboardStats,
   durationBucketLabel,
+  DURATION_UNKNOWN_KEY,
   EMPTY_DASHBOARD_FILTERS,
   groupByCategory,
   groupByDuration,
   groupByGeo,
   groupByMonth,
+  LINELIST_HEADERS,
   NOT_RECORDED,
   presetRange,
+  recordsInDurationBucket,
   toDashboardRecord,
   type CategoryRow,
   type DashboardFilters,
   type DashboardRecord,
   type DatePreset,
   type DurationBreakdown,
+  type LinelistCell,
   type GeoLevel,
   type MonthBucket,
   type TrendBasis,
@@ -124,6 +129,60 @@ function downloadXlsTable(tableHtml: string, filename: string): void {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * The review line list as an .xls download. Shared by the dashboard-wide button
+ * and every chart drill-down, so a drilled slice arrives in exactly the same
+ * 32-column format as the full export.
+ */
+function downloadLinelist(rows: LinelistCell[][], contextLines: string[], slug: string): void {
+  downloadXlsTable(
+    buildLinelistXlsHtml(rows, contextLines),
+    `DQA_Linelist${slug ? `_${slug}` : ""}_${new Date().toISOString().slice(0, 10)}.xls`,
+  );
+}
+
+/** Filename-safe fragment, e.g. "More than 12 months" -> "More_than_12_months". */
+function filenameSlug(label: string): string {
+  return label.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+/**
+ * The drilled records rendered with the same headers and cells the .xls carries,
+ * so what is read on screen and what lands in Excel cannot drift apart.
+ */
+function LinelistTable({ rows }: { rows: LinelistCell[][] }) {
+  if (rows.length === 0) {
+    return <div className="flex h-40 items-center justify-center text-sm font-medium text-slate-400">No reviews in this column.</div>;
+  }
+  return (
+    <div className="h-full overflow-auto rounded-2xl border border-slate-200">
+      <table className="w-full min-w-[2400px] text-sm">
+        <thead className="sticky top-0 z-10">
+          <tr className="bg-slate-900 text-left text-[10px] font-bold uppercase tracking-[0.12em] text-white">
+            {LINELIST_HEADERS.map((header) => (
+              <th key={header} className="whitespace-nowrap px-3 py-2.5">{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={String(row[row.length - 1])} className="border-t border-slate-100 bg-white/60 transition hover:bg-white">
+              {row.map((cell, column) => (
+                <td
+                  key={LINELIST_HEADERS[column]}
+                  className={`whitespace-nowrap px-3 py-2 text-slate-700 ${typeof cell === "number" ? "text-right tabular-nums" : ""}`}
+                >
+                  {cell === "" ? <span className="text-slate-300">—</span> : cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 async function downloadDashboardGraph(source: HTMLElement | null, title: string): Promise<void> {
@@ -1426,6 +1485,9 @@ export function DashboardPage({ auth }: Props) {
   );
 
   const filtered = useMemo(() => applyDashboardFilters(records, filters), [records, filters]);
+  // Which duration column the reader opened, if any. Drilling reads the reviews
+  // behind a column; scoping the whole dashboard to it stays a separate action.
+  const [durationDrill, setDurationDrill] = useState<string | null>(null);
   const stats = useMemo(() => computeDashboardStats(filtered, filters.districtScope), [filtered, filters.districtScope]);
   const months = useMemo(() => groupByMonth(filtered, filters.basis), [filtered, filters.basis]);
   const durations = useMemo(() => groupByDuration(filtered), [filtered]);
@@ -1438,6 +1500,10 @@ export function DashboardPage({ auth }: Props) {
     [records, filters],
   );
   const durationOptions = useMemo(() => groupByDuration(records).rows.filter((r) => r.total > 0), [records]);
+  const durationDrillRows = useMemo(
+    () => (durationDrill === null ? [] : buildLinelistRows(recordsInDurationBucket(filtered, durationDrill))),
+    [durationDrill, filtered],
+  );
 
   // ---- filter options (cascading, derived from the scoped data) ----
   // Options come from the scoped pool, so narrowing to the Gavi districts never
@@ -1683,12 +1749,31 @@ export function DashboardPage({ auth }: Props) {
    */
   function handleDownloadLinelist() {
     const rows = buildLinelistRows(filtered);
-    const html = buildLinelistXlsHtml(rows, [
-      `DQA Analytics Dashboard — review line list — exported ${new Date().toLocaleString("en-IN")}`,
-      exportFilterLine(),
-      `${rows.length} saved DQA review${rows.length === 1 ? "" : "s"} · ${scopeText}`,
-    ]);
-    downloadXlsTable(html, `DQA_Linelist_${new Date().toISOString().slice(0, 10)}.xls`);
+    downloadLinelist(
+      rows,
+      [
+        `DQA Analytics Dashboard — review line list — exported ${new Date().toLocaleString("en-IN")}`,
+        exportFilterLine(),
+        `${rows.length} saved DQA review${rows.length === 1 ? "" : "s"} · ${scopeText}`,
+      ],
+      "",
+    );
+  }
+
+  /** The same line list, narrowed to one column of the review-depth histogram. */
+  function handleDownloadDurationLinelist() {
+    if (durationDrill === null) return;
+    const label = durationBucketLabel(durationDrill);
+    downloadLinelist(
+      durationDrillRows,
+      [
+        `DQA Analytics Dashboard — review line list — exported ${new Date().toLocaleString("en-IN")}`,
+        `Months of data analysed per review: ${label}`,
+        exportFilterLine(),
+        `${durationDrillRows.length} saved DQA review${durationDrillRows.length === 1 ? "" : "s"} · ${scopeText}`,
+      ],
+      filenameSlug(label),
+    );
   }
 
   const scopeText =
@@ -1705,6 +1790,59 @@ export function DashboardPage({ auth }: Props) {
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-6 md:px-6 md:py-8">
+      {/* ── Review-depth drill-down ──────────────── */}
+      <Sheet open={durationDrill !== null} onOpenChange={(open) => !open && setDurationDrill(null)}>
+        <SheetContent
+          side="bottom"
+          className="flex h-[86vh] flex-col gap-0 rounded-t-[28px] border-t border-slate-200 bg-white p-0"
+        >
+          <SheetHeader className="border-b border-slate-200 px-5 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-3 pr-8">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Review depth · line list
+                </div>
+                <SheetTitle className="text-left text-base font-bold text-slate-950">
+                  {durationDrill === DURATION_UNKNOWN_KEY
+                    ? "Reviews with no recorded data period"
+                    : `${durationDrill === null ? "" : durationBucketLabel(durationDrill)} of data per review`}
+                </SheetTitle>
+                <div className="mt-0.5 text-xs text-slate-500">
+                  {fmtCount(durationDrillRows.length)} saved DQA review{durationDrillRows.length === 1 ? "" : "s"} in this column · {scopeText}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (durationDrill === null) return;
+                    setFilter({ duration: filters.duration === durationDrill ? "" : durationDrill });
+                    setDurationDrill(null);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  <Layers3 className="h-3.5 w-3.5" />
+                  {filters.duration === durationDrill ? "Clear dashboard scope" : "Scope dashboard to this"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadDurationLinelist}
+                  disabled={durationDrillRows.length === 0}
+                  title="Line list: one row per saved DQA review with every recorded detail"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download Linelist
+                </button>
+              </div>
+            </div>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-hidden p-4">
+            <LinelistTable rows={durationDrillRows} />
+          </div>
+        </SheetContent>
+      </Sheet>
+
       <div className="space-y-5">
         {/* ── Header ─────────────────────────────── */}
         <div className="border-b border-slate-200 bg-white px-6 py-4">
@@ -2159,7 +2297,7 @@ export function DashboardPage({ auth }: Props) {
                     <div>
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Review depth</div>
                       <div className="text-sm font-bold text-slate-900">Months of data analysed per review</div>
-                      <div className="mt-0.5 text-[11px] text-slate-500">How long a window each single DQA session covered — click a column to scope the dashboard to it.</div>
+                      <div className="mt-0.5 text-[11px] text-slate-500">How long a window each single DQA session covered — click a column for the line list of reviews behind it.</div>
                     </div>
                     <div className="flex items-center gap-3">
                       <PortalLegend hmis={showHmis} stateHmis={showStateHmis} uwin={showUwin} pcts={showPcts} />
@@ -2212,7 +2350,7 @@ export function DashboardPage({ auth }: Props) {
                       showHmis={showHmis}
                       showStateHmis={showStateHmis}
                       activeKey={filters.duration || undefined}
-                      onSelect={(key) => setFilter({ duration: filters.duration === key ? "" : key })}
+                      onSelect={(key) => setDurationDrill(key)}
                     />
                   )}
                 </GlassPanel>

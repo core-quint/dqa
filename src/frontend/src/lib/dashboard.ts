@@ -493,6 +493,15 @@ export function durationBucketShort(key: string): string {
   return `${key} mo`;
 }
 
+/**
+ * The reviews behind one column of the duration histogram. Pass the already
+ * filtered slice the chart was built from, so the drill-down and the column it
+ * came from always count the same records.
+ */
+export function recordsInDurationBucket(records: DashboardRecord[], key: string): DashboardRecord[] {
+  return records.filter((r) => durationBucketKey(r) === key);
+}
+
 export interface DurationRow {
   key: string;
   label: string;
