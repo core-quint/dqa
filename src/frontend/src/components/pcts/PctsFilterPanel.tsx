@@ -105,7 +105,7 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
 
   return (
     <form
-      className={isRail ? "space-y-4" : ""}
+      className={isRail ? "space-y-4" : "flex flex-wrap items-center gap-2"}
       onSubmit={(event) => {
         event.preventDefault();
         const validDropoutPairs = dropoutPairs.filter(
@@ -120,7 +120,8 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
         });
       }}
     >
-      <div className={isRail ? "space-y-3" : "flex flex-wrap items-start gap-3"}>
+      {/* Inline, the controls join the form's own row so the bar stays one line. */}
+      <div className={isRail ? "space-y-3" : "contents"}>
         {multiSelect("Block / reporting group", data.blocks, draft.blocks, (blocks) =>
           setDraft((previous) => ({ ...previous, blocks })),
         )}
@@ -404,7 +405,7 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
           </div>
         </Dropdown>
 
-        <label className="flex min-h-[2.75rem] items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
+        <label className="inline-flex min-h-[2.25rem] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700">
           <input
             type="checkbox"
             checked={draft.issuesOnly}
@@ -413,20 +414,22 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
             }
             className="h-4 w-4 rounded border-slate-300"
           />
-          Show only facilities with an identified issue
+          Issues only
         </label>
       </div>
 
-      <div className={isRail ? "border-t border-slate-200/80 pt-4" : "mt-4 flex justify-end"}>
+      <div className={isRail ? "border-t border-slate-200/80 pt-4" : "ml-auto"}>
         <button
           type="submit"
           className={[
-            "inline-flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] py-3 text-sm font-bold text-white shadow-[0_18px_36px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5",
-            isRail ? "w-full px-4" : "px-5",
+            "inline-flex items-center justify-center gap-1.5 bg-[linear-gradient(135deg,#0f172a,#14532d)] font-bold text-white transition",
+            isRail
+              ? "w-full rounded-2xl px-4 py-3 text-sm shadow-[0_18px_36px_rgba(15,23,42,0.18)] hover:-translate-y-0.5"
+              : "min-h-[2.25rem] rounded-xl px-4 py-1.5 text-[13px] hover:brightness-110",
           ].join(" ")}
         >
-          <Filter className="h-4 w-4" />
-          Apply filters
+          <Filter className="h-3.5 w-3.5" />
+          Apply
         </button>
       </div>
     </form>

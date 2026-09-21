@@ -72,8 +72,12 @@ export function StateHmisFilterPanel({
   };
 
   return (
-    <form onSubmit={handleSubmit} className={isRail ? "space-y-4" : ""}>
-      <div className={isRail ? "flex flex-col items-stretch gap-3" : "flex flex-wrap items-start gap-3"}>
+    <form
+      onSubmit={handleSubmit}
+      className={isRail ? "space-y-4" : "flex flex-wrap items-center gap-2"}
+    >
+      {/* Inline, the controls join the form's own row so the bar stays one line. */}
+      <div className={isRail ? "flex flex-col items-stretch gap-3" : "contents"}>
         <Dropdown label="District Name" fullWidth={isRail} badge={selectionBadge(f.districts.length, allDistricts.length)}>
           <CheckAll
             label="Select All"
@@ -311,16 +315,18 @@ export function StateHmisFilterPanel({
         </Dropdown>
       </div>
 
-      <div className={isRail ? "border-t border-slate-200/80 pt-4" : "mt-4 flex justify-end"}>
+      <div className={isRail ? "border-t border-slate-200/80 pt-4" : "ml-auto"}>
         <button
           type="submit"
           className={[
-            "inline-flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] py-3 text-sm font-bold text-white shadow-[0_18px_36px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5",
-            isRail ? "w-full px-4" : "px-5",
+            "inline-flex items-center justify-center gap-1.5 bg-[linear-gradient(135deg,#0f172a,#14532d)] font-bold text-white transition",
+            isRail
+              ? "w-full rounded-2xl px-4 py-3 text-sm shadow-[0_18px_36px_rgba(15,23,42,0.18)] hover:-translate-y-0.5"
+              : "min-h-[2.25rem] rounded-xl px-4 py-1.5 text-[13px] hover:brightness-110",
           ].join(" ")}
         >
-          <Filter className="h-4 w-4" />
-          Apply filters
+          <Filter className="h-3.5 w-3.5" />
+          Apply
         </button>
       </div>
     </form>
