@@ -6,6 +6,7 @@ import {
   Dropdown,
   SectionLabel,
   selectClassName,
+  selectionBadge,
 } from "../dqa/FilterPanel";
 import {
   PCTS_KEY_INDICATORS,
@@ -17,6 +18,8 @@ interface Props {
   data: PctsParsed;
   filters: PctsFilters;
   onApply: (filters: PctsFilters) => void;
+  /** "inline" lays the controls out as a horizontal bar; "rail" stacks them. */
+  layout?: "inline" | "rail";
 }
 
 const toggle = (values: string[], value: string, checked: boolean) =>
@@ -26,7 +29,8 @@ function allOrSelected(current: string[], all: string[]) {
   return current.length === 0 ? all : current;
 }
 
-export function PctsFilterPanel({ data, filters, onApply }: Props) {
+export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: Props) {
+  const isRail = layout === "rail";
   const [draft, setDraft] = useState<PctsFilters>({ ...filters });
   const [pairs, setPairs] = useState(
     filters.additionalPairs.length ? [...filters.additionalPairs] : [{ from: "", to: "" }],
@@ -64,7 +68,14 @@ export function PctsFilterPanel({ data, filters, onApply }: Props) {
     display?: (value: string) => string,
     emptyMeansAll = true,
   ) => (
-    <Dropdown label={label} fullWidth>
+    <Dropdown
+      label={label}
+      fullWidth={isRail}
+      badge={selectionBadge(
+        emptyMeansAll && selected.length === 0 ? allValues.length : selected.length,
+        allValues.length,
+      )}
+    >
       <CheckAll
         label="Select All"
         checked={
@@ -94,7 +105,7 @@ export function PctsFilterPanel({ data, filters, onApply }: Props) {
 
   return (
     <form
-      className="space-y-4"
+      className={isRail ? "space-y-4" : ""}
       onSubmit={(event) => {
         event.preventDefault();
         const validDropoutPairs = dropoutPairs.filter(
@@ -109,7 +120,7 @@ export function PctsFilterPanel({ data, filters, onApply }: Props) {
         });
       }}
     >
-      <div className="space-y-3">
+      <div className={isRail ? "space-y-3" : "flex flex-wrap items-start gap-3"}>
         {multiSelect("Block / reporting group", data.blocks, draft.blocks, (blocks) =>
           setDraft((previous) => ({ ...previous, blocks })),
         )}
@@ -169,7 +180,7 @@ export function PctsFilterPanel({ data, filters, onApply }: Props) {
           (facilityTypes) => setDraft((previous) => ({ ...previous, facilityTypes })),
         )}
 
-        <Dropdown label="Key Indicators" fullWidth>
+        <Dropdown label="Key Indicators" fullWidth={isRail}>
           <CheckAll
             label="Select All"
             checked={draft.keyIndicators.length >= PCTS_KEY_INDICATORS.length}
@@ -209,7 +220,7 @@ export function PctsFilterPanel({ data, filters, onApply }: Props) {
             )
           : null}
 
-        <Dropdown label="Outliers" fullWidth>
+        <Dropdown label="Outliers" fullWidth={isRail}>
           <SectionLabel>Month-to-month change severity</SectionLabel>
           <select
             value={draft.outlierSeverity}
@@ -227,7 +238,7 @@ export function PctsFilterPanel({ data, filters, onApply }: Props) {
           </select>
         </Dropdown>
 
-        <Dropdown label="Dropouts" fullWidth>
+        <Dropdown label="Dropouts" fullWidth={isRail}>
           <SectionLabel>Dropout threshold</SectionLabel>
           <select
             value={String(draft.dropoutThreshold)}
@@ -310,7 +321,7 @@ export function PctsFilterPanel({ data, filters, onApply }: Props) {
           </div>
         </Dropdown>
 
-        <Dropdown label="Inconsistencies" fullWidth>
+        <Dropdown label="Inconsistencies" fullWidth={isRail}>
           <SectionLabel>Co-administration tolerance</SectionLabel>
           <select
             value={String(draft.coadminTolerance)}
@@ -393,7 +404,7 @@ export function PctsFilterPanel({ data, filters, onApply }: Props) {
           </div>
         </Dropdown>
 
-        <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700">
+        <label className="flex min-h-[2.75rem] items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
           <input
             type="checkbox"
             checked={draft.issuesOnly}
@@ -406,10 +417,13 @@ export function PctsFilterPanel({ data, filters, onApply }: Props) {
         </label>
       </div>
 
-      <div className="border-t border-slate-200/80 pt-4">
+      <div className={isRail ? "border-t border-slate-200/80 pt-4" : "mt-4 flex justify-end"}>
         <button
           type="submit"
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] px-4 py-3 text-sm font-bold text-white shadow-[0_18px_36px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5"
+          className={[
+            "inline-flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] py-3 text-sm font-bold text-white shadow-[0_18px_36px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5",
+            isRail ? "w-full px-4" : "px-5",
+          ].join(" ")}
         >
           <Filter className="h-4 w-4" />
           Apply filters

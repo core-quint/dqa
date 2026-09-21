@@ -6,7 +6,7 @@ import type { UwinParsedCSV, UwinComputedKpis } from "../../lib/uwin/types";
 import { computeUwinKpis } from "../../lib/uwin/computeKpis";
 import { isMonthKey, periodDurationLabel } from "../../lib/dqa/parseUtils";
 import { UWIN_DEFAULT_FILTERS } from "../../lib/dqa/constants";
-import { CollapsibleFilterRail } from "../dqa/CollapsibleFilterRail";
+import { FilterBar } from "../dqa/FilterBar";
 import { FilterPanel } from "../dqa/FilterPanel";
 import { IndicatorSummaryPanel } from "../dqa/IndicatorSummaryPanel";
 import { UwinKpiPanel } from "./UwinKpiPanel";
@@ -437,18 +437,18 @@ export function UwinResultsPage({
         </GlassPanel>
 
         {activeGroup ? (
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-            <CollapsibleFilterRail>
+          <div className="space-y-5">
+            <FilterBar>
               <FilterPanel
                 csv={csvForFilter}
                 filters={filters}
                 activeGroup={activeGroup}
                 onApply={handleApply}
-                layout="rail"
+                layout="inline"
               />
-            </CollapsibleFilterRail>
+            </FilterBar>
 
-            <div className="min-w-0 flex-1 space-y-5">
+            <div className="min-w-0 space-y-5">
               {kpis && activeGroup === "overall" ? (
                 <OverallSummaryTable
                   cards={kpis.cards}

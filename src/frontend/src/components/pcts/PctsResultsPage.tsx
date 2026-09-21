@@ -30,7 +30,7 @@ import {
   downloadPctsPdf,
 } from "../../lib/pcts/exportUtils";
 import { GlassPanel } from "../branding/GlassPanel";
-import { CollapsibleFilterRail } from "../dqa/CollapsibleFilterRail";
+import { FilterBar } from "../dqa/FilterBar";
 import { IndicatorSummaryPanel } from "../dqa/IndicatorSummaryPanel";
 import { KpiBlockMap } from "../dqa/KpiBlockMap";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
@@ -352,11 +352,11 @@ export function PctsResultsPage({
           </div>
         </GlassPanel>
 
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-          <CollapsibleFilterRail>
-            <PctsFilterPanel data={data} filters={filters} onApply={setFilters} />
-          </CollapsibleFilterRail>
-          <div className="min-w-0 flex-1 space-y-5">
+        <div className="space-y-5">
+          <FilterBar>
+            <PctsFilterPanel data={data} filters={filters} onApply={setFilters} layout="inline" />
+          </FilterBar>
+          <div className="min-w-0 space-y-5">
             {activeGroup === "overall" ? (
               <PctsOverallSummary
                 data={data}

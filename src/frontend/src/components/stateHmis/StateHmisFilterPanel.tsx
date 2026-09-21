@@ -6,6 +6,7 @@ import {
   Dropdown,
   SectionLabel,
   selectClassName,
+  selectionBadge,
 } from "../dqa/FilterPanel";
 import {
   STATE_HMIS_KEY_INDICATORS,
@@ -18,6 +19,8 @@ interface Props {
   filters: StateHmisFilters;
   onApply: (f: StateHmisFilters) => void;
   indicatorShorts: string[];
+  /** "inline" lays the controls out as a horizontal bar; "rail" stacks them. */
+  layout?: "inline" | "rail";
 }
 
 interface DraftPair {
@@ -25,7 +28,14 @@ interface DraftPair {
   to: string;
 }
 
-export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indicatorShorts }: Props) {
+export function StateHmisFilterPanel({
+  data,
+  filters: initFilters,
+  onApply,
+  indicatorShorts,
+  layout = "inline",
+}: Props) {
+  const isRail = layout === "rail";
   const [f, setF] = useState<StateHmisFilters>({ ...initFilters });
   const [pairs, setPairs] = useState<DraftPair[]>(
     initFilters.additionalPairs.length ? [...initFilters.additionalPairs] : [{ from: "", to: "" }],
@@ -62,9 +72,9 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="flex flex-col items-stretch gap-3">
-        <Dropdown label="District Name" fullWidth>
+    <form onSubmit={handleSubmit} className={isRail ? "space-y-4" : ""}>
+      <div className={isRail ? "flex flex-col items-stretch gap-3" : "flex flex-wrap items-start gap-3"}>
+        <Dropdown label="District Name" fullWidth={isRail} badge={selectionBadge(f.districts.length, allDistricts.length)}>
           <CheckAll
             label="Select All"
             checked={isAllDistricts}
@@ -95,7 +105,7 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
         </Dropdown>
 
         {data.reportLevel === "block" ? (
-          <Dropdown label="Health Block" fullWidth>
+          <Dropdown label="Health Block" fullWidth={isRail} badge={selectionBadge(f.blocks.length, allBlockIds.length)}>
             <CheckAll
               label="Select All"
               checked={isAllBlocks}
@@ -126,7 +136,7 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
         ) : null}
 
         {!singleMonth ? (
-          <Dropdown label="Months" fullWidth>
+          <Dropdown label="Months" fullWidth={isRail} badge={selectionBadge(f.months.length, allMonths.length)}>
             <CheckAll
               label="Select All"
               checked={isAllMonths}
@@ -156,7 +166,7 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
           </Dropdown>
         ) : null}
 
-        <Dropdown label="Key Indicators" fullWidth>
+        <Dropdown label="Key Indicators" fullWidth={isRail} badge={selectionBadge(f.keyIndicators.length, allKeyIndicators.length)}>
           <CheckAll
             label="Select All"
             checked={f.keyIndicators.length >= allKeyIndicators.length}
@@ -181,7 +191,7 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
           </div>
         </Dropdown>
 
-        <Dropdown label="Outliers" fullWidth>
+        <Dropdown label="Outliers" fullWidth={isRail}>
           <SectionLabel>Change severity</SectionLabel>
           <select
             value={f.outlierSeverity}
@@ -199,7 +209,7 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
           </select>
         </Dropdown>
 
-        <Dropdown label="Dropouts" fullWidth>
+        <Dropdown label="Dropouts" fullWidth={isRail}>
           <SectionLabel>Dropout % threshold</SectionLabel>
           <select
             value={String(f.dropoutThreshold)}
@@ -217,7 +227,7 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
           </select>
         </Dropdown>
 
-        <Dropdown label="Inconsistencies" fullWidth>
+        <Dropdown label="Inconsistencies" fullWidth={isRail}>
           <SectionLabel>Co-admin tolerance</SectionLabel>
           <select
             value={String(f.coadminTolerance)}
@@ -301,10 +311,13 @@ export function StateHmisFilterPanel({ data, filters: initFilters, onApply, indi
         </Dropdown>
       </div>
 
-      <div className="border-t border-slate-200/80 pt-4">
+      <div className={isRail ? "border-t border-slate-200/80 pt-4" : "mt-4 flex justify-end"}>
         <button
           type="submit"
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] px-4 py-3 text-sm font-bold text-white shadow-[0_18px_36px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5"
+          className={[
+            "inline-flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] py-3 text-sm font-bold text-white shadow-[0_18px_36px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5",
+            isRail ? "w-full px-4" : "px-5",
+          ].join(" ")}
         >
           <Filter className="h-4 w-4" />
           Apply filters

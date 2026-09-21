@@ -14,7 +14,7 @@ import { DEFAULT_FILTERS } from "../../lib/dqa/constants";
 import { FilterPanel } from "./FilterPanel";
 import { IndicatorSummaryPanel } from "./IndicatorSummaryPanel";
 import { KpiPanel } from "./KpiPanel";
-import { CollapsibleFilterRail } from "./CollapsibleFilterRail";
+import { FilterBar } from "./FilterBar";
 import { OverallScore } from "./OverallScore";
 import { OverallSummaryTable } from "./OverallSummaryTable";
 import { apiFetch } from "../../api";
@@ -415,18 +415,18 @@ export function ResultsPage({
         </GlassPanel>
 
         {activeGroup ? (
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-            <CollapsibleFilterRail>
+          <div className="space-y-5">
+            <FilterBar>
               <FilterPanel
                 csv={csv}
                 filters={filters}
                 activeGroup={activeGroup}
                 onApply={handleApply}
-                layout="rail"
+                layout="inline"
               />
-            </CollapsibleFilterRail>
+            </FilterBar>
 
-            <div className="min-w-0 flex-1 space-y-5">
+            <div className="min-w-0 space-y-5">
               {kpis && activeGroup === "overall" ? (
                 <OverallSummaryTable
                   cards={kpis.cards}

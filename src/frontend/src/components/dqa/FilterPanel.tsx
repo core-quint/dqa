@@ -17,7 +17,10 @@ export const dropdownTriggerClass =
   "group inline-flex min-h-[2.75rem] items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/78 px-4 py-2 text-sm font-semibold text-slate-700 shadow-[0_12px_28px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-white";
 
 const dropdownPanelClass =
-  "absolute left-0 top-full z-[9999] mt-3 min-w-[280px] max-w-[92vw] overflow-hidden rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(248,250,252,0.92))] p-4 shadow-[0_26px_60px_rgba(15,23,42,0.16)] backdrop-blur-xl sm:max-w-[360px]";
+  "absolute top-full z-[9999] mt-3 max-h-[70vh] min-w-[280px] max-w-[92vw] overflow-y-auto rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(248,250,252,0.92))] p-4 shadow-[0_26px_60px_rgba(15,23,42,0.16)] backdrop-blur-xl sm:max-w-[360px]";
+
+/** Widest a panel gets (the sm:max-w above) — the budget the flip is measured against. */
+const DROPDOWN_PANEL_WIDTH = 360;
 
 export const selectClassName =
   "h-10 w-full rounded-2xl border border-slate-200/80 bg-white/90 px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-200/70";
@@ -26,12 +29,18 @@ export function Dropdown({
   label,
   children,
   fullWidth = false,
+  badge,
 }: {
   label: string;
   children: React.ReactNode;
   fullWidth?: boolean;
+  /** Shown on the trigger when the selection is narrower than "everything". */
+  badge?: string | number | null;
 }) {
   const [open, setOpen] = useState(false);
+  // Triggers sit in a wrapping row now, so one near the right edge would open a
+  // panel that runs off screen. Measured at open time and flipped to right-aligned.
+  const [alignRight, setAlignRight] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -45,27 +54,46 @@ export function Dropdown({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  const toggle = () => {
+    setOpen((value) => {
+      if (!value && ref.current) {
+        const { left } = ref.current.getBoundingClientRect();
+        setAlignRight(left + DROPDOWN_PANEL_WIDTH > window.innerWidth - 8);
+      }
+      return !value;
+    });
+  };
+
+  const hasBadge = badge !== undefined && badge !== null && badge !== "";
+
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
+        aria-expanded={open}
         className={[
           dropdownTriggerClass,
           fullWidth ? "w-full justify-between" : "",
+          open ? "border-slate-400 bg-white" : "",
         ].join(" ")}
       >
         <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition group-hover:bg-slate-950 group-hover:text-white">
           <Filter className="h-3.5 w-3.5" />
         </span>
         <span className="whitespace-nowrap">{label}</span>
+        {hasBadge ? (
+          <span className="rounded-full bg-slate-950 px-2 py-0.5 text-[11px] font-bold tabular-nums text-white">
+            {badge}
+          </span>
+        ) : null}
         <ChevronDown
           className={`h-4 w-4 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
         />
       </button>
 
       {open ? (
-        <div className={dropdownPanelClass}>
+        <div className={[dropdownPanelClass, alignRight ? "right-0" : "left-0"].join(" ")}>
           <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
             {label}
           </div>
@@ -74,6 +102,15 @@ export function Dropdown({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Badge for a multi-select: the number of picks while it is narrowed, nothing
+ * once everything is selected — a count on every filter reads as noise.
+ */
+export function selectionBadge(selected: number, total: number): number | null {
+  if (total === 0 || selected === 0 || selected >= total) return null;
+  return selected;
 }
 
 export function CheckAll({
@@ -248,7 +285,8 @@ function AnalysisModeToggle({
         "gap-1 rounded-2xl border border-slate-200/80 bg-white/78 p-1 shadow-[0_12px_28px_rgba(15,23,42,0.06)]",
         fullWidth
           ? `grid w-full items-stretch ${options.length === 3 ? "grid-cols-3" : "grid-cols-2"}`
-          : "inline-flex items-center",
+          // Matches the dropdown trigger height so the horizontal row lines up.
+          : "inline-flex min-h-[2.75rem] items-center",
       ].join(" ")}
     >
       {options.map((opt) => (
@@ -367,7 +405,7 @@ export function FilterPanel({
         ) : null}
 
         {isStateUwin ? (
-          <Dropdown label="District Name" fullWidth={isRail}>
+          <Dropdown label="District Name" fullWidth={isRail} badge={selectionBadge(selectedDistricts.length, allDistricts.length)}>
             <CheckAll
               label="Select All"
               checked={isAllDistricts}
@@ -400,7 +438,7 @@ export function FilterPanel({
           </Dropdown>
         ) : null}
 
-        <Dropdown label="Block Name" fullWidth={isRail}>
+        <Dropdown label="Block Name" fullWidth={isRail} badge={selectionBadge(f.blocks.length, allBlocks.length)}>
           <CheckAll
             label="Select All"
             checked={isAllBlocks}
@@ -426,7 +464,11 @@ export function FilterPanel({
         </Dropdown>
 
         {!singleMonth ? (
-          <Dropdown label={monthDimension === "month" ? "Months" : "Periods"} fullWidth={isRail}>
+          <Dropdown
+            label={monthDimension === "month" ? "Months" : "Periods"}
+            fullWidth={isRail}
+            badge={selectionBadge(f.months.length, allMonths.length)}
+          >
             <CheckAll
               label="Select All"
               checked={isAllMonths}
@@ -453,7 +495,7 @@ export function FilterPanel({
         ) : null}
 
         {hasKeyInd ? (
-          <Dropdown label="Key Indicators" fullWidth={isRail}>
+          <Dropdown label="Key Indicators" fullWidth={isRail} badge={selectionBadge(f.outliersVax.length, BASE_VAX.filter((value) => csv.indicatorMap[value]).length)}>
             <CheckAll
               label="Select All"
               checked={
