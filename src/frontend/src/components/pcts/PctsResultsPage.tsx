@@ -15,7 +15,8 @@ import type { AuthState } from "../dqa/LoginPage";
 import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
 import { monthsSpanInclusive } from "../../lib/dqa/parseUtils";
 import { scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
-import { ScoreStrip, savedComponentScore, type ScoreStripRow } from "../dqa/ScoreStrip";
+import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
+import { pickReviewBaselines, type ReviewBaseline, type SnapshotRecord } from "../../lib/snapshots";
 import { computePctsKpis } from "../../lib/pcts/computeKpis";
 import {
   DEFAULT_PCTS_FILTERS,
@@ -117,15 +118,6 @@ const SCORED_GROUPS: Exclude<ActiveGroup, "overall">[] = [
 const secondaryActionClass =
   "inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50";
 
-interface LastSnapshot {
-  createdAt: string;
-  overallScore: number;
-  availabilityScore: number;
-  completenessScore: number;
-  accuracyScore: number;
-  consistencyScore: number;
-}
-
 export function PctsResultsPage({
   data,
   auth: _auth,
@@ -143,7 +135,10 @@ export function PctsResultsPage({
   const [drawerCard, setDrawerCard] = useState<PctsCard | null>(null);
   const [saving, setSaving] = useState(false);
   const [generatingReport, setGeneratingReport] = useState(false);
-  const [lastSnapshot, setLastSnapshot] = useState<LastSnapshot | null>(null);
+  // Every saved review of this geography, kept so a re-upload of months already
+  // reviewed can be measured against that same-period review rather than only
+  // against whatever happened to be saved most recently.
+  const [savedReviews, setSavedReviews] = useState<SnapshotRecord[]>([]);
 
   const computed = useMemo(() => computePctsKpis(data, filters), [data, filters]);
   const activeGroup: ActiveGroup = controlledActiveGroup || localActiveGroup;
@@ -163,25 +158,14 @@ export function PctsResultsPage({
       .then((snapshots: unknown) => {
         if (!Array.isArray(snapshots)) return;
         const normalize = (value: unknown) => String(value ?? "").trim().toLowerCase();
-        const match = snapshots
-          .filter((snapshot: any) =>
-            normalize(snapshot.portal) === "pcts" &&
-            normalize(snapshot.state) === normalize(data.stateName) &&
-            normalize(snapshot.district) === normalize(data.districtName),
-          )
-          .sort(
-            (left: any, right: any) =>
-              new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
-          )[0];
-        if (!match) return;
-        setLastSnapshot({
-          createdAt: match.createdAt,
-          overallScore: match.overallScore,
-          availabilityScore: match.kpiData?.availabilityScore ?? 0,
-          completenessScore: match.kpiData?.completenessScore ?? 0,
-          accuracyScore: match.kpiData?.accuracyScore ?? 0,
-          consistencyScore: match.kpiData?.consistencyScore ?? 0,
-        });
+        setSavedReviews(
+          (snapshots as SnapshotRecord[]).filter(
+            (snapshot) =>
+              normalize(snapshot.portal) === "pcts" &&
+              normalize(snapshot.state) === normalize(data.stateName) &&
+              normalize(snapshot.district) === normalize(data.districtName),
+          ),
+        );
       })
       .catch(() => {});
   }, [data.districtName, data.stateName]);
@@ -213,14 +197,7 @@ export function PctsResultsPage({
           facilityCount: computed.denominator,
         }),
       });
-      setLastSnapshot({
-        createdAt: saved.createdAt,
-        overallScore: saved.overallScore,
-        availabilityScore: saved.kpiData?.availabilityScore ?? 0,
-        completenessScore: saved.kpiData?.completenessScore ?? 0,
-        accuracyScore: saved.kpiData?.accuracyScore ?? 0,
-        consistencyScore: saved.kpiData?.consistencyScore ?? 0,
-      });
+      setSavedReviews((current) => [saved as SnapshotRecord, ...current]);
       onSnapshotSaved();
     } catch {
       alert("Failed to save the PCTS snapshot.");
@@ -239,8 +216,17 @@ export function PctsResultsPage({
     label: GROUP_META[group].label,
     color: GROUP_META[group].color,
     current: computed.componentScores[group]?.score ?? 0,
-    previous: savedComponentScore(lastSnapshot, group),
   }));
+
+  // The months this upload covers, derived exactly as the save path records them
+  // so a same-period match is an equality test, not a guess.
+  const currentPeriod = computed.selectedMonths.length
+    ? {
+        start: computed.selectedMonths[0],
+        end: computed.selectedMonths[computed.selectedMonths.length - 1],
+      }
+    : null;
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod);
 
   const currentMeta = GROUP_META[activeGroup];
   const trendHandler = onOpenTrends ?? onTrend;
@@ -350,7 +336,7 @@ export function PctsResultsPage({
         <ScoreStrip
           overall={computed.overallScore}
           rows={scoreRows}
-          last={lastSnapshot ? { savedAt: lastSnapshot.createdAt, overall: lastSnapshot.overallScore } : null}
+          baselines={baselines}
           saved={snapshotSaved}
           onOpenDetail={() => changeActiveGroup("overall")}
           detailLabel="Overall tab"

@@ -14,8 +14,13 @@ import { OverallScore } from "../dqa/OverallScore";
 import { OverallSummaryTable } from "../dqa/OverallSummaryTable";
 import { apiFetch } from "../../api";
 import { computeOverallScore } from "../../lib/dqa/scoreUtils";
-import { ScoreStrip, savedComponentScore, type ScoreStripRow } from "../dqa/ScoreStrip";
-import { buildSnapshotSaveMeta } from "../../lib/snapshots";
+import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
+import {
+  buildSnapshotSaveMeta,
+  pickReviewBaselines,
+  type ReviewBaseline,
+  type SnapshotRecord,
+} from "../../lib/snapshots";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { GlassPanel } from "../branding/GlassPanel";
 import type { AuthState } from "../dqa/LoginPage";
@@ -143,14 +148,10 @@ export function UwinResultsPage({
   const [drawerCard, setDrawerCard] = useState<
     UwinComputedKpis["cards"][number] | null
   >(null);
-  const [lastSnapshot, setLastSnapshot] = useState<{
-    createdAt: string;
-    availabilityScore: number;
-    completenessScore: number;
-    accuracyScore: number;
-    consistencyScore: number;
-    overallScore: number;
-  } | null>(null);
+  // Every saved review of this geography, kept so a re-upload of months already
+  // reviewed can be measured against that same-period review rather than only
+  // against whatever happened to be saved most recently.
+  const [savedReviews, setSavedReviews] = useState<SnapshotRecord[]>([]);
 
   const periodKeys = useMemo(() => Object.keys(csv.allMonths).sort(), [csv]);
   const durationStr = useMemo(() => periodDurationLabel(periodKeys), [periodKeys]);
@@ -160,30 +161,28 @@ export function UwinResultsPage({
 
   useEffect(() => {
     apiFetch("/api/snapshots")
-      .then((snapshots: any[]) => {
-        const norm = (s: string | undefined | null) => (s ?? "").trim().toLowerCase();
-        const matches = snapshots.filter(
-          (snapshot) =>
-            (snapshot.portal?.toUpperCase() ?? "HMIS") === snapshotPortal &&
-            norm(snapshot.state) === norm(csv.stateName) &&
-            (isStateUwin || norm(snapshot.district) === norm(csv.distName)),
+      .then((snapshots: SnapshotRecord[]) => {
+        const norm = (value: string | undefined | null) => (value ?? "").trim().toLowerCase();
+        setSavedReviews(
+          snapshots.filter(
+            (snapshot) =>
+              (snapshot.portal?.toUpperCase() ?? "HMIS") === snapshotPortal &&
+              norm(snapshot.state) === norm(csv.stateName) &&
+              (isStateUwin || norm(snapshot.district) === norm(csv.distName)),
+          ),
         );
-        const match = matches.sort((a: any, b: any) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        )[0];
-        if (match) {
-          setLastSnapshot({
-            createdAt: match.createdAt,
-            overallScore: match.overallScore,
-            availabilityScore: match.kpiData?.availabilityScore ?? 0,
-            completenessScore: match.kpiData?.completenessScore ?? 0,
-            accuracyScore: match.kpiData?.accuracyScore ?? 0,
-            consistencyScore: match.kpiData?.consistencyScore ?? 0,
-          });
-        }
       })
       .catch(() => {});
   }, [csv.stateName, csv.distName, isStateUwin, snapshotPortal]);
+
+  // The months this upload covers, derived exactly as the save path records them
+  // so a same-period match is an equality test, not a guess.
+  const savedMeta = buildSnapshotSaveMeta(auth, filters, csv.allMonths);
+  const currentPeriod =
+    savedMeta.periodStart && savedMeta.periodEnd
+      ? { start: savedMeta.periodStart, end: savedMeta.periodEnd }
+      : null;
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod);
 
   useEffect(() => {
     if (!activeGroup) {
@@ -210,7 +209,7 @@ export function UwinResultsPage({
         kpis as unknown as ComputedKpis,
         SCORED_GROUPS,
       );
-      const snapshotMeta = buildSnapshotSaveMeta(auth, filters, csv.allMonths);
+      const snapshotMeta = savedMeta;
       const savedSnapshot = await apiFetch("/api/snapshots", {
         method: "POST",
         body: JSON.stringify({
@@ -237,14 +236,7 @@ export function UwinResultsPage({
           districtCount: isStateUwin ? csv.globalDistrictCount : null,
         }),
       });
-      setLastSnapshot({
-        createdAt: savedSnapshot.createdAt,
-        overallScore: savedSnapshot.overallScore,
-        availabilityScore: savedSnapshot.kpiData?.availabilityScore ?? 0,
-        completenessScore: savedSnapshot.kpiData?.completenessScore ?? 0,
-        accuracyScore: savedSnapshot.kpiData?.accuracyScore ?? 0,
-        consistencyScore: savedSnapshot.kpiData?.consistencyScore ?? 0,
-      });
+      setSavedReviews((current) => [savedSnapshot, ...current]);
       onSnapshotSaved();
     } catch (err) {
       console.error("U-WIN snapshot save failed:", err);
@@ -263,7 +255,6 @@ export function UwinResultsPage({
         label: GROUP_META[group].label,
         color: GROUP_META[group].color,
         current: liveScore.components[group]?.score ?? 0,
-        previous: savedComponentScore(lastSnapshot, group),
       }))
     : [];
 
@@ -414,7 +405,7 @@ export function UwinResultsPage({
           <ScoreStrip
             overall={liveScore.overall}
             rows={scoreRows}
-            last={lastSnapshot ? { savedAt: lastSnapshot.createdAt, overall: lastSnapshot.overallScore } : null}
+            baselines={baselines}
             saved={snapshotSaved}
             onOpenDetail={() => setShowOverall(true)}
           />

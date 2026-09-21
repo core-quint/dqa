@@ -14,7 +14,8 @@ import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
 import { apiFetch } from "../../api";
 import { monthsSpanInclusive } from "../../lib/dqa/parseUtils";
 import { scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
-import { ScoreStrip, savedComponentScore, type ScoreStripRow } from "../dqa/ScoreStrip";
+import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
+import { pickReviewBaselines, type ReviewBaseline, type SnapshotRecord } from "../../lib/snapshots";
 import { computeStateHmisKpis } from "../../lib/stateHmis/compute";
 import {
   DEFAULT_STATE_HMIS_FILTERS,
@@ -140,14 +141,10 @@ export function StateHmisResultsPage({
   const [drawerCard, setDrawerCard] = useState<StateHmisCard | null>(null);
   const [saving, setSaving] = useState(false);
   const [generatingReport, setGeneratingReport] = useState(false);
-  const [lastSnapshot, setLastSnapshot] = useState<{
-    createdAt: string;
-    availabilityScore: number;
-    completenessScore: number;
-    accuracyScore: number;
-    consistencyScore: number;
-    overallScore: number;
-  } | null>(null);
+  // Every saved review of this geography, kept so a re-upload of months already
+  // reviewed can be measured against that same-period review rather than only
+  // against whatever happened to be saved most recently.
+  const [savedReviews, setSavedReviews] = useState<SnapshotRecord[]>([]);
 
   const computed = useMemo(
     () => computeStateHmisKpis(data, filters),
@@ -175,27 +172,16 @@ export function StateHmisResultsPage({
 
   useEffect(() => {
     apiFetch("/api/snapshots")
-      .then((snapshots: any[]) => {
-        const norm = (s: string | undefined | null) => (s ?? "").trim().toLowerCase();
-        const matches = snapshots.filter(
-          (snapshot) =>
-            (snapshot.portal?.toUpperCase() ?? "HMIS") === "HMIS_STATE" &&
-            norm(snapshot.state) === norm(data.stateName) &&
-            (snapshot.kpiData?.analysisGranularity ?? "DISTRICT") === data.reportLevel.toUpperCase(),
+      .then((snapshots: SnapshotRecord[]) => {
+        const norm = (value: string | undefined | null) => (value ?? "").trim().toLowerCase();
+        setSavedReviews(
+          snapshots.filter(
+            (snapshot) =>
+              (snapshot.portal?.toUpperCase() ?? "HMIS") === "HMIS_STATE" &&
+              norm(snapshot.state) === norm(data.stateName) &&
+              (snapshot.kpiData?.analysisGranularity ?? "DISTRICT") === data.reportLevel.toUpperCase(),
+          ),
         );
-        const match = matches.sort((a: any, b: any) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        )[0];
-        if (match) {
-          setLastSnapshot({
-            createdAt: match.createdAt,
-            overallScore: match.overallScore,
-            availabilityScore: match.kpiData?.availabilityScore ?? 0,
-            completenessScore: match.kpiData?.completenessScore ?? 0,
-            accuracyScore: match.kpiData?.accuracyScore ?? 0,
-            consistencyScore: match.kpiData?.consistencyScore ?? 0,
-          });
-        }
       })
       .catch(() => {});
   }, [data.reportLevel, data.stateName]);
@@ -228,14 +214,7 @@ export function StateHmisResultsPage({
           analysisGranularity: data.reportLevel.toUpperCase(),
         }),
       });
-      setLastSnapshot({
-        createdAt: savedSnapshot.createdAt,
-        overallScore: savedSnapshot.overallScore,
-        availabilityScore: savedSnapshot.kpiData?.availabilityScore ?? 0,
-        completenessScore: savedSnapshot.kpiData?.completenessScore ?? 0,
-        accuracyScore: savedSnapshot.kpiData?.accuracyScore ?? 0,
-        consistencyScore: savedSnapshot.kpiData?.consistencyScore ?? 0,
-      });
+      setSavedReviews((current) => [savedSnapshot, ...current]);
       onSnapshotSaved();
     } catch {
       alert("Failed to save snapshot");
@@ -249,8 +228,15 @@ export function StateHmisResultsPage({
     label: GROUP_META[group].label,
     color: GROUP_META[group].color,
     current: computed.componentScores[group]?.score ?? 0,
-    previous: savedComponentScore(lastSnapshot, group),
   }));
+
+  // The months this upload covers, derived exactly as the save path records them
+  // so a same-period match is an equality test, not a guess.
+  const selectedMonths = computed.selectedMonths;
+  const currentPeriod = selectedMonths.length
+    ? { start: selectedMonths[0], end: selectedMonths[selectedMonths.length - 1] }
+    : null;
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod);
 
   const meta = GROUP_META[activeGroup];
   const groupCards =
@@ -366,7 +352,7 @@ export function StateHmisResultsPage({
         <ScoreStrip
           overall={computed.overallScore}
           rows={scoreRows}
-          last={lastSnapshot ? { savedAt: lastSnapshot.createdAt, overall: lastSnapshot.overallScore } : null}
+          baselines={baselines}
           saved={snapshotSaved}
           onOpenDetail={() => setActiveGroup("overall")}
           detailLabel="Overall tab"

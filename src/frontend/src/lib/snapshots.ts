@@ -144,13 +144,80 @@ export function getDataPeriod(
   return start <= end ? { start, end } : { start: end, end: start };
 }
 
+/** "Apr 2025 – Jun 2025", or "Apr 2025" for a single month. */
+export function periodRangeLabel(start: string, end: string): string {
+  return start === end ? monthFullLabel(start) : `${monthFullLabel(start)} – ${monthFullLabel(end)}`;
+}
+
 /** "Apr 2025 – Jun 2025", or "Apr 2025" for a single month, or null when unrecorded. */
 export function dataPeriodLabel(snapshot: Pick<SnapshotRecord, "kpiData">): string | null {
   const period = getDataPeriod(snapshot);
   if (!period) return null;
-  return period.start === period.end
-    ? monthFullLabel(period.start)
-    : `${monthFullLabel(period.start)} – ${monthFullLabel(period.end)}`;
+  return periodRangeLabel(period.start, period.end);
+}
+
+/**
+ * A past review to measure the one on screen against.
+ *
+ * "latest" is simply the most recent review of this geography, whatever months it
+ * covered. "samePeriod" is the most recent review of the SAME months — the only
+ * like-for-like comparison, and the one that answers "has this data improved since
+ * we last reviewed it". One snapshot can be both, and is then returned once as
+ * "both" rather than offered twice.
+ */
+export type BaselineKind = "samePeriod" | "latest" | "both";
+
+export interface ReviewBaseline {
+  id: string;
+  kind: BaselineKind;
+  createdAt: string;
+  period: { start: string; end: string } | null;
+  overall: number;
+  availabilityScore: number | null;
+  completenessScore: number | null;
+  accuracyScore: number | null;
+  consistencyScore: number | null;
+}
+
+function toBaseline(snapshot: SnapshotRecord, kind: BaselineKind): ReviewBaseline {
+  return {
+    id: snapshot.id,
+    kind,
+    createdAt: snapshot.createdAt,
+    period: getDataPeriod(snapshot),
+    overall: snapshot.overallScore ?? 0,
+    availabilityScore: snapshot.kpiData?.availabilityScore ?? null,
+    completenessScore: snapshot.kpiData?.completenessScore ?? null,
+    accuracyScore: snapshot.kpiData?.accuracyScore ?? null,
+    consistencyScore: snapshot.kpiData?.consistencyScore ?? null,
+  };
+}
+
+/**
+ * Baselines for the review on screen, preferred first: the same-period review when
+ * one exists, then the latest review when that is a different one. Pass the
+ * snapshots already narrowed to this portal and geography.
+ */
+export function pickReviewBaselines(
+  matches: SnapshotRecord[],
+  currentPeriod: { start: string; end: string } | null,
+): ReviewBaseline[] {
+  const sorted = [...matches].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+  const latest = sorted[0];
+  if (!latest) return [];
+
+  const samePeriod = currentPeriod
+    ? sorted.find((snapshot) => {
+        const period = getDataPeriod(snapshot);
+        return period !== null && period.start === currentPeriod.start && period.end === currentPeriod.end;
+      })
+    : undefined;
+
+  if (samePeriod && samePeriod.id === latest.id) return [toBaseline(latest, "both")];
+  if (samePeriod) return [toBaseline(samePeriod, "samePeriod"), toBaseline(latest, "latest")];
+  return [toBaseline(latest, "latest")];
 }
 
 /** How many months of data the review covered; falls back to the stored label. */
