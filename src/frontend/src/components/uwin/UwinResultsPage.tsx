@@ -13,7 +13,8 @@ import { UwinKpiPanel } from "./UwinKpiPanel";
 import { OverallScore } from "../dqa/OverallScore";
 import { OverallSummaryTable } from "../dqa/OverallSummaryTable";
 import { apiFetch } from "../../api";
-import { computeOverallScore, scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
+import { computeOverallScore } from "../../lib/dqa/scoreUtils";
+import { ScoreStrip, savedComponentScore, type ScoreStripRow } from "../dqa/ScoreStrip";
 import { buildSnapshotSaveMeta } from "../../lib/snapshots";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { GlassPanel } from "../branding/GlassPanel";
@@ -98,6 +99,16 @@ const GROUP_META: Record<
     ring: "ring-slate-200",
   },
 };
+
+/**
+ * Components that make up the overall score for U-WIN. The portal has no
+ * completeness KPIs, so it is scored on three rather than four.
+ */
+const SCORED_GROUPS: Exclude<ActiveGroup, "" | "overall">[] = [
+  "availability",
+  "accuracy",
+  "consistency",
+];
 
 const primaryActionClass =
   "inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800";
@@ -197,7 +208,7 @@ export function UwinResultsPage({
       setSaving(true);
       const { overall, components } = computeOverallScore(
         kpis as unknown as ComputedKpis,
-        ["availability", "accuracy", "consistency"],
+        SCORED_GROUPS,
       );
       const snapshotMeta = buildSnapshotSaveMeta(auth, filters, csv.allMonths);
       const savedSnapshot = await apiFetch("/api/snapshots", {
@@ -243,6 +254,19 @@ export function UwinResultsPage({
     }
   };
 
+  const liveScore = kpis
+    ? computeOverallScore(kpis as unknown as ComputedKpis, SCORED_GROUPS)
+    : null;
+  const scoreRows: ScoreStripRow[] = liveScore
+    ? SCORED_GROUPS.map((group) => ({
+        key: group,
+        label: GROUP_META[group].label,
+        color: GROUP_META[group].color,
+        current: liveScore.components[group]?.score ?? 0,
+        previous: savedComponentScore(lastSnapshot, group),
+      }))
+    : [];
+
   const csvForFilter = csv as unknown as Parameters<typeof FilterPanel>[0]["csv"];
   const meta = activeGroup ? GROUP_META[activeGroup] : null;
   const groupCards =
@@ -284,7 +308,7 @@ export function UwinResultsPage({
           kpis={kpis as unknown as ComputedKpis}
           csv={csvForFilter}
           onClose={() => setShowOverall(false)}
-          groups={["availability", "accuracy", "consistency"]}
+          groups={SCORED_GROUPS}
           unitLabel={unitPlural}
         />
       ) : null}
@@ -383,29 +407,18 @@ export function UwinResultsPage({
             <span className="text-xs text-slate-500">
               Rural/Urban: <strong className="font-semibold text-slate-700">{csv.ruralCount}/{csv.urbanCount}</strong>
             </span>
-            {lastSnapshot ? (
-              <>
-                <span className="text-xs text-slate-500">
-                  Last saved: <strong className="font-semibold text-slate-700">{new Date(lastSnapshot.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</strong>
-                </span>
-                {([
-                  { label: "Overall", score: lastSnapshot.overallScore, style: scoreBadgeStyle(lastSnapshot.overallScore) },
-                  { label: "Availability", score: lastSnapshot.availabilityScore, style: { bg: "#e8f1fb", text: "#1c5cab" } },
-                  { label: "Accuracy", score: lastSnapshot.accuracyScore, style: { bg: "#fdeee7", text: "#b04516" } },
-                  { label: "Consistency", score: lastSnapshot.consistencyScore, style: { bg: "#e5f6ef", text: "#0d7a54" } },
-                ] as const).map(({ label, score, style }) => (
-                  <span
-                    key={label}
-                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold"
-                    style={{ background: style.bg, color: style.text }}
-                  >
-                    {label}: {Math.round(score)}
-                  </span>
-                ))}
-              </>
-            ) : null}
           </div>
         </div>
+
+        {liveScore ? (
+          <ScoreStrip
+            overall={liveScore.overall}
+            rows={scoreRows}
+            last={lastSnapshot ? { savedAt: lastSnapshot.createdAt, overall: lastSnapshot.overallScore } : null}
+            saved={snapshotSaved}
+            onOpenDetail={() => setShowOverall(true)}
+          />
+        ) : null}
 
         <GlassPanel className="p-2">
           <div className="flex flex-wrap gap-2">

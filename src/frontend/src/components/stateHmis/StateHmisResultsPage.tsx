@@ -14,6 +14,7 @@ import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
 import { apiFetch } from "../../api";
 import { monthsSpanInclusive } from "../../lib/dqa/parseUtils";
 import { scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
+import { ScoreStrip, savedComponentScore, type ScoreStripRow } from "../dqa/ScoreStrip";
 import { computeStateHmisKpis } from "../../lib/stateHmis/compute";
 import {
   DEFAULT_STATE_HMIS_FILTERS,
@@ -111,6 +112,14 @@ const TABS: ActiveGroup[] = [
   "accuracy",
   "consistency",
   "overall",
+];
+
+/** Components that make up the overall score for this portal. */
+const SCORED_GROUPS: Exclude<ActiveGroup, "overall">[] = [
+  "availability",
+  "completeness",
+  "accuracy",
+  "consistency",
 ];
 
 const secondaryActionClass =
@@ -235,6 +244,14 @@ export function StateHmisResultsPage({
     }
   };
 
+  const scoreRows: ScoreStripRow[] = SCORED_GROUPS.map((group) => ({
+    key: group,
+    label: GROUP_META[group].label,
+    color: GROUP_META[group].color,
+    current: computed.componentScores[group]?.score ?? 0,
+    previous: savedComponentScore(lastSnapshot, group),
+  }));
+
   const meta = GROUP_META[activeGroup];
   const groupCards =
     activeGroup !== "overall"
@@ -338,28 +355,6 @@ export function StateHmisResultsPage({
                 {stat.label}: <strong className="font-semibold text-slate-700">{stat.value}</strong>
               </span>
             ))}
-            {lastSnapshot ? (
-              <>
-                <span className="text-xs text-slate-500">
-                  Last saved: <strong className="font-semibold text-slate-700">{new Date(lastSnapshot.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</strong>
-                </span>
-                {([
-                  { label: "Overall", score: lastSnapshot.overallScore, style: scoreBadgeStyle(lastSnapshot.overallScore) },
-                  { label: "Availability", score: lastSnapshot.availabilityScore, style: { bg: "#e8f1fb", text: "#1c5cab" } },
-                  { label: "Completeness", score: lastSnapshot.completenessScore, style: { bg: "#eceafa", text: "#3a2d85" } },
-                  { label: "Accuracy", score: lastSnapshot.accuracyScore, style: { bg: "#fdeee7", text: "#b04516" } },
-                  { label: "Consistency", score: lastSnapshot.consistencyScore, style: { bg: "#e5f6ef", text: "#0d7a54" } },
-                ] as const).map(({ label, score, style }) => (
-                  <span
-                    key={label}
-                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold"
-                    style={{ background: style.bg, color: style.text }}
-                  >
-                    {label}: {Math.round(score)}
-                  </span>
-                ))}
-              </>
-            ) : null}
           </div>
           {data.validationIssues.length ? (
             <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -367,6 +362,15 @@ export function StateHmisResultsPage({
             </div>
           ) : null}
         </div>
+
+        <ScoreStrip
+          overall={computed.overallScore}
+          rows={scoreRows}
+          last={lastSnapshot ? { savedAt: lastSnapshot.createdAt, overall: lastSnapshot.overallScore } : null}
+          saved={snapshotSaved}
+          onOpenDetail={() => setActiveGroup("overall")}
+          detailLabel="Overall tab"
+        />
 
         <GlassPanel className="p-2">
           <div className="flex flex-wrap gap-2">
