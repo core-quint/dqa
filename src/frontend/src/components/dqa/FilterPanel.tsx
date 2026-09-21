@@ -3,7 +3,7 @@ import { ChevronDown, Filter, Plus, X } from "lucide-react";
 import type { FilterState, ParsedCSV } from "../../lib/dqa/types";
 import type { UwinParsedCSV } from "../../lib/uwin/types";
 import { BASE_VAX, ADD_VAX, PAIR_DEFAULTS } from "../../lib/dqa/constants";
-import { monthLongLabel } from "../../lib/dqa/parseUtils";
+import { isMonthKey, monthLongLabel } from "../../lib/dqa/parseUtils";
 
 interface Props {
   csv: ParsedCSV;
@@ -301,6 +301,9 @@ export function FilterPanel({
 
   const allMonths = Object.keys(csv.allMonths).sort();
   const singleMonth = allMonths.length === 1;
+  // U-WIN uploads can declare a sub-month reporting period (a weekly export), in
+  // which case these buckets are periods rather than calendar months.
+  const monthDimension = allMonths.every(isMonthKey) ? "month" : "period";
 
   const toggleSet = (arr: string[], value: string, on: boolean): string[] =>
     on ? [...new Set([...arr, value])] : arr.filter((item) => item !== value);
@@ -315,7 +318,7 @@ export function FilterPanel({
   // Nothing selected in a mandatory dimension would mean "no data at all", so
   // block Apply instead of silently falling back to everything.
   const missingSelections: string[] = [];
-  if (!singleMonth && f.months.length === 0) missingSelections.push("month");
+  if (!singleMonth && f.months.length === 0) missingSelections.push(monthDimension);
   if (allBlocks.length > 0 && f.blocks.length === 0) missingSelections.push("block");
   if (isStateUwin && allDistricts.length > 0 && selectedDistricts.length === 0) {
     missingSelections.push("district");
@@ -423,7 +426,7 @@ export function FilterPanel({
         </Dropdown>
 
         {!singleMonth ? (
-          <Dropdown label="Months" fullWidth={isRail}>
+          <Dropdown label={monthDimension === "month" ? "Months" : "Periods"} fullWidth={isRail}>
             <CheckAll
               label="Select All"
               checked={isAllMonths}

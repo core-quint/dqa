@@ -13,7 +13,7 @@ import {
   type Plugin,
 } from "chart.js";
 import type { ComputedKpis, ParsedCSV } from "../../lib/dqa/types";
-import { monthYearLabel, monthsSpanInclusive } from "../../lib/dqa/parseUtils";
+import { monthYearLabel, periodDurationLabel } from "../../lib/dqa/parseUtils";
 import { GROUP_COLORS } from "../../lib/dqa/constants";
 import { BrandMark } from "../branding/BrandMark";
 import { GlassPanel } from "../branding/GlassPanel";
@@ -148,9 +148,8 @@ export function OverallScore({
   if (months.length > 0) {
     const min = months[0];
     const max = months[months.length - 1];
-    const span = monthsSpanInclusive(min, max);
-    if (span !== null) {
-      const label = `${span} month${span !== 1 ? "s" : ""}`;
+    const label = periodDurationLabel(months);
+    if (label !== "-") {
       durationStr =
         min === max
           ? `${label} (${monthYearLabel(min)})`

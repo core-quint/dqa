@@ -3,6 +3,7 @@
 // Collected on the HMIS and U-WIN landing pages before analysis can start.
 // ============================================================
 import { apiFetch } from '../../api';
+import { periodMonthBounds } from './parseUtils';
 import type { AuthState } from '../../components/dqa/LoginPage';
 
 type Level = AuthState['level'];
@@ -104,12 +105,14 @@ export function buildUploadDatasetContext(parsed: {
   globalSessionSiteCount?: number;
   globalDistrictCount?: number;
 }): UploadDatasetContext {
-  const months = Object.keys(parsed.allMonths).sort();
+  // Period keys can be sub-month day ranges (a weekly U-WIN upload); the audit log
+  // records the calendar months they fall in so it stays comparable across portals.
+  const bounds = periodMonthBounds(Object.keys(parsed.allMonths));
   return {
     state: parsed.stateName || null,
     district: parsed.distName || null,
-    periodStart: months[0] ?? null,
-    periodEnd: months[months.length - 1] ?? null,
+    periodStart: bounds?.start ?? null,
+    periodEnd: bounds?.end ?? null,
     blockCount: parsed.globalBlockCount ?? null,
     facilityCount: parsed.globalFacilityCount ?? null,
     sessionSiteCount: parsed.globalSessionSiteCount ?? null,

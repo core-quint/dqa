@@ -14,14 +14,17 @@ export {
   SummaryTable,
   totalValueCols,
 } from '../dqa/DataTables';
+import { isMonthKey } from '../../lib/dqa/parseUtils';
 
 // ============================================================
 // T8: Avg Beneficiaries per Session < 5
-// Header: Block | Facility | [Session Site] | [Month: Sess Held / Beneficiaries / Avg] × N + All months
+// Header: Block | Facility | [Session Site] | [Period: Sess Held / Beneficiaries / Avg] × N + All periods
 // ============================================================
 
 export function T8Table({ web }: { web: T8Web }) {
   const { months, monthLabels, rows } = web;
+  // "All months" reads wrong once a weekly upload is analysed as its own period.
+  const totalLabel = months.every(isMonthKey) ? 'All months' : 'All periods';
   const rowList = Object.values(rows);
   if (!rowList.length) return <div className="p-3 text-sm text-muted-foreground">No data.</div>;
   const showDistrict = rowList.some((row) => Boolean(row.district));
@@ -48,7 +51,7 @@ export function T8Table({ web }: { web: T8Web }) {
               {monthLabels[mk] ?? mk}
             </th>
           ))}
-          <th colSpan={3} className="border border-border px-2 py-1.5 bg-orange-100 font-bold text-center">All months</th>
+          <th colSpan={3} className="border border-border px-2 py-1.5 bg-orange-100 font-bold text-center">{totalLabel}</th>
         </tr>
         <tr>
           {months.map((mk) => (
@@ -88,7 +91,7 @@ export function T8Table({ web }: { web: T8Web }) {
                 </>
               );
             })}
-            {/* All months summary */}
+            {/* All periods summary */}
             {(() => {
               const a = row.allMonths;
               const flagCls = a.flag ? 'pink-cell' : '';

@@ -49,6 +49,183 @@ export function normalizeRU(v: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// ============================================================
+// Reporting periods
+// A reporting period is either a whole calendar month ("2026-09") or an explicit
+// day range ("2026-09-01..2026-09-07") for an upload that covers part of a month —
+// a weekly U-WIN export, for example. Both forms sort chronologically as plain
+// strings and both carry a label, so every month-keyed table, filter, chart and
+// export keeps working on them unchanged.
+// ============================================================
+
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS_LONG = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+const MONTH_KEY_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const ISO_DAY_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const PERIOD_RANGE_RE = /^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/;
+
+export function isMonthKey(key: string): boolean {
+  return MONTH_KEY_RE.test(key.trim());
+}
+
+export function isPeriodRangeKey(key: string): boolean {
+  return PERIOD_RANGE_RE.test(key.trim());
+}
+
+export function parsePeriodRangeKey(key: string): { from: string; to: string } | null {
+  const match = key.trim().match(PERIOD_RANGE_RE);
+  if (!match) return null;
+  if (!ISO_DAY_RE.test(match[1]) || !ISO_DAY_RE.test(match[2])) return null;
+  return { from: match[1], to: match[2] };
+}
+
+/** Last calendar day of "YYYY-MM" as "YYYY-MM-DD". Built by hand: toISOString() on a
+ *  local-midnight Date rolls back a day in +05:30. */
+export function monthEndDay(ym: string): string {
+  const [year, month] = ym.split('-').map(Number);
+  if (!year || !month) return ym;
+  return `${ym}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Bucket key for a declared from/to reporting period. A range covering exactly one
+ * whole calendar month collapses to that month key, so an ordinary monthly upload
+ * keeps scoring, trending and exporting exactly as it always has; anything shorter
+ * or longer keeps its own day range. Returns null when the dates are unusable.
+ */
+export function makePeriodKey(from: string, to: string): string | null {
+  const start = from.trim();
+  const end = to.trim();
+  if (!ISO_DAY_RE.test(start) || !ISO_DAY_RE.test(end)) return null;
+  if (start > end) return null;
+  const ym = start.slice(0, 7);
+  if (end.slice(0, 7) === ym && start.endsWith('-01') && end === monthEndDay(ym)) return ym;
+  return `${start}..${end}`;
+}
+
+/** First and last calendar day a period key covers, as "YYYY-MM-DD". */
+export function periodDayRange(key: string): { from: string; to: string } | null {
+  const range = parsePeriodRangeKey(key);
+  if (range) return range;
+  const ym = key.trim();
+  if (!isMonthKey(ym)) return null;
+  return { from: `${ym}-01`, to: monthEndDay(ym) };
+}
+
+function nextMonth(ym: string): string {
+  const [year, month] = ym.split('-').map(Number);
+  return month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Calendar months a period key touches. Snapshots, trend charts and the state
+ * report API all live on a month axis, so period keys are mapped back onto it
+ * before anything leaves the analysis.
+ */
+export function periodMonths(key: string): string[] {
+  const range = periodDayRange(key);
+  if (!range) return [];
+  const end = range.to.slice(0, 7);
+  const months: string[] = [];
+  let cursor = range.from.slice(0, 7);
+  for (let guard = 0; cursor <= end && guard < 240; guard += 1) {
+    months.push(cursor);
+    cursor = nextMonth(cursor);
+  }
+  return months;
+}
+
+/** Earliest and latest calendar month a set of period keys covers. */
+export function periodMonthBounds(keys: string[]): { start: string; end: string } | null {
+  const months = [...new Set(keys.flatMap(periodMonths))].sort();
+  if (months.length === 0) return null;
+  return { start: months[0], end: months[months.length - 1] };
+}
+
+function utcDay(iso: string): number {
+  const [year, month, day] = iso.split('-').map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+/** Inclusive day count between two "YYYY-MM-DD" dates. */
+export function daysSpanInclusive(from: string, to: string): number | null {
+  if (!ISO_DAY_RE.test(from) || !ISO_DAY_RE.test(to)) return null;
+  return Math.round((utcDay(to) - utcDay(from)) / 86400000) + 1;
+}
+
+/**
+ * Human duration covered by a set of period keys — "3 months" when they are all
+ * whole months (unchanged from the month-only behaviour), otherwise the real span
+ * in weeks or days so a weekly upload is never reported as a month.
+ */
+export function periodDurationLabel(keys: string[]): string {
+  const usable = keys.filter((key) => periodDayRange(key) !== null);
+  if (usable.length === 0) return '-';
+
+  if (usable.every(isMonthKey)) {
+    const sorted = usable.slice().sort();
+    const span = monthsSpanInclusive(sorted[0], sorted[sorted.length - 1]);
+    return span ? `${span} month${span > 1 ? 's' : ''}` : '-';
+  }
+
+  let from = '';
+  let to = '';
+  for (const key of usable) {
+    const range = periodDayRange(key)!;
+    if (!from || range.from < from) from = range.from;
+    if (!to || range.to > to) to = range.to;
+  }
+  const days = daysSpanInclusive(from, to);
+  if (days === null) return '-';
+  if (days % 7 === 0 && days <= 56) {
+    const weeks = days / 7;
+    return `${weeks} week${weeks > 1 ? 's' : ''}`;
+  }
+  return `${days} day${days > 1 ? 's' : ''}`;
+}
+
+function dayOfMonth(iso: string): number {
+  return parseInt(iso.slice(8, 10), 10);
+}
+
+function shortMonthOf(iso: string): string {
+  return MONTHS_SHORT[parseInt(iso.slice(5, 7), 10) - 1] ?? iso.slice(5, 7);
+}
+
+function rangeShortLabel(from: string, to: string): string {
+  if (from.slice(0, 7) === to.slice(0, 7)) {
+    return `${dayOfMonth(from)}-${dayOfMonth(to)} ${shortMonthOf(from)}`;
+  }
+  return `${dayOfMonth(from)} ${shortMonthOf(from)}-${dayOfMonth(to)} ${shortMonthOf(to)}`;
+}
+
+function rangeYearLabel(from: string, to: string): string {
+  const yy = (iso: string) => iso.slice(2, 4);
+  if (from.slice(0, 7) === to.slice(0, 7)) {
+    return `${dayOfMonth(from)}-${dayOfMonth(to)} ${shortMonthOf(from)} ${yy(from)}`;
+  }
+  if (from.slice(0, 4) === to.slice(0, 4)) {
+    return `${dayOfMonth(from)} ${shortMonthOf(from)} - ${dayOfMonth(to)} ${shortMonthOf(to)} ${yy(to)}`;
+  }
+  return `${dayOfMonth(from)} ${shortMonthOf(from)} ${yy(from)} - ${dayOfMonth(to)} ${shortMonthOf(to)} ${yy(to)}`;
+}
+
+function rangeLongLabel(from: string, to: string): string {
+  const longMonthOf = (iso: string) => MONTHS_LONG[parseInt(iso.slice(5, 7), 10) - 1] ?? iso.slice(5, 7);
+  const year = (iso: string) => iso.slice(0, 4);
+  if (from.slice(0, 7) === to.slice(0, 7)) {
+    return `${dayOfMonth(from)}-${dayOfMonth(to)} ${longMonthOf(from)} ${year(from)}`;
+  }
+  if (year(from) === year(to)) {
+    return `${dayOfMonth(from)} ${shortMonthOf(from)} - ${dayOfMonth(to)} ${shortMonthOf(to)} ${year(to)}`;
+  }
+  return `${dayOfMonth(from)} ${shortMonthOf(from)} ${year(from)} - ${dayOfMonth(to)} ${shortMonthOf(to)} ${year(to)}`;
+}
+
 export function monthKey(raw: string): string | null {
   const rawStr = stripBOM(raw).trim();
   if (!rawStr) return null;
@@ -82,37 +259,48 @@ export function monthKey(raw: string): string | null {
   return null;
 }
 
+/**
+ * Bucket key for a Month-column cell. A cell holding a day range (written there by
+ * a declared reporting period) is its own key; anything else falls back to the
+ * calendar month it names.
+ */
+export function periodKey(raw: string): string | null {
+  const value = stripBOM(raw ?? '').trim();
+  if (isPeriodRangeKey(value)) return value;
+  return monthKey(value);
+}
+
 export function monthShortLabel(ym: string): string {
+  const range = parsePeriodRangeKey(ym);
+  if (range) return rangeShortLabel(range.from, range.to);
   const parts = ym.split('-');
   if (parts.length !== 2) return ym;
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const m = parseInt(parts[1], 10) - 1;
   if (m < 0 || m > 11) return ym;
-  return monthNames[m];
+  return MONTHS_SHORT[m];
 }
 
 /** Full month name plus 4-digit year, e.g. "2026-01" -> "January 2026". */
 export function monthLongLabel(ym: string): string {
+  const range = parsePeriodRangeKey(ym);
+  if (range) return rangeLongLabel(range.from, range.to);
   const parts = ym.split('-');
   if (parts.length !== 2) return ym;
-  const monthNames = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ];
   const m = parseInt(parts[1], 10) - 1;
   const y = parseInt(parts[0], 10);
   if (m < 0 || m > 11 || isNaN(y)) return ym;
-  return `${monthNames[m]} ${y}`;
+  return `${MONTHS_LONG[m]} ${y}`;
 }
 
 export function monthYearLabel(ym: string): string {
+  const range = parsePeriodRangeKey(ym);
+  if (range) return rangeYearLabel(range.from, range.to);
   const parts = ym.split('-');
   if (parts.length !== 2) return ym;
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const m = parseInt(parts[1], 10) - 1;
   const y = parseInt(parts[0], 10) % 100;
   if (m < 0 || m > 11) return ym;
-  return `${monthNames[m]}-${String(y).padStart(2, '0')}`;
+  return `${MONTHS_SHORT[m]}-${String(y).padStart(2, '0')}`;
 }
 
 export function monthsSpanInclusive(minYM: string, maxYM: string): number | null {

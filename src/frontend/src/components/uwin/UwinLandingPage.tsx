@@ -12,7 +12,9 @@ import {
   parseUwinMultipleCSVFiles,
   preCheckUwinFiles,
   type UwinFilePrecheck,
+  type UwinUploadPeriod,
 } from "../../lib/uwin/csvParser";
+import { makePeriodKey, monthLongLabel } from "../../lib/dqa/parseUtils";
 import type { AuthState } from "../dqa/LoginPage";
 import { GlassPanel } from "../branding/GlassPanel";
 import { PreUploadInfoForm } from "../dqa/PreUploadInfoForm";
@@ -58,6 +60,23 @@ function checkGeoAccess(parsed: UwinParsedCSV, auth: AuthState): string | null {
   return null;
 }
 
+/** One row of the mandatory reporting-period form. */
+type PeriodDraft = { from: string; to: string };
+
+const EMPTY_PERIOD: PeriodDraft = { from: "", to: "" };
+
+/** Human summary of a draft period, or null while it is incomplete or inverted. */
+function periodSummary(draft: PeriodDraft): string | null {
+  const key = makePeriodKey(draft.from, draft.to);
+  return key ? monthLongLabel(key) : null;
+}
+
+/** Part of a single calendar month — the weekly/fortnightly case. */
+function isSubMonth(draft: PeriodDraft): boolean {
+  const key = makePeriodKey(draft.from, draft.to);
+  return Boolean(key) && key !== draft.from.slice(0, 7);
+}
+
 export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district" }: Props) {
   const isState = variant === "state";
   const [isLoading, setIsLoading] = useState(false);
@@ -65,9 +84,7 @@ export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [prechecks, setPrechecks] = useState<UwinFilePrecheck[] | null>(null);
-  const [resolvedMonths, setResolvedMonths] = useState<Record<number, string>>(
-    {},
-  );
+  const [periods, setPeriods] = useState<PeriodDraft[]>([]);
   const [preInfo, setPreInfo] = useState(EMPTY_PRE_UPLOAD_INFO);
   const infoComplete = isPreUploadInfoComplete(preInfo, auth.level);
 
@@ -79,7 +96,7 @@ export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district
       return;
     }
     if (csvFiles.length > 12) {
-      setError("Maximum 12 monthly CSV files can be uploaded at once.");
+      setError("Maximum 12 CSV files can be uploaded at once.");
       return;
     }
 
@@ -87,29 +104,16 @@ export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district
     setIsPrechecking(true);
     try {
       const checks = await preCheckUwinFiles(csvFiles);
-
-      const needsInput = checks.some(
-        (check) => !check.hasMonthColumn && !check.detectedMonth,
+      // The reporting period is always confirmed by hand. A month read off the
+      // filename only prefills the form — it is never applied on its own, because
+      // a filename cannot tell a weekly export from a monthly one.
+      setPeriods(
+        checks.map((check) => ({
+          from: check.suggestedFrom,
+          to: check.suggestedTo,
+        })),
       );
-
-      if (!needsInput) {
-        const auto: Record<number, string> = {};
-        checks.forEach((check, index) => {
-          if (!check.hasMonthColumn && check.detectedMonth) {
-            auto[index] = check.detectedMonth;
-          }
-        });
-        await runParse(checks, auto);
-      } else {
-        const prefilled: Record<number, string> = {};
-        checks.forEach((check, index) => {
-          if (!check.hasMonthColumn && check.detectedMonth) {
-            prefilled[index] = check.detectedMonth;
-          }
-        });
-        setResolvedMonths(prefilled);
-        setPrechecks(checks);
-      }
+      setPrechecks(checks);
     } catch (precheckError) {
       setError(
         precheckError instanceof Error
@@ -123,18 +127,17 @@ export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district
 
   const runParse = async (
     checks: UwinFilePrecheck[],
-    months: Record<number, string>,
+    filePeriods: UwinUploadPeriod[],
   ) => {
     setIsLoading(true);
     setError(null);
     try {
       const files = checks.map((check) => check.file);
-      const fileMonths = checks.map((check, index) => months[index] ?? "");
 
       const parsed =
         files.length === 1
-          ? await parseUwinCSVFile(files[0], fileMonths[0] || undefined)
-          : await parseUwinMultipleCSVFiles(files, fileMonths);
+          ? await parseUwinCSVFile(files[0], filePeriods[0])
+          : await parseUwinMultipleCSVFiles(files, filePeriods);
 
       if (isState) {
         if (parsed.idxDist === null || parsed.globalDistrictCount === 0) {
@@ -166,15 +169,33 @@ export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district
     }
   };
 
-  const handleConfirmMonths = () => {
+  const handleConfirmPeriods = () => {
     if (!prechecks) return;
     for (let index = 0; index < prechecks.length; index += 1) {
-      if (!prechecks[index].hasMonthColumn && !resolvedMonths[index]) {
-        setError(`Please select the month for: ${prechecks[index].file.name}`);
+      const draft = periods[index] ?? EMPTY_PERIOD;
+      const name = prechecks[index].file.name;
+      if (!draft.from || !draft.to) {
+        setError(`Enter both a From date and a To date for: ${name}`);
+        return;
+      }
+      if (draft.from > draft.to) {
+        setError(`The From date must be on or before the To date for: ${name}`);
         return;
       }
     }
-    runParse(prechecks, resolvedMonths);
+    runParse(
+      prechecks,
+      prechecks.map((_, index) => ({ ...(periods[index] ?? EMPTY_PERIOD) })),
+    );
+  };
+
+  const setPeriodField = (index: number, field: keyof PeriodDraft, value: string) => {
+    setPeriods((prev) => {
+      const next = prev.slice();
+      while (next.length <= index) next.push({ ...EMPTY_PERIOD });
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -185,60 +206,103 @@ export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district
 
   const handleReset = () => {
     setPrechecks(null);
-    setResolvedMonths({});
+    setPeriods([]);
     setError(null);
     if (fileRef.current) fileRef.current.value = "";
   };
 
   if (prechecks) {
-    const filesNeedingMonth = prechecks.filter((check) => !check.hasMonthColumn);
+    const allPeriodsValid = prechecks.every(
+      (_, index) => makePeriodKey(periods[index]?.from ?? "", periods[index]?.to ?? "") !== null,
+    );
+    const dateInputClass =
+      "rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-300 focus:ring-4 focus:ring-amber-100";
 
     return (
       <div className="mx-auto max-w-3xl px-4 py-6 md:px-6 md:py-8">
         <GlassPanel className="overflow-hidden">
           <div className="border-b border-slate-200/70 px-6 py-5">
-            <h2 className="text-base font-bold text-slate-900">Confirm Reporting Month</h2>
+            <h2 className="text-base font-bold text-slate-900">Confirm Reporting Period</h2>
             <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-600">
-              {filesNeedingMonth.length === 1
-                ? "One file is missing a Month column. Select the reporting month before analysis."
-                : "Some files are missing a Month column. Select the reporting month for each file before analysis."}
+              Enter the period each file actually covers. A whole calendar month is
+              analysed month-wise as before; a shorter span — a weekly export, for
+              example — is analysed as its own period so it is never reported as a
+              full month.
             </p>
           </div>
 
           <div className="space-y-4 px-6 py-6">
-            {prechecks.map((check, index) => (
-              <div
-                key={check.file.name}
-                className="rounded-[24px] border border-slate-200/80 bg-white/80 p-4"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-bold text-slate-950">
-                      {check.file.name}
-                    </div>
-                    <div className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                      {check.hasMonthColumn
-                        ? "Month column present"
-                        : "Month selection required"}
-                    </div>
+            {prechecks.map((check, index) => {
+              const draft = periods[index] ?? EMPTY_PERIOD;
+              const summary = periodSummary(draft);
+              const inverted = Boolean(draft.from && draft.to && draft.from > draft.to);
+              const monthColumnWins =
+                check.hasMonthColumn && summary !== null && !isSubMonth(draft);
+
+              return (
+                <div
+                  key={`${check.file.name}-${index}`}
+                  className="rounded-[24px] border border-slate-200/80 bg-white/80 p-4"
+                >
+                  <div className="text-sm font-bold text-slate-950">
+                    {check.file.name}
+                  </div>
+                  <div className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {check.hasMonthColumn
+                      ? "Month column present"
+                      : "No month column in file"}
                   </div>
 
-                  {!check.hasMonthColumn ? (
-                    <input
-                      type="month"
-                      value={resolvedMonths[index] ?? ""}
-                      onChange={(event) =>
-                        setResolvedMonths((prev) => ({
-                          ...prev,
-                          [index]: event.target.value,
-                        }))
-                      }
-                      className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none transition focus:border-amber-300 focus:ring-4 focus:ring-amber-100"
-                    />
-                  ) : null}
+                  <div className="mt-3 flex flex-wrap items-end gap-3">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs font-semibold text-slate-600">From date</span>
+                      <input
+                        type="date"
+                        value={draft.from}
+                        max={draft.to || undefined}
+                        onChange={(event) => setPeriodField(index, "from", event.target.value)}
+                        className={dateInputClass}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs font-semibold text-slate-600">To date</span>
+                      <input
+                        type="date"
+                        value={draft.to}
+                        min={draft.from || undefined}
+                        onChange={(event) => setPeriodField(index, "to", event.target.value)}
+                        className={dateInputClass}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-3 text-xs leading-6 text-slate-600">
+                    {inverted ? (
+                      <span className="font-semibold text-red-600">
+                        The From date must be on or before the To date.
+                      </span>
+                    ) : summary ? (
+                      <>
+                        <span className="font-semibold text-slate-800">
+                          Reporting period: {summary}
+                        </span>
+                        {monthColumnWins ? (
+                          <span className="block text-slate-500">
+                            This file has its own Month column, so the analysis keeps
+                            one column per month in the file. The dates above are
+                            recorded as the review period.
+                          </span>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className="text-slate-500">
+                        Both dates are required before analysis can start.
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {error ? (
               <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
@@ -250,8 +314,8 @@ export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
-                onClick={handleConfirmMonths}
-                disabled={isLoading}
+                onClick={handleConfirmPeriods}
+                disabled={isLoading || !allPeriodsValid}
                 className="flex items-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0f172a,#14532d)] px-5 py-3 text-sm font-bold text-white shadow-[0_18px_38px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isLoading ? (
@@ -292,9 +356,9 @@ export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district
               Upload {isState ? "U-WIN State" : "U-WIN"} CSV files
             </div>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-              Upload one to twelve monthly session-site CSV files. If a file
-              does not contain a Month column, you will be asked to
-              confirm that month before analysis begins.
+              Upload one to twelve session-site CSV files — monthly or weekly. You
+              will confirm the From and To dates each file covers before analysis
+              begins; that reporting period is what the analysis is built on.
             </p>
           </div>
 
@@ -318,7 +382,7 @@ export function UwinLandingPage({ onDataReady, auth, onBack, variant = "district
                 Drop {isState ? "U-WIN State" : "U-WIN"} CSV files here or browse from your machine
               </div>
               <div className="mt-2 text-sm text-slate-500">
-                Up to twelve monthly files. CSV format only.
+                Up to twelve files per upload. CSV format only.
               </div>
               {!infoComplete ? (
                 <div className="mt-3 text-xs font-semibold text-amber-600">

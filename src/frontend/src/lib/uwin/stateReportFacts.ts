@@ -1,5 +1,6 @@
 import type { KpiCard } from "../dqa/types";
 import { computeOverallScore } from "../dqa/scoreUtils";
+import { periodMonthBounds } from "../dqa/parseUtils";
 import type { UwinComputedKpis, UwinParsedCSV } from "./types";
 
 export const UWIN_STATE_REPORT_RULES_VERSION = "uwin-state-dqa-v1";
@@ -166,6 +167,7 @@ export function buildUwinStateFactPack(
   kpis: UwinComputedKpis,
 ): UwinStateReportFactPack {
   const months = Object.keys(csv.allMonths).sort();
+  const monthBounds = periodMonthBounds(months);
   const overall = computeOverallScore(kpis as never, [...REPORT_GROUPS]);
   const reportCards = kpis.cards.filter((card) => REPORT_GROUPS.includes(card.group as typeof REPORT_GROUPS[number]));
   const den = Math.max(1, kpis.globalDen);
@@ -250,8 +252,8 @@ export function buildUwinStateFactPack(
     generatedFrom: "UWIN_STATE_COMPUTED_KPIS",
     scope: {
       state: csv.stateName,
-      periodStart: months[0] ?? "",
-      periodEnd: months[months.length - 1] ?? "",
+      periodStart: monthBounds?.start ?? "",
+      periodEnd: monthBounds?.end ?? "",
       analysisMode: kpis.analysisMode,
       districtCount: districts.length,
       blockCount: kpis.globalBlockCount,

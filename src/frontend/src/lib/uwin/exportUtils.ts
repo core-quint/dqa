@@ -5,7 +5,7 @@
 // ============================================================
 
 import type { UwinParsedCSV, UwinComputedKpis } from './types';
-import { monthKey as monthKeyFn, asNumOrNull } from '../dqa/parseUtils';
+import { periodKey as periodKeyFn, asNumOrNull } from '../dqa/parseUtils';
 import { CO_SPECS } from '../dqa/constants';
 import { coadminRedCells } from '../dqa/coadmin';
 import { downloadXLS, downloadChartPNG, markInconsistencyPair } from '../dqa/exportUtils';
@@ -83,7 +83,7 @@ export function downloadHighlightedXLS(
       : '';
     const sessionSite = idxSessionSite !== null ? (r[idxSessionSite]?.trim() ?? '') : '';
     const monRaw = r[idxMonth] ?? '';
-    const mKey = monthKeyFn(monRaw);
+    const mKey = periodKeyFn(monRaw);
     // Match the identity used by computeUwinKpis at each analysis grain.
     const rowKey = [
       district, block, fac,

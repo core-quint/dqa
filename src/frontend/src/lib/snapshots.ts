@@ -1,5 +1,6 @@
 import type { FilterState } from "./dqa/types";
 import type { AuthState } from "../components/dqa/LoginPage";
+import { periodMonthBounds } from "./dqa/parseUtils";
 
 export type SnapshotPortal = "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
 export type SnapshotDqaLevel = "STATE" | "DISTRICT" | "BLOCK";
@@ -156,6 +157,10 @@ export function dataPeriodLabel(snapshot: Pick<SnapshotRecord, "kpiData">): stri
 export function dataDurationLabel(
   snapshot: Pick<SnapshotRecord, "kpiData" | "reportingMonth">,
 ): string {
+  // A sub-month review (a weekly U-WIN upload) stores its real span here. The
+  // month axis below can only round that up to "1 month", so trust what was saved.
+  const stored = snapshot.reportingMonth?.trim() ?? "";
+  if (/^\d+ (day|week)s?$/i.test(stored)) return stored;
   const period = getDataPeriod(snapshot);
   if (!period) return snapshot.reportingMonth?.trim() || "—";
   const span = monthsBetween(period.start, period.end).length;
@@ -189,9 +194,11 @@ export function buildSnapshotSaveMeta(
   filters: Pick<FilterState, "blocks">,
   allMonths: Record<string, string>,
 ): SnapshotSaveMeta {
-  const periodMonths = Object.keys(allMonths).sort();
-  const periodStart = periodMonths[0];
-  const periodEnd = periodMonths[periodMonths.length - 1];
+  // Trends and the dashboard plot on a calendar-month axis, so a sub-month
+  // reporting period (a weekly U-WIN upload) is recorded as the month it falls in.
+  const bounds = periodMonthBounds(Object.keys(allMonths));
+  const periodStart = bounds?.start;
+  const periodEnd = bounds?.end;
   const selectedBlocks = uniqueNonEmpty(filters.blocks);
   const scopedBlock = auth.geoBlock?.trim();
 

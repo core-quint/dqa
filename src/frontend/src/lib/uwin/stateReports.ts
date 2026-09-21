@@ -3,6 +3,7 @@ import { API_BASE } from "../../config";
 import { auth } from "../firebase";
 import type { FilterState } from "../dqa/types";
 import { computeOverallScore } from "../dqa/scoreUtils";
+import { periodMonthBounds, periodMonths } from "../dqa/parseUtils";
 import type { PreUploadInfo } from "../dqa/preUploadOptions";
 import type { UwinComputedKpis, UwinParsedCSV } from "./types";
 import { buildUwinStateFactPack, UWIN_STATE_REPORT_RULES_VERSION, type UwinStateReportFactPack } from "./stateReportFacts";
@@ -71,8 +72,10 @@ function compactHash(value: string): string {
 }
 
 export function getUwinStateReportPeriod(csv: UwinParsedCSV) {
-  const months = Object.keys(csv.allMonths).sort();
-  return { periodStart: months[0], periodEnd: months[months.length - 1] };
+  // The report API is keyed on calendar months, so a sub-month reporting period
+  // (a weekly upload) is reported as the month it falls in.
+  const bounds = periodMonthBounds(Object.keys(csv.allMonths));
+  return { periodStart: bounds?.start ?? "", periodEnd: bounds?.end ?? "" };
 }
 
 export function buildUwinStateReportRequest(
@@ -115,7 +118,7 @@ export function buildUwinStateReportRequest(
     filters: {
       districts: [...(filters.districts ?? [])].sort(),
       blocks: [...filters.blocks].sort(),
-      months: [...filters.months].sort(),
+      months: [...new Set(filters.months.flatMap(periodMonths))].sort(),
       ownership: [...filters.ownership].sort(),
       ru: [...filters.ru].sort(),
     },

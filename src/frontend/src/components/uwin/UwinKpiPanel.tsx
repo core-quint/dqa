@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import type { KpiCard } from "../../lib/dqa/types";
 import type { UwinComputedKpis, UwinParsedCSV } from "../../lib/uwin/types";
+import { isMonthKey } from "../../lib/dqa/parseUtils";
 import { KpiChart } from "../dqa/KpiChart";
 import {
   FlatTable,
@@ -118,6 +119,11 @@ function resolveStyle(group: string, id: string) {
 }
 
 export function UwinKpiPanel({ card, kpis, csv }: Props) {
+  // A weekly upload is analysed as its own reporting period, so the "any / all"
+  // breakdown stops calling those buckets months.
+  const wholeMonths = kpis.selMonths.every(isMonthKey);
+  const anyLabel = wholeMonths ? "Any month" : "Any period";
+  const allLabel = wholeMonths ? "All months" : "All periods";
   const [view, setView] = useState<View>("chart");
   const [exportError, setExportError] = useState<string | null>(null);
   const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -256,10 +262,10 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
     return (
       <div className="p-2">
         {summary.any && summary.any.length > 0 ? (
-          <SummaryTable rows={summary.any} label="Any month" unitLabel={unitLabel} />
+          <SummaryTable rows={summary.any} label={anyLabel} unitLabel={unitLabel} />
         ) : null}
         {summary.all && summary.all.length > 0 ? (
-          <SummaryTable rows={summary.all} label="All months" unitLabel={unitLabel} />
+          <SummaryTable rows={summary.all} label={allLabel} unitLabel={unitLabel} />
         ) : null}
         {summary.overall && summary.overall.length > 0 ? (
           <SummaryTable rows={summary.overall} label="Overall" unitLabel={unitLabel} />
@@ -309,7 +315,7 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
             </div>
             <div className="rounded-[22px] border border-slate-200/80 bg-white/72 px-4 py-3">
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Any month
+                {anyLabel}
               </div>
               <div className="mt-1 text-2xl font-extrabold text-slate-950">
                 {stat.any}
@@ -317,7 +323,7 @@ export function UwinKpiPanel({ card, kpis, csv }: Props) {
             </div>
             <div className="rounded-[22px] border border-slate-200/80 bg-white/72 px-4 py-3">
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                All months
+                {allLabel}
               </div>
               <div className="mt-1 text-2xl font-extrabold text-slate-950">
                 {stat.all}

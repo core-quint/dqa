@@ -19,6 +19,8 @@ interface GroupMetaLike {
 interface Props {
   meta: GroupMetaLike;
   monthsCount: number;
+  /** Singular noun for a time bucket — "period" when uploads are not whole months. */
+  periodNoun?: string;
   totalUnits: number;
   /** Lowercase plural of the analysed unit, e.g. "facilities", "session sites", "districts". */
   unitLabel: string;
@@ -41,6 +43,7 @@ function severityBadge(pct: number) {
 export function IndicatorSummaryPanel({
   meta,
   monthsCount,
+  periodNoun = "month",
   totalUnits,
   unitLabel,
   affectedUnique,
@@ -68,7 +71,8 @@ export function IndicatorSummaryPanel({
         </span>
         <span className="text-sm font-bold">{meta.label}</span>
         <span className="ml-auto text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">
-          {monthsCount} months / {totalUnits} {unitLabel}
+          {monthsCount} {periodNoun}
+          {monthsCount === 1 ? "" : "s"} / {totalUnits} {unitLabel}
         </span>
       </div>
 

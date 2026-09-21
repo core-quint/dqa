@@ -35,6 +35,24 @@ export type {
   SummaryRow,
 };
 
+// ---- Declared reporting period for one uploaded file ----
+
+export interface UwinReportingPeriod {
+  fileName: string;
+  /** Inclusive start of the period the uploader declared, YYYY-MM-DD. */
+  from: string;
+  /** Inclusive end of the period the uploader declared, YYYY-MM-DD. */
+  to: string;
+  /** Bucket key the period maps to: "YYYY-MM" for a whole month, else "from..to". */
+  key: string;
+  /**
+   * Whether this period actually drives the analysis columns. False when the file
+   * carried its own Month column covering a whole month or more, which is left in
+   * charge so a multi-month export keeps one column per month.
+   */
+  applied: boolean;
+}
+
 // ---- UWIN CSV shape (extends HMIS ParsedCSV with beneficiary columns) ----
 
 export interface UwinParsedCSV {
@@ -73,7 +91,10 @@ export interface UwinParsedCSV {
   indicatorMap: Record<string, number>;
   allIndicatorShorts: string[];
   facilityData: Record<string, FacilityRecord>;
+  /** Period key -> short label. Keys are month keys, or "from..to" day ranges. */
   allMonths: Record<string, string>;
+  /** What each uploaded file declared as its reporting period. */
+  reportingPeriods: UwinReportingPeriod[];
   globalFacilityCount: number;
   globalSubCenterCount: number;
   globalSessionSiteCount: number;

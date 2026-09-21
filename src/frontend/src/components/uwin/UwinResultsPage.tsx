@@ -4,7 +4,7 @@ import { downloadUwinDqaReport } from "../../lib/uwin/pdfReport";
 import type { FilterState, ActiveGroup, ComputedKpis } from "../../lib/dqa/types";
 import type { UwinParsedCSV, UwinComputedKpis } from "../../lib/uwin/types";
 import { computeUwinKpis } from "../../lib/uwin/computeKpis";
-import { monthsSpanInclusive } from "../../lib/dqa/parseUtils";
+import { isMonthKey, periodDurationLabel } from "../../lib/dqa/parseUtils";
 import { UWIN_DEFAULT_FILTERS } from "../../lib/dqa/constants";
 import { CollapsibleFilterRail } from "../dqa/CollapsibleFilterRail";
 import { FilterPanel } from "../dqa/FilterPanel";
@@ -141,15 +141,11 @@ export function UwinResultsPage({
     overallScore: number;
   } | null>(null);
 
-  const durationStr = useMemo(() => {
-    const months = Object.keys(csv.allMonths).sort();
-    if (!months.length) return "-";
-    const min = months[0];
-    const max = months[months.length - 1];
-    const span = monthsSpanInclusive(min, max);
-    if (!span) return "-";
-    return `${span} month${span > 1 ? "s" : ""}`;
-  }, [csv]);
+  const periodKeys = useMemo(() => Object.keys(csv.allMonths).sort(), [csv]);
+  const durationStr = useMemo(() => periodDurationLabel(periodKeys), [periodKeys]);
+  // Weekly uploads analyse whole reporting periods rather than calendar months,
+  // so the summary strip stops calling them months.
+  const periodNoun = periodKeys.every(isMonthKey) ? "month" : "period";
 
   useEffect(() => {
     apiFetch("/api/snapshots")
@@ -464,7 +460,8 @@ export function UwinResultsPage({
               {kpis && meta && activeGroup !== "overall" ? (
                 <IndicatorSummaryPanel
                   meta={meta}
-                  monthsCount={Object.keys(csv.allMonths).length}
+                  monthsCount={periodKeys.length}
+                  periodNoun={periodNoun}
                   totalUnits={totalUnits}
                   unitLabel={unitPluralLower}
                   affectedUnique={

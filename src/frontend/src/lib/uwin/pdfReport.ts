@@ -3,7 +3,13 @@ import autoTable from "jspdf-autotable";
 import type { UwinParsedCSV, UwinComputedKpis } from "./types";
 import type { ComputedKpis } from "../dqa/types";
 import { computeOverallScore, scoreGrade } from "../dqa/scoreUtils";
+import { isMonthKey } from "../dqa/parseUtils";
 import { generateBlockMapDataUrl, buildLegendItems } from "../maps/blockMapUtils";
+
+/** "Months" for whole-month uploads, "Periods" once a weekly file is in the mix. */
+function periodNoun(kpis: UwinComputedKpis): string {
+  return kpis.selMonths.every(isMonthKey) ? "Months" : "Periods";
+}
 
 // ─── Page geometry ────────────────────────────────────────────────────────────
 const PW = 595.28;
@@ -265,7 +271,7 @@ function buildCover(
   const stats = [
     { n: String(totalFac),               lbl: unitLabels(kpis).plural, color: P.blue },
     { n: String(csv.globalBlockCount),   lbl: "Blocks",        color: P.blue },
-    { n: String(kpis.selMonths.length),  lbl: "Months",        color: P.blue },
+    { n: String(kpis.selMonths.length),  lbl: periodNoun(kpis),color: P.blue },
     { n: `${scoreResult.overall.toFixed(1)}%`, lbl: "Overall Score", color: scoreRGB(scoreResult.overall) },
   ];
   const statW = CW / stats.length;
@@ -435,7 +441,7 @@ function buildSummary(
     ["State",                         csv.stateName || "—"],
     [csv.portal === "UWIN_STATE" ? "Districts" : "District", csv.portal === "UWIN_STATE" ? String(csv.globalDistrictCount) : (csv.distName || "—")],
     ["Analysis Period",                period],
-    ["Months Analyzed",                String(kpis.selMonths.length)],
+    [`${periodNoun(kpis)} Analyzed`,   String(kpis.selMonths.length)],
     [`Total ${unit.plural} (CSV)`,      String(
       kpis.analysisMode === "sessionsite"
         ? csv.globalSessionSiteCount
@@ -923,9 +929,11 @@ export async function downloadUwinDqaReport(
   const scoreResult = computeOverallScore(kpis as unknown as ComputedKpis, UWIN_GROUPS);
   const genDate     = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
   const selMonthLabels = Object.values(kpis.selMonthLabels);
-  const period = selMonthLabels.length > 0
-    ? `${selMonthLabels[0]} – ${selMonthLabels[selMonthLabels.length - 1]}`
-    : "All selected months";
+  const period = selMonthLabels.length === 0
+    ? "All selected periods"
+    : selMonthLabels.length === 1
+      ? selMonthLabels[0]
+      : `${selMonthLabels[0]} – ${selMonthLabels[selMonthLabels.length - 1]}`;
   const reportTitle = csv.portal === "UWIN_STATE"
     ? `${csv.stateName} · U-WIN State DQA`
     : `${csv.stateName} · ${csv.distName} · U-WIN DQA`;
