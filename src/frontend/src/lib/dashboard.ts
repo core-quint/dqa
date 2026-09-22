@@ -8,7 +8,6 @@ import {
   getDataPeriod,
   getSnapshotBlock,
   getSnapshotDqaLevel,
-  isCurrentMethod,
   monthsBetween,
   normalizePortal,
 } from "./snapshots";
@@ -72,8 +71,6 @@ export interface DashboardRecord {
   reportingMonth: string;
   /** The saved overall score; null only when a score was never recorded. */
   overall: number | null;
-  /** Scored with the current method (2026-09-22) — only these enter averages. */
-  scoreComparable: boolean;
   /** Which scoring framework the review belongs to; averages never mix them. */
   scoreFamily: ScoreFamily;
   availability: number | null;
@@ -105,20 +102,20 @@ export function scoreFamilyOf(portal: DashboardRecord["portal"] | "ALL"): ScoreF
   return portal === "UWIN_STATE" ? "UWIN" : portal;
 }
 
-/** How many current-method reviews each family has in this slice. */
+/** How many scored reviews each family has in this slice. */
 export function scoreFamilyCounts(records: DashboardRecord[]): Record<ScoreFamily, number> {
   const counts: Record<ScoreFamily, number> = { HMIS: 0, UWIN: 0, PCTS: 0, HMIS_STATE: 0 };
-  for (const r of records) if (r.scoreComparable && r.overall !== null) counts[r.scoreFamily] += 1;
+  for (const r of records) if (r.overall !== null) counts[r.scoreFamily] += 1;
   return counts;
 }
 
 /**
- * The same records with every score blanked except those of one family scored
- * with the current method. Counts and coverage are untouched (no record is
+ * The same records with every score blanked except those of one family. Saved
+ * scores are used as stored. Counts and coverage are untouched (no record is
  * removed); only the averages change. Pass `null` to blank every score.
  */
 export function scoresForFamily(records: DashboardRecord[], family: ScoreFamily | null): DashboardRecord[] {
-  return records.map((r) => (family !== null && r.scoreComparable && r.scoreFamily === family
+  return records.map((r) => (family !== null && r.scoreFamily === family
     ? r
     : { ...r, overall: null, availability: null, completeness: null, accuracy: null, consistency: null }));
 }
@@ -165,7 +162,6 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
         .join(" / ") || null,
     reportingMonth: s.reportingMonth?.trim() || "",
     overall: typeof s.overallScore === "number" && Number.isFinite(s.overallScore) ? s.overallScore : null,
-    scoreComparable: isCurrentMethod(s),
     scoreFamily: scoreFamilyOf(portal) as ScoreFamily,
     availability: s.kpiData?.availabilityScore ?? null,
     completeness: portal === "UWIN" || portal === "UWIN_STATE" ? null : (s.kpiData?.completenessScore ?? null),
@@ -909,7 +905,6 @@ export const LINELIST_HEADERS = [
   "Saved by",
   "Saved by level",
   "Saved by geography",
-  "Scoring method",
   "Review ID",
 ] as const;
 
@@ -959,8 +954,6 @@ export function buildLinelistRows(records: DashboardRecord[]): LinelistCell[][] 
       r.savedBy ?? "",
       r.savedByLevel ?? "",
       r.savedByGeo ?? "",
-      // Scores from before 2026-09-22 are not comparable with current ones.
-      r.scoreComparable ? "Current (v2)" : "Previous (v1)",
       r.id,
     ]);
 }

@@ -22,7 +22,6 @@ import {
   getSnapshotBlock,
   getSnapshotDqaLevel,
   getSnapshotPeriod,
-  isCurrentMethod,
   monthEndDate,
   normalizePortal,
 } from "../../lib/snapshots";
@@ -1753,9 +1752,6 @@ function matchFeature(
 }
 
 function getIndicatorValue(snapshot: SnapshotRecord, indicator: CoverageIndicator) {
-  // Scores saved before the 2026-09-22 method change are not comparable with
-  // current ones, so they never enter a score average (they still count as DQAs).
-  if (indicator !== "count" && indicator !== "districtCoverage" && !isCurrentMethod(snapshot)) return null;
   switch (indicator) {
     case "count":
       return 1;

@@ -20,8 +20,6 @@ interface Props {
   coverageNote?: string | null;
   /** The reviewer changed analysis settings; the score still uses the standard ones. */
   customSettings?: boolean;
-  /** Earlier reviews saved under the previous scoring method (not compared). */
-  legacyReviewCount?: number;
   /** Past reviews to measure against, preferred first; empty when none exist. */
   baselines: ReviewBaseline[];
   /** Whether this review has been saved in this session. */
@@ -128,7 +126,6 @@ export function ScoreStrip({
   rows,
   coverageNote = null,
   customSettings = false,
-  legacyReviewCount = 0,
   baselines,
   saved = false,
   onOpenDetail,
@@ -202,7 +199,7 @@ export function ScoreStrip({
 
             {baselines.length === 0 ? (
               <div className="mt-1 text-[11px] italic text-slate-500">
-                No earlier review of this scope saved under the current scoring method.
+                No earlier review saved for this geography and scope.
               </div>
             ) : (
               <div className="mt-1 space-y-1">
@@ -250,12 +247,6 @@ export function ScoreStrip({
                 })}
               </div>
             )}
-            {legacyReviewCount > 0 ? (
-              <div className="mt-1.5 text-[10px] leading-4 text-slate-500">
-                {legacyReviewCount} earlier review{legacyReviewCount === 1 ? " was" : "s were"} scored with the previous
-                method and {legacyReviewCount === 1 ? "is" : "are"} not compared.
-              </div>
-            ) : null}
           </div>
         </div>
 

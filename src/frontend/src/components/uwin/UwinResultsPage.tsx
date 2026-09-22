@@ -18,7 +18,6 @@ import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
 import { componentCoverageNote, SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import {
   buildSnapshotSaveMeta,
-  isCurrentMethod,
   pickReviewBaselines,
   type ReviewBaseline,
   type SnapshotRecord,
@@ -196,7 +195,6 @@ export function UwinResultsPage({
   const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
     kpiData: { dqaLevel: savedLevel, block: savedBlock, scope: savedScope },
   });
-  const legacyReviewCount = savedReviews.filter((review) => !isCurrentMethod(review)).length;
 
   useEffect(() => {
     if (!activeGroup) {
@@ -432,7 +430,6 @@ export function UwinResultsPage({
             rows={scoreRows}
             coverageNote={componentCoverageNote(liveScore)}
             customSettings={kpis?.customMethod ?? false}
-            legacyReviewCount={legacyReviewCount}
             baselines={baselines}
             saved={snapshotSaved}
             onOpenDetail={() => setShowOverall(true)}

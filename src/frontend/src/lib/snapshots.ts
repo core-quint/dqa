@@ -81,7 +81,10 @@ export interface SnapshotSaveMeta {
   scope: SnapshotScope;
 }
 
-/** Whether a saved review was scored with the current method (comparable with today's scores). */
+/**
+ * Whether a saved review was scored with the current method. Informational only:
+ * saved scores are always shown and compared exactly as they were stored.
+ */
 export function isCurrentMethod(snapshot: Pick<SnapshotRecord, "kpiData">): boolean {
   return snapshot.kpiData?.methodVersion === SCORING_METHOD_VERSION;
 }
@@ -107,6 +110,34 @@ export function scopeSignature(snapshot: Pick<SnapshotRecord, "kpiData">): strin
     sortedList(scope?.facilityTypes),
     scope?.analysisMode ?? null,
     snapshot.kpiData?.analysisGranularity ?? null,
+  ]);
+}
+
+/**
+ * "" for a review of the whole named geography — including every review saved
+ * before scopes were recorded — otherwise the scope signature. Keeps a partial
+ * review (some blocks, Public only, session-site mode...) from being compared with
+ * a full one, while full reviews stay comparable across the method change.
+ */
+export function comparisonScopeKey(snapshot: Pick<SnapshotRecord, "kpiData">): string {
+  const scope = snapshot.kpiData?.scope;
+  if (!scope) return "";
+  const full =
+    !scope.partial &&
+    scope.ownership.length === 0 &&
+    scope.ruralUrban.length === 0 &&
+    scope.facilityTypes.length === 0 &&
+    (scope.analysisMode ?? "facility") === "facility";
+  return full ? "" : scopeSignature(snapshot);
+}
+
+/** Reviews in the same group are like-for-like: same level, block, file grain and scope. */
+export function reviewComparisonGroup(snapshot: Pick<SnapshotRecord, "kpiData">): string {
+  return JSON.stringify([
+    getSnapshotDqaLevel(snapshot),
+    (getSnapshotBlock(snapshot) ?? "").toLowerCase(),
+    snapshot.kpiData?.analysisGranularity ?? null,
+    comparisonScopeKey(snapshot),
   ]);
 }
 
@@ -262,17 +293,18 @@ function toBaseline(snapshot: SnapshotRecord, kind: BaselineKind): ReviewBaselin
  * one exists, then the latest review when that is a different one. Pass the
  * snapshots already narrowed to this portal and geography.
  *
- * Only reviews scored with the current method, and — when `currentScope` is
- * given — of the same scope, are eligible: anything else is not like-for-like.
+ * Saved scores are used exactly as stored, whichever scoring method produced
+ * them. When `currentScope` is given, only reviews of the same level, block and
+ * scope are offered (see reviewComparisonGroup).
  */
 export function pickReviewBaselines(
   matches: SnapshotRecord[],
   currentPeriod: { start: string; end: string } | null,
   currentScope?: Pick<SnapshotRecord, "kpiData">,
 ): ReviewBaseline[] {
-  const wantedScope = currentScope ? scopeSignature(currentScope) : null;
+  const wantedGroup = currentScope ? reviewComparisonGroup(currentScope) : null;
   const comparable = matches.filter(
-    (snapshot) => isCurrentMethod(snapshot) && (wantedScope === null || scopeSignature(snapshot) === wantedScope),
+    (snapshot) => wantedGroup === null || reviewComparisonGroup(snapshot) === wantedGroup,
   );
   const sorted = [...comparable].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),

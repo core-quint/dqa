@@ -461,7 +461,7 @@ function AverageScoreCard({
           })}
         </dl>
         <p className="mt-auto pt-4 text-[10px] leading-4 text-slate-400">
-          Averages use reviews scored with the current method (from 22 Sep 2026), one source at a time — HMIS, U-WIN, PCTS and State DQA scores are not mixed. U-WIN does not report completeness.
+          Averages use saved review scores, one source at a time — HMIS, U-WIN, PCTS and State DQA scores are not mixed. U-WIN does not report completeness.
         </p>
       </article>
     </GlassPanel>
@@ -1512,9 +1512,9 @@ export function DashboardPage({ auth }: Props) {
   );
 
   const filtered = useMemo(() => applyDashboardFilters(records, filters), [records, filters]);
-  // Score averages come from ONE scoring framework and the current method only.
-  // A source filter decides it; otherwise the reader picks, defaulting to the
-  // source with the most scored reviews in view.
+  // Score averages come from ONE portal's saved scores at a time. A source filter
+  // decides it; otherwise the reader picks, defaulting to the source with the most
+  // scored reviews in view.
   const [scoreFamilyChoice, setScoreFamilyChoice] = useState<ScoreFamily | null>(null);
   const familyCounts = useMemo(() => scoreFamilyCounts(filtered), [filtered]);
   const familyOptions = useMemo(

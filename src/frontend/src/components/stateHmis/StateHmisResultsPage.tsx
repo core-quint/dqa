@@ -17,7 +17,6 @@ import { scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
 import { componentCoverageNote, formatScore, SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
 import {
-  isCurrentMethod,
   pickReviewBaselines,
   type ReviewBaseline,
   type SnapshotRecord,
@@ -266,7 +265,6 @@ export function StateHmisResultsPage({
   const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
     kpiData: { dqaLevel: "STATE", block: null, scope: savedScope, analysisGranularity: data.reportLevel === "block" ? "BLOCK" : "DISTRICT" },
   });
-  const legacyReviewCount = savedReviews.filter((review) => !isCurrentMethod(review)).length;
 
   const meta = GROUP_META[activeGroup];
   const groupCards =
@@ -385,7 +383,6 @@ export function StateHmisResultsPage({
           rows={scoreRows}
           coverageNote={componentCoverageNote(computed)}
           customSettings={computed.customMethod}
-          legacyReviewCount={legacyReviewCount}
           baselines={baselines}
           saved={snapshotSaved}
           onOpenDetail={() => setActiveGroup("overall")}

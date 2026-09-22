@@ -35,12 +35,11 @@ import {
   getDataPeriod,
   getSnapshotBlock,
   getSnapshotDqaLevel,
-  isCurrentMethod,
   monthEndDate,
   monthFullLabel,
   monthsBetween,
   normalizePortal,
-  scopeSignature,
+  reviewComparisonGroup,
   snapshotOrderValue,
   snapshotTrendMonths,
 } from "../../lib/snapshots";
@@ -175,15 +174,15 @@ function reviewUnit(snapshot: SnapshotRecord) {
   return titleGeo(snapshot.district) || titleGeo(snapshot.state);
 }
 
-// Only reviews of the same portal, geography AND scope (blocks, ownership,
-// analysis mode...) are compared — a partial review is never measured against a
-// full one.
+// Only reviews of the same portal, geography, level and scope are compared — a
+// partial review (some blocks, Public only...) is never measured against a full one.
+// Saved scores are used as stored, whichever scoring method produced them.
 function comparisonKey(snapshot: SnapshotRecord) {
   return [
     normalizePortal(snapshot.portal),
     norm(snapshot.state),
     norm(snapshot.district),
-    scopeSignature(snapshot),
+    reviewComparisonGroup(snapshot),
   ].join("|");
 }
 
@@ -324,11 +323,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
   }), [scoped, filters.dateFrom, filters.dateTo, basis]);
 
   const missingPeriod = useMemo(() => scoped.filter((snapshot) => !getDataPeriod(snapshot)).length, [scoped]);
-  // Scores saved before the scoring method changed (2026-09-22) are listed in the
-  // history table but never plotted or compared with current-method scores.
-  const comparable = useMemo(() => filtered.filter(isCurrentMethod), [filtered]);
-  const legacyCount = filtered.length - comparable.length;
-  const bucketed = useMemo(() => comparable.map((snapshot) => ({ snapshot, months: snapshotTrendMonths(snapshot, basis) })), [comparable, basis]);
+  const bucketed = useMemo(() => filtered.map((snapshot) => ({ snapshot, months: snapshotTrendMonths(snapshot, basis) })), [filtered, basis]);
   const placeable = useMemo(() => bucketed.filter((entry) => entry.months.length), [bucketed]);
   const tableRows = useMemo(() => [...filtered].sort((a, b) => snapshotOrderValue(b, basis) - snapshotOrderValue(a, basis) || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [filtered, basis]);
 
@@ -390,7 +385,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
 
   const regressions = useMemo(() => {
     const groups = new Map<string, SnapshotRecord[]>();
-    for (const snapshot of comparable) {
+    for (const snapshot of filtered) {
       // On the data-period axis a review with no recorded period has no place in the
       // ordering, so it cannot take part in a like-for-like comparison.
       if (basis === "period" && !getDataPeriod(snapshot)) continue;
@@ -407,7 +402,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
       if (!latest || !previous || current === null || before === null) return [];
       return [{ latest, previous, current, before, delta: current - before }];
     }).sort((a, b) => a.delta - b.delta);
-  }, [comparable, metric, basis]);
+  }, [filtered, metric, basis]);
 
   const scores = placeable.map((entry) => metricValue(entry.snapshot, metric)).filter((value): value is number => value !== null);
   const average = mean(scores);
@@ -489,7 +484,6 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-[11px] font-medium text-slate-500">
             <Info className="h-3.5 w-3.5 shrink-0 text-slate-400" />
             <span>{basis === "period" ? "Reviews are plotted across every month of data they analysed, so a 3-month upload counts towards all three months." : "Reviews are plotted on the month the DQA was saved, regardless of which months of data were analysed."}</span>
-            {legacyCount > 0 ? <span className="rounded-full bg-slate-100 px-2 py-1 font-bold text-slate-600">{nf.format(legacyCount)} review{legacyCount === 1 ? " was" : "s were"} scored with the previous method: listed below, not plotted or compared</span> : null}
             {basis === "period" && missingPeriod > 0 ? <span className="rounded-full bg-amber-50 px-2 py-1 font-bold text-amber-800">{nf.format(missingPeriod)} review{missingPeriod === 1 ? "" : "s"} in scope have no recorded data period and cannot be plotted on this axis</span> : null}
             {filters.districtScope === "PRIORITY" ? <span className="rounded-full bg-sky-50 px-2 py-1 font-bold text-sky-800">Limited to the {PRIORITY_DISTRICT_TOTAL} Gavi priority districts</span> : null}
           </div>
@@ -528,7 +522,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
 
           <GlassPanel className="overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Audit trail</div><div className="mt-1 text-lg font-bold text-slate-950">Saved review history</div></div><div className="text-xs font-semibold text-slate-500">{nf.format(filtered.length)} of {nf.format(accessible.length)} accessible records</div></div>
-            <div className="max-h-[560px] overflow-auto"><table className="w-full min-w-[1320px] text-sm"><thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500"><th className="px-4 py-3">Review date</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Level</th><th className="px-4 py-3">Geography</th><th className="px-4 py-3">Data period</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Reviewed by</th>{METRICS.map((item) => <th key={item.value} className={`px-3 py-3 text-right ${metric === item.value ? "bg-slate-100 text-slate-900" : ""}`}>{item.label}</th>)}<th className="px-4 py-3">Saved by</th><th className="px-4 py-3 text-center">Action</th></tr></thead><tbody>{tableRows.map((snapshot) => <tr key={snapshot.id} className="border-t border-slate-100 bg-white/50 transition hover:bg-white"><td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-700">{formatDate(snapshot.createdAt)}{isCurrentMethod(snapshot) ? null : <div className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400" title="Scored before the 2026-09-22 method change; not compared with current scores">Previous method</div>}{snapshot.kpiData?.scope?.partial ? <div className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-amber-600" title="Covers part of the named geography (some blocks/districts, or an ownership / rural-urban / facility-type filter)">Partial scope</div> : null}</td><td className="px-4 py-3">{portalBadge(snapshot)}</td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-600">{levelLabel(snapshot)}</td><td className="px-4 py-3"><div className="font-semibold text-slate-800">{reviewUnit(snapshot)}</div><div className="text-[10px] text-slate-400">{titleGeo(snapshot.state)}</div></td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-700">{dataPeriodLabel(snapshot) ?? <span className="font-medium text-slate-400">Not recorded</span>}</td><td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{dataDurationLabel(snapshot)}</td><td className="px-4 py-3 text-xs font-medium text-slate-600">{snapshot.kpiData?.designation ?? "—"}</td>{METRICS.map((item) => { const value = metricValue(snapshot, item.value); return <td key={item.value} className={`px-3 py-3 text-right font-bold tabular-nums ${metric === item.value ? "bg-slate-50 text-slate-950" : "text-slate-600"}`}>{value === null ? "N/A" : value.toFixed(1)}</td>; })}<td className="max-w-[180px] truncate px-4 py-3 text-xs text-slate-500" title={snapshot.createdBy?.email ?? ""}>{snapshot.createdBy?.email ?? "—"}</td><td className="px-4 py-3 text-center">{snapshot.canDelete ? <button type="button" onClick={() => handleDelete(snapshot.id)} disabled={deletingId === snapshot.id} className="rounded-xl p-2 text-red-500 transition hover:bg-red-50 hover:text-red-700 disabled:opacity-50" title="Delete snapshot"><Trash2 className="h-4 w-4" /></button> : <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">Read only</span>}</td></tr>)}</tbody></table></div>
+            <div className="max-h-[560px] overflow-auto"><table className="w-full min-w-[1320px] text-sm"><thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500"><th className="px-4 py-3">Review date</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Level</th><th className="px-4 py-3">Geography</th><th className="px-4 py-3">Data period</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Reviewed by</th>{METRICS.map((item) => <th key={item.value} className={`px-3 py-3 text-right ${metric === item.value ? "bg-slate-100 text-slate-900" : ""}`}>{item.label}</th>)}<th className="px-4 py-3">Saved by</th><th className="px-4 py-3 text-center">Action</th></tr></thead><tbody>{tableRows.map((snapshot) => <tr key={snapshot.id} className="border-t border-slate-100 bg-white/50 transition hover:bg-white"><td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-700">{formatDate(snapshot.createdAt)}{snapshot.kpiData?.scope?.partial ? <div className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-amber-600" title="Covers part of the named geography (some blocks/districts, or an ownership / rural-urban / facility-type filter)">Partial scope</div> : null}</td><td className="px-4 py-3">{portalBadge(snapshot)}</td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-600">{levelLabel(snapshot)}</td><td className="px-4 py-3"><div className="font-semibold text-slate-800">{reviewUnit(snapshot)}</div><div className="text-[10px] text-slate-400">{titleGeo(snapshot.state)}</div></td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-700">{dataPeriodLabel(snapshot) ?? <span className="font-medium text-slate-400">Not recorded</span>}</td><td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{dataDurationLabel(snapshot)}</td><td className="px-4 py-3 text-xs font-medium text-slate-600">{snapshot.kpiData?.designation ?? "—"}</td>{METRICS.map((item) => { const value = metricValue(snapshot, item.value); return <td key={item.value} className={`px-3 py-3 text-right font-bold tabular-nums ${metric === item.value ? "bg-slate-50 text-slate-950" : "text-slate-600"}`}>{value === null ? "N/A" : value.toFixed(1)}</td>; })}<td className="max-w-[180px] truncate px-4 py-3 text-xs text-slate-500" title={snapshot.createdBy?.email ?? ""}>{snapshot.createdBy?.email ?? "—"}</td><td className="px-4 py-3 text-center">{snapshot.canDelete ? <button type="button" onClick={() => handleDelete(snapshot.id)} disabled={deletingId === snapshot.id} className="rounded-xl p-2 text-red-500 transition hover:bg-red-50 hover:text-red-700 disabled:opacity-50" title="Delete snapshot"><Trash2 className="h-4 w-4" /></button> : <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">Read only</span>}</td></tr>)}</tbody></table></div>
           </GlassPanel>
         </> : null}
 
