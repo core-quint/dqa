@@ -124,7 +124,7 @@ export function downloadHighlightedXLS(
       if (hasAny && ok) highlightRow(PINK);
     } else if (kpiKey === 't2') {
       for (const [vx, ci] of Object.entries(idxByShort)) {
-        if (kpis.selVaxList.includes(vx)) {
+        if (kpis.t2Web.vaccines.includes(vx)) {
           const v = (r[ci] ?? '').trim();
           if (v === '') {
             if (!styleMap[ri]) styleMap[ri] = {};

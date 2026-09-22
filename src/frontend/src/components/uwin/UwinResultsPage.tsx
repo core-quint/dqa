@@ -15,8 +15,10 @@ import { OverallSummaryTable } from "../dqa/OverallSummaryTable";
 import { apiFetch } from "../../api";
 import { computeOverallScore } from "../../lib/dqa/scoreUtils";
 import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
+import { componentCoverageNote, SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import {
   buildSnapshotSaveMeta,
+  isCurrentMethod,
   pickReviewBaselines,
   type ReviewBaseline,
   type SnapshotRecord,
@@ -177,12 +179,24 @@ export function UwinResultsPage({
 
   // The months this upload covers, derived exactly as the save path records them
   // so a same-period match is an equality test, not a guess.
-  const savedMeta = buildSnapshotSaveMeta(auth, filters, csv.allMonths);
+  const savedMeta = buildSnapshotSaveMeta(auth, filters, csv.allMonths, { analysisMode: true });
+  const savedLevel = isStateUwin ? "STATE" : savedMeta.dqaLevel;
+  const savedBlock = isStateUwin ? null : savedMeta.block ?? null;
+  // A state upload narrowed to some districts or blocks is a partial state review.
+  const savedScope = isStateUwin
+    ? {
+        ...savedMeta.scope,
+        partial: savedMeta.scope.partial || savedMeta.scope.blocks.length > 0 || savedMeta.scope.districts.length > 0,
+      }
+    : savedMeta.scope;
   const currentPeriod =
     savedMeta.periodStart && savedMeta.periodEnd
       ? { start: savedMeta.periodStart, end: savedMeta.periodEnd }
       : null;
-  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod);
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
+    kpiData: { dqaLevel: savedLevel, block: savedBlock, scope: savedScope },
+  });
+  const legacyReviewCount = savedReviews.filter((review) => !isCurrentMethod(review)).length;
 
   useEffect(() => {
     if (!activeGroup) {
@@ -203,12 +217,11 @@ export function UwinResultsPage({
 
   const handleSave = async () => {
     if (!kpis) return;
+    const score = computeOverallScore(kpis as unknown as ComputedKpis, SCORED_GROUPS);
+    if (score.overall === null) return;
     try {
       setSaving(true);
-      const { overall, components } = computeOverallScore(
-        kpis as unknown as ComputedKpis,
-        SCORED_GROUPS,
-      );
+      const { overall, components } = score;
       const snapshotMeta = savedMeta;
       const savedSnapshot = await apiFetch("/api/snapshots", {
         method: "POST",
@@ -216,24 +229,36 @@ export function UwinResultsPage({
           portal: snapshotPortal,
           state: csv.stateName,
           district: isStateUwin ? "All Districts" : csv.distName,
-          duration: durationStr,
+          duration: snapshotMeta.duration,
           designation: reviewInfo?.designation || null,
           purpose: reviewInfo?.purpose || null,
           purposeDetail:
             reviewInfo?.purposeSubOption || reviewInfo?.purposeOtherText || null,
           overallScore: overall,
-          availabilityScore: components.availability?.score ?? 0,
-          completenessScore: components.completeness?.score ?? 0,
-          accuracyScore: components.accuracy?.score ?? 0,
-          consistencyScore: components.consistency?.score ?? 0,
-          dqaLevel: isStateUwin ? "STATE" : snapshotMeta.dqaLevel,
-          block: isStateUwin ? null : snapshotMeta.block,
+          availabilityScore: components.availability?.score ?? null,
+          // U-WIN's overall does not include completeness (not part of its framework).
+          completenessScore: null,
+          accuracyScore: components.accuracy?.score ?? null,
+          consistencyScore: components.consistency?.score ?? null,
+          scoredComponents: score.scoredComponents,
+          methodVersion: SCORING_METHOD_VERSION,
+          scope: savedScope,
+          dqaLevel: savedLevel,
+          block: savedBlock,
           periodStart: snapshotMeta.periodStart,
           periodEnd: snapshotMeta.periodEnd,
-          blockCount: csv.globalBlockCount,
-          facilityCount: csv.globalFacilityCount,
-          sessionSiteCount: csv.globalSessionSiteCount,
-          districtCount: isStateUwin ? csv.globalDistrictCount : null,
+          // What was analysed, then the upload totals for context.
+          blockCount: kpis.globalBlockCount,
+          facilityCount: new Set(
+            Object.values(kpis.filteredFacilities).map((unit) => `${unit.district ?? ""}||${unit.block}||${unit.facility}`),
+          ).size,
+          sessionSiteCount: kpis.analysisMode === "sessionsite" ? kpis.globalDen : null,
+          districtCount: isStateUwin
+            ? new Set(Object.values(kpis.filteredFacilities).map((unit) => unit.district).filter(Boolean)).size
+            : null,
+          uploadBlockCount: csv.globalBlockCount,
+          uploadFacilityCount: csv.globalFacilityCount,
+          uploadSessionSiteCount: csv.globalSessionSiteCount,
         }),
       });
       setSavedReviews((current) => [savedSnapshot, ...current]);
@@ -254,9 +279,10 @@ export function UwinResultsPage({
         key: group,
         label: GROUP_META[group].label,
         color: GROUP_META[group].color,
-        current: liveScore.components[group]?.score ?? 0,
+        current: liveScore.components[group]?.score ?? null,
       }))
     : [];
+  const canSave = Boolean(liveScore && liveScore.overall !== null);
 
   const csvForFilter = csv as unknown as Parameters<typeof FilterPanel>[0]["csv"];
   const meta = activeGroup ? GROUP_META[activeGroup] : null;
@@ -264,9 +290,7 @@ export function UwinResultsPage({
     kpis && activeGroup
       ? kpis.cards.filter((card) => card.group === activeGroup)
       : [];
-  const totalUnits = kpis
-    ? Math.max(1, Object.keys(kpis.filteredFacilities).length)
-    : 0;
+  const totalUnits = kpis ? Math.max(1, kpis.globalDen) : 0;
   const analysisMode = kpis?.analysisMode ?? filters.analysisMode;
   const unitPlural = analysisMode === "sessionsite"
     ? "Session sites"
@@ -369,7 +393,8 @@ export function UwinResultsPage({
               {kpis ? (
                 <button
                   onClick={handleSave}
-                  disabled={saving || snapshotSaved}
+                  disabled={saving || snapshotSaved || !canSave}
+                  title={canSave ? undefined : "Nothing in the current selection can be scored"}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Save className="h-3.5 w-3.5" />
@@ -405,6 +430,9 @@ export function UwinResultsPage({
           <ScoreStrip
             overall={liveScore.overall}
             rows={scoreRows}
+            coverageNote={componentCoverageNote(liveScore)}
+            customSettings={kpis?.customMethod ?? false}
+            legacyReviewCount={legacyReviewCount}
             baselines={baselines}
             saved={snapshotSaved}
             onOpenDetail={() => setShowOverall(true)}
@@ -464,7 +492,7 @@ export function UwinResultsPage({
               {kpis && meta && activeGroup !== "overall" ? (
                 <IndicatorSummaryPanel
                   meta={meta}
-                  monthsCount={periodKeys.length}
+                  monthsCount={kpis.selMonths.length}
                   periodNoun={periodNoun}
                   totalUnits={totalUnits}
                   unitLabel={unitPluralLower}
@@ -479,6 +507,7 @@ export function UwinResultsPage({
                     total: card.stat.total,
                     any: card.stat.any,
                     all: card.stat.all,
+                    eligible: card.stat.eligible,
                   }))}
                   onOpenCard={(id) => {
                     const card = groupCards.find((c) => c.id === id);

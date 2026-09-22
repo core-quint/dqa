@@ -149,8 +149,8 @@ export interface PctsFilters {
   facilityTypes: string[];
   keyIndicators: string[];
   outlierSeverity: "low" | "moderate" | "extreme";
-  dropoutThreshold: 5 | 11 | 20;
-  coadminTolerance: 5 | 10 | 20;
+  /** Minimum cumulative dropout over the selected period (5 / 10 / 20%). */
+  dropoutThreshold: 5 | 10 | 20;
   /** User-defined later-dose consistency comparisons. */
   additionalPairs: PctsPair[];
   issuesOnly: boolean;
@@ -163,6 +163,8 @@ export interface PctsFilters {
 
 export interface PctsHit {
   flag: boolean;
+  /** false when this facility-month could not be checked (e.g. no report). */
+  evaluable?: boolean;
   detail: string;
   values?: Record<string, number | null>;
   indicators?: string[];
@@ -179,14 +181,23 @@ export interface PctsCard {
   any: number;
   /** Facilities affected in every evaluated month. */
   all: number;
+  /** Facilities this check could be evaluated for; 0 makes the KPI N/A. */
+  eligible: number;
+  eligibleFacilities: string[];
   affectedFacilities: string[];
+  /** "month": flagged per month. "period": flagged on the selected period's totals. */
+  basis: "month" | "period";
+  /** Monthly detail (for period checks, context only — the flag is `periodHits`). */
   hits: Record<string, Record<string, PctsHit>>;
+  /** The period verdict for period-based checks (dropouts, dose order). */
+  periodHits?: Record<string, PctsHit>;
 }
 
 export interface PctsComponentScore {
   group: PctsGroup;
-  score: number;
-  worstIssuePct: number;
+  /** null = N/A: none of this component's checks could run. */
+  score: number | null;
+  worstIssuePct: number | null;
 }
 
 export interface PctsBlockSummary {
@@ -194,7 +205,7 @@ export interface PctsBlockSummary {
   denominator: number;
   affectedFacilities: number;
   componentScores: Record<PctsGroup, PctsComponentScore>;
-  overallScore: number;
+  overallScore: number | null;
 }
 
 export interface PctsComputed {
@@ -205,7 +216,12 @@ export interface PctsComputed {
   selectedMonths: string[];
   denominator: number;
   componentScores: Record<PctsGroup, PctsComponentScore>;
-  overallScore: number;
+  /** null when nothing in the selection could be scored ("No data"). */
+  overallScore: number | null;
+  scoredComponents: number;
+  totalComponents: number;
+  /** True when the analysis settings differ from the standard scoring settings. */
+  customMethod: boolean;
   issueCountByFacility: Record<string, number>;
   issueNamesByFacility: Record<string, string[]>;
   blockSummaries: Record<string, PctsBlockSummary>;
@@ -289,7 +305,6 @@ export const DEFAULT_PCTS_FILTERS: PctsFilters = {
   keyIndicators: [...PCTS_KEY_INDICATORS],
   outlierSeverity: "extreme",
   dropoutThreshold: 20,
-  coadminTolerance: 10,
   additionalPairs: [],
   issuesOnly: false,
 };

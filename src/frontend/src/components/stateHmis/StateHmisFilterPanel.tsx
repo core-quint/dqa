@@ -207,9 +207,9 @@ export function StateHmisFilterPanel({
             }
             className={selectClassName}
           >
-            <option value="low">&gt;=25% change (Low)</option>
-            <option value="moderate">&gt;=50% change (Moderate)</option>
-            <option value="extreme">&gt;100% change (Extreme)</option>
+            <option value="low">Change of 25% or more either way (Low and above)</option>
+            <option value="moderate">Change of 50% or more either way (Moderate and above)</option>
+            <option value="extreme">Rise above 100% or from 0 / fall of 75% or more (Extreme)</option>
           </select>
         </Dropdown>
 
@@ -225,9 +225,9 @@ export function StateHmisFilterPanel({
             }
             className={selectClassName}
           >
-            <option value="5">&gt;=5% (Low)</option>
-            <option value="11">&gt;=11% (Moderate)</option>
-            <option value="20">&gt;=20% (Extreme)</option>
+            <option value="5">&gt;=5% over the period (Low)</option>
+            <option value="10">&gt;=10% over the period (Moderate)</option>
+            <option value="20">&gt;=20% over the period (High)</option>
           </select>
         </Dropdown>
 

@@ -233,14 +233,17 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
             }
             className={selectClassName}
           >
-            <option value="low">At least 25% (Low)</option>
-            <option value="moderate">Above 50% (Moderate)</option>
-            <option value="extreme">Above 100% / at or below -75% (Extreme)</option>
+            <option value="low">Change of 25% or more either way (Low and above)</option>
+            <option value="moderate">Rise of 50% or more / fall of 50% or more (Moderate and above)</option>
+            <option value="extreme">Rise above 100% or from 0 / fall of 75% or more (Extreme)</option>
           </select>
+          <p className="mt-2 text-[11px] leading-4 text-slate-500">
+            Consecutive calendar months only; months where both values are under 10 are not compared.
+          </p>
         </Dropdown>
 
         <Dropdown label="Dropouts" fullWidth={isRail}>
-          <SectionLabel>Dropout threshold</SectionLabel>
+          <SectionLabel>Dropout threshold (cumulative over the selected months)</SectionLabel>
           <select
             value={String(draft.dropoutThreshold)}
             onChange={(event) =>
@@ -252,8 +255,8 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
             className={selectClassName}
           >
             <option value="5">At least 5% (Low)</option>
-            <option value="11">At least 11% (Moderate)</option>
-            <option value="20">At least 20% (Extreme)</option>
+            <option value="10">At least 10% (Moderate)</option>
+            <option value="20">At least 20% (High)</option>
           </select>
 
           <SectionLabel>Custom dropout pairs</SectionLabel>
@@ -323,21 +326,10 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
         </Dropdown>
 
         <Dropdown label="Inconsistencies" fullWidth={isRail}>
-          <SectionLabel>Co-administration tolerance</SectionLabel>
-          <select
-            value={String(draft.coadminTolerance)}
-            onChange={(event) =>
-              setDraft((previous) => ({
-                ...previous,
-                coadminTolerance: Number(event.target.value) as PctsFilters["coadminTolerance"],
-              }))
-            }
-            className={selectClassName}
-          >
-            <option value="5">5%</option>
-            <option value="10">10%</option>
-            <option value="20">20%</option>
-          </select>
+          <p className="text-[11px] leading-4 text-slate-500">
+            Co-administered doses must match exactly at facility level. Later-dose
+            checks compare the selected period&apos;s totals.
+          </p>
 
           <SectionLabel>Custom sequence pairs</SectionLabel>
           <div className="mt-2 space-y-2">

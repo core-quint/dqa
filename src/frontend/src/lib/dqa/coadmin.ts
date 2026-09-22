@@ -127,3 +127,35 @@ export function coadminTotal(values: (number | null)[]): number | null {
   }
   return seen ? sum : null;
 }
+
+/**
+ * The "All months" totals row for one co-admin group, summed only over the
+ * months in which every vaccine this facility reported at all is present.
+ *
+ * Detection is monthly (method v2): a facility is flagged only when some month's
+ * reported values disagree. Summing each vaccine over its own months instead
+ * would let a single blank month (Penta1 missing in February, OPV1 reported)
+ * make the totals disagree and colour a row that has no real violation. Over
+ * matched months, months that agree always produce totals that agree.
+ */
+export function coadminMatchedTotals(
+  valsByMonth: Record<string, Record<string, number | null>>,
+  vaccines: string[],
+): Record<string, number | null> {
+  const months = Object.keys(valsByMonth);
+  const reported = vaccines.filter((vx) => months.some((mk) => valsByMonth[mk]?.[vx] != null));
+  const totals: Record<string, number | null> = {};
+  for (const vx of vaccines) totals[vx] = null;
+  if (reported.length < 2) {
+    for (const vx of reported) {
+      totals[vx] = coadminTotal(months.map((mk) => valsByMonth[mk]?.[vx] ?? null));
+    }
+    return totals;
+  }
+  for (const mk of months) {
+    const row = valsByMonth[mk] ?? {};
+    if (!reported.every((vx) => row[vx] != null)) continue;
+    for (const vx of reported) totals[vx] = (totals[vx] ?? 0) + (row[vx] as number);
+  }
+  return totals;
+}

@@ -77,13 +77,17 @@ export interface StateHmisFilters {
   months: string[];
   keyIndicators: string[];
   outlierSeverity: "low" | "moderate" | "extreme";
-  dropoutThreshold: 5 | 11 | 20;
+  /** Minimum cumulative dropout over the selected period (5 / 10 / 20%). */
+  dropoutThreshold: 5 | 10 | 20;
+  /** District/block totals aggregate many facilities, so co-admin allows a % spread. */
   coadminTolerance: 5 | 10 | 20;
   additionalPairs: { from: string; to: string }[];
 }
 
 export interface StateHmisHit {
   flag: boolean;
+  /** false when this unit-month could not be checked. */
+  evaluable?: boolean;
   detail: string;
   values?: Record<string, number | null>;
 }
@@ -96,16 +100,24 @@ export interface StateHmisCard {
   total: number;
   any: number;
   all: number;
+  /** Units this check could be evaluated for; 0 makes the KPI N/A. */
+  eligible: number;
+  eligibleUnits: string[];
   /** Analysis-unit ids; retained name keeps older district reports compatible. */
   affectedDistricts: string[];
   affectedUnits: string[];
+  /** "month": flagged per month. "period": flagged on the selected period's totals. */
+  basis: "month" | "period";
+  /** Monthly detail (for period checks, context only — the flag is `periodHits`). */
   hits: Record<string, Record<string, StateHmisHit>>;
+  periodHits?: Record<string, StateHmisHit>;
 }
 
 export interface StateHmisComponentScore {
   group: StateHmisGroup;
-  score: number;
-  worstIssuePct: number;
+  /** null = N/A: none of this component's checks could run. */
+  score: number | null;
+  worstIssuePct: number | null;
 }
 
 export interface StateHmisComputed {
@@ -115,7 +127,12 @@ export interface StateHmisComputed {
   selectedMonths: string[];
   denominator: number;
   componentScores: Record<StateHmisGroup, StateHmisComponentScore>;
-  overallScore: number;
+  /** null when nothing in the selection could be scored ("No data"). */
+  overallScore: number | null;
+  scoredComponents: number;
+  totalComponents: number;
+  /** True when the analysis settings differ from the standard scoring settings. */
+  customMethod: boolean;
   issueCountByUnit: Record<string, number>;
   issueNamesByUnit: Record<string, string[]>;
   /** Analysis-unit keyed compatibility aliases. */

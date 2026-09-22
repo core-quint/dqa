@@ -75,6 +75,10 @@ export interface KpiStat {
   total: number;
   any: number;
   all: number;
+  /** Units this check could be evaluated for; 0 makes the KPI N/A in the score. */
+  eligible: number;
+  /** The units counted in `eligible` — lets a block or district subset be scored exactly. */
+  eligibleKeys: Set<string>;
   facilityKeys: Set<string>;
   anyFacilityKeys: Set<string>;
   allFacilityKeys: Set<string>;
@@ -104,8 +108,10 @@ export interface T2Web {
 export interface T3Cell {
   a: number | null;
   b: number | null;
+  /** % change; null when not comparable, or for a rise from 0 (see fromZero). */
   pct: number | null;
   hit: boolean;
+  fromZero?: boolean;
 }
 
 export interface T3MatrixRow {
@@ -250,9 +256,17 @@ export interface ComputedKpis {
   // For highlighted export (pink_fac_sets)
   pinkFacSets: Record<string, string[]>; // KPI key -> array of facKeys
 
-  // Overall score
+  // Overall score. Both counts are AFTER the scope filters (blocks, months,
+  // ownership, rural/urban) — never the whole upload.
   globalDen: number;
   globalBlockCount: number;
+  /**
+   * Cards computed with the standard scoring settings. The score always uses
+   * these; `cards` follows the reviewer's analysis settings for the drill-downs.
+   */
+  scoreCards: KpiCard[];
+  /** True when the analysis settings differ from the standard scoring settings. */
+  customMethod: boolean;
 
   // Summary by pid
   summaryByPid: Record<string, { any: SummaryRow[]; all: SummaryRow[]; overall?: SummaryRow[] }>;

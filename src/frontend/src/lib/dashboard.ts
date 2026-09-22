@@ -8,6 +8,7 @@ import {
   getDataPeriod,
   getSnapshotBlock,
   getSnapshotDqaLevel,
+  isCurrentMethod,
   monthsBetween,
   normalizePortal,
 } from "./snapshots";
@@ -69,7 +70,12 @@ export interface DashboardRecord {
   savedByGeo: string | null;
   /** The duration label stored with the snapshot ("Apr 2025 - Jun 2025", "3 months", ...). */
   reportingMonth: string;
-  overall: number;
+  /** The saved overall score; null only when a score was never recorded. */
+  overall: number | null;
+  /** Scored with the current method (2026-09-22) — only these enter averages. */
+  scoreComparable: boolean;
+  /** Which scoring framework the review belongs to; averages never mix them. */
+  scoreFamily: ScoreFamily;
   availability: number | null;
   completeness: number | null; // always null for U-WIN (portal has no completeness KPIs)
   accuracy: number | null;
@@ -78,6 +84,43 @@ export interface DashboardRecord {
   facilityCount: number | null;
   sessionSiteCount: number | null;
   districtCount: number | null;
+}
+
+/**
+ * Portals whose scores can be averaged together. HMIS scores four components,
+ * U-WIN three, PCTS and State DQA use their own check sets, so an average must
+ * stay inside one family. U-WIN district and U-WIN State share one framework.
+ */
+export type ScoreFamily = "HMIS" | "UWIN" | "PCTS" | "HMIS_STATE";
+
+export const SCORE_FAMILY_LABELS: Record<ScoreFamily, string> = {
+  HMIS: "HMIS",
+  UWIN: "U-WIN",
+  PCTS: "PCTS",
+  HMIS_STATE: "State DQA",
+};
+
+export function scoreFamilyOf(portal: DashboardRecord["portal"] | "ALL"): ScoreFamily | null {
+  if (portal === "ALL") return null;
+  return portal === "UWIN_STATE" ? "UWIN" : portal;
+}
+
+/** How many current-method reviews each family has in this slice. */
+export function scoreFamilyCounts(records: DashboardRecord[]): Record<ScoreFamily, number> {
+  const counts: Record<ScoreFamily, number> = { HMIS: 0, UWIN: 0, PCTS: 0, HMIS_STATE: 0 };
+  for (const r of records) if (r.scoreComparable && r.overall !== null) counts[r.scoreFamily] += 1;
+  return counts;
+}
+
+/**
+ * The same records with every score blanked except those of one family scored
+ * with the current method. Counts and coverage are untouched (no record is
+ * removed); only the averages change. Pass `null` to blank every score.
+ */
+export function scoresForFamily(records: DashboardRecord[], family: ScoreFamily | null): DashboardRecord[] {
+  return records.map((r) => (family !== null && r.scoreComparable && r.scoreFamily === family
+    ? r
+    : { ...r, overall: null, availability: null, completeness: null, accuracy: null, consistency: null }));
 }
 
 export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
@@ -121,7 +164,9 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
         .filter(Boolean)
         .join(" / ") || null,
     reportingMonth: s.reportingMonth?.trim() || "",
-    overall: s.overallScore ?? 0,
+    overall: typeof s.overallScore === "number" && Number.isFinite(s.overallScore) ? s.overallScore : null,
+    scoreComparable: isCurrentMethod(s),
+    scoreFamily: scoreFamilyOf(portal) as ScoreFamily,
     availability: s.kpiData?.availabilityScore ?? null,
     completeness: portal === "UWIN" || portal === "UWIN_STATE" ? null : (s.kpiData?.completenessScore ?? null),
     accuracy: s.kpiData?.accuracyScore ?? null,
@@ -240,9 +285,10 @@ export interface DashboardStats {
   avgConsistency: number | null;
 }
 
-function mean(values: number[]): number | null {
-  if (values.length === 0) return null;
-  return values.reduce((a, b) => a + b, 0) / values.length;
+function mean(values: (number | null)[]): number | null {
+  const present = values.filter((value): value is number => value !== null);
+  if (present.length === 0) return null;
+  return present.reduce((a, b) => a + b, 0) / present.length;
 }
 
 // Coverage estimator: snapshots store per-dataset totals (blockCount /
@@ -422,7 +468,7 @@ export function groupByMonth(records: DashboardRecord[], basis: TrendBasis = "re
   if (records.length === 0) return [];
   const byMonth = new Map<
     string,
-    { hmis: number; uwin: number; pcts: number; stateHmis: number; scores: number[] }
+    { hmis: number; uwin: number; pcts: number; stateHmis: number; scores: (number | null)[] }
   >();
   for (const r of records) {
     for (const month of recordMonths(r, basis)) {
@@ -863,6 +909,7 @@ export const LINELIST_HEADERS = [
   "Saved by",
   "Saved by level",
   "Saved by geography",
+  "Scoring method",
   "Review ID",
 ] as const;
 
@@ -897,7 +944,7 @@ export function buildLinelistRows(records: DashboardRecord[]): LinelistCell[][] 
       r.designation === NOT_RECORDED ? "" : r.designation,
       r.purpose === NOT_RECORDED ? "" : r.purpose,
       r.purposeDetail ?? "",
-      Number(r.overall.toFixed(1)),
+      score(r.overall),
       performanceBand(r.overall),
       score(r.availability),
       // U-WIN has no completeness KPIs at all — say so rather than leaving a
@@ -912,6 +959,8 @@ export function buildLinelistRows(records: DashboardRecord[]): LinelistCell[][] 
       r.savedBy ?? "",
       r.savedByLevel ?? "",
       r.savedByGeo ?? "",
+      // Scores from before 2026-09-22 are not comparable with current ones.
+      r.scoreComparable ? "Current (v2)" : "Previous (v1)",
       r.id,
     ]);
 }

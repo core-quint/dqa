@@ -1,9 +1,12 @@
 import type { KpiCard } from "../dqa/types";
-import { computeOverallScore } from "../dqa/scoreUtils";
+import { computeOverallScore, computeSubsetScore } from "../dqa/scoreUtils";
+import { severityLevel, type SeverityLevel } from "../dqa/scoring";
 import { periodMonthBounds } from "../dqa/parseUtils";
 import type { UwinComputedKpis, UwinParsedCSV } from "./types";
 
-export const UWIN_STATE_REPORT_RULES_VERSION = "uwin-state-dqa-v1";
+// v2: scoring method v2 (filtered denominators, N/A components, standard
+// scoring settings, one severity rule) — see lib/dqa/scoring.ts.
+export const UWIN_STATE_REPORT_RULES_VERSION = "uwin-state-dqa-v2";
 
 export type DqaStatus = "GOOD" | "SATISFACTORY" | "NEEDS_IMPROVEMENT" | "CRITICAL";
 export type PriorityBand = "CRITICAL" | "HIGH" | "MODERATE" | "ROUTINE";
@@ -23,11 +26,12 @@ export interface ReportFinding {
 export interface DistrictReportFact {
   district: string;
   analysedUnits: number;
+  /** A district component is null when none of its checks could run there. */
   scores: {
     overall: number;
-    availability: number;
-    accuracy: number;
-    consistency: number;
+    availability: number | null;
+    accuracy: number | null;
+    consistency: number | null;
   };
   status: DqaStatus;
   priority: PriorityBand;
@@ -162,14 +166,44 @@ function actionForCard(card: KpiCard): ReportActionRule {
   };
 }
 
+const SEVERITY_CODE: Record<Exclude<SeverityLevel, "None">, ReportFinding["severity"]> = {
+  High: "HIGH",
+  Medium: "MODERATE",
+  Low: "LOW",
+};
+
+/**
+ * Statewide scores for the report. A state report is only meaningful when every
+ * reported component could be scored, so an N/A component stops generation with
+ * a clear message instead of printing a misleading number.
+ */
+export function uwinStateReportScores(kpis: UwinComputedKpis) {
+  const overall = computeOverallScore(kpis as never, [...REPORT_GROUPS]);
+  const missing = REPORT_GROUPS.filter((group) => overall.components[group]?.score === null);
+  if (overall.overall === null || missing.length > 0) {
+    throw new Error(
+      overall.overall === null
+        ? "No units are left in the current filters, so the state report cannot be scored."
+        : `The ${missing.join(" and ")} component could not be scored for this selection, so the state report cannot be generated.`,
+    );
+  }
+  return {
+    overall: overall.overall,
+    availability: overall.components.availability.score as number,
+    accuracy: overall.components.accuracy.score as number,
+    consistency: overall.components.consistency.score as number,
+  };
+}
+
 export function buildUwinStateFactPack(
   csv: UwinParsedCSV,
   kpis: UwinComputedKpis,
 ): UwinStateReportFactPack {
-  const months = Object.keys(csv.allMonths).sort();
-  const monthBounds = periodMonthBounds(months);
-  const overall = computeOverallScore(kpis as never, [...REPORT_GROUPS]);
-  const reportCards = kpis.cards.filter((card) => REPORT_GROUPS.includes(card.group as typeof REPORT_GROUPS[number]));
+  // The months actually analysed, not every month in the upload.
+  const monthBounds = periodMonthBounds(kpis.selMonths);
+  const overall = uwinStateReportScores(kpis);
+  // Findings come from the same standard-settings cards the score uses.
+  const reportCards = kpis.scoreCards.filter((card) => REPORT_GROUPS.includes(card.group as typeof REPORT_GROUPS[number]));
   const den = Math.max(1, kpis.globalDen);
 
   const actionByIndicator = new Map<string, ReportActionRule>();
@@ -179,6 +213,7 @@ export function buildUwinStateFactPack(
       const affectedPercent = round((card.stat.total / den) * 100);
       const action = actionForCard(card);
       actionByIndicator.set(card.id, action);
+      const severity = severityLevel(card.stat.total, kpis.globalDen);
       return {
         evidenceId: `EV-${card.id.toUpperCase().replace(/[^A-Z0-9]+/g, "-")}`,
         indicatorId: card.id,
@@ -187,7 +222,7 @@ export function buildUwinStateFactPack(
         affectedUnits: card.stat.total,
         denominator: kpis.globalDen,
         affectedPercent,
-        severity: affectedPercent >= 20 ? "HIGH" : affectedPercent >= 5 ? "MODERATE" : "LOW",
+        severity: severity === "None" ? "LOW" : SEVERITY_CODE[severity],
         actionRuleId: action.id,
       };
     })
@@ -203,16 +238,15 @@ export function buildUwinStateFactPack(
 
   const districts: DistrictReportFact[] = [...districtUnits.entries()].map(([district, unitKeys]) => {
     const denominator = Math.max(1, unitKeys.size);
+    // The shared scoring rule on this district's units only (lib/dqa/scoring.ts).
+    const districtScore = computeSubsetScore(kpis as never, unitKeys, [...REPORT_GROUPS]);
     const componentScores = Object.fromEntries(REPORT_GROUPS.map((group) => {
-      const cards = reportCards.filter((card) => card.group === group);
-      const maximumIssueRate = Math.max(0, ...cards.map((card) => {
-        let affected = 0;
-        for (const key of card.stat.facilityKeys) if (unitKeys.has(key)) affected += 1;
-        return (affected / denominator) * 100;
-      }));
-      return [group, round(Math.max(0, 100 - maximumIssueRate))];
-    })) as Record<typeof REPORT_GROUPS[number], number>;
-    const districtOverall = round(REPORT_GROUPS.reduce((sum, group) => sum + componentScores[group], 0) / REPORT_GROUPS.length);
+      const score = districtScore.components[group]?.score ?? null;
+      return [group, score === null ? null : round(score)];
+    })) as Record<typeof REPORT_GROUPS[number], number | null>;
+    // A district with analysed units always has availability checks to run, so
+    // its overall is always defined; 0 is only a defensive fallback.
+    const districtOverall = round(districtScore.overall ?? 0);
 
     const districtIssues = reportCards.map((card) => {
       let count = 0;
@@ -264,9 +298,9 @@ export function buildUwinStateFactPack(
     },
     scores: {
       overall: round(overall.overall),
-      availability: round(overall.components.availability?.score ?? 0),
-      accuracy: round(overall.components.accuracy?.score ?? 0),
-      consistency: round(overall.components.consistency?.score ?? 0),
+      availability: round(overall.availability),
+      accuracy: round(overall.accuracy),
+      consistency: round(overall.consistency),
       status: dqaStatus(overall.overall),
     },
     districtDistribution,
@@ -277,7 +311,8 @@ export function buildUwinStateFactPack(
     limitations: [
       "This is a data quality assessment; it does not measure immunization coverage, service performance, vaccine stock, or workforce adequacy.",
       "A flagged record requires validation and is not, by itself, confirmation of an error or its cause.",
-      "District scores and priorities reflect only the uploaded period, selected filters, available fields, and the stated DQA rules version.",
+      "District scores and priorities reflect only the selected period, selected filters, available fields, and the stated DQA rules version.",
+      "Scores use the standard DQA scoring settings; a component shown as N/A for a district had no checks that could be evaluated there.",
       "The overall score combines availability, accuracy, and consistency; completeness is not included in this U-WIN State score.",
     ],
   };

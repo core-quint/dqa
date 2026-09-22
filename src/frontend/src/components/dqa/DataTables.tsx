@@ -219,9 +219,11 @@ export function T3Table({ web }: { web: T3Web }) {
                     </>
                   );
                 }
-                const pctStr = cell.pct !== null
-                  ? `${cell.pct > 0 ? '+' : ''}${cell.pct.toFixed(1)}%`
-                  : '';
+                const pctStr = cell.fromZero
+                  ? 'from 0'
+                  : cell.pct !== null
+                    ? `${cell.pct > 0 ? '+' : ''}${cell.pct.toFixed(1)}%`
+                    : '';
                 return (
                   <>
                     <td key={`${vx}-${p.k}-a`} className="border border-border px-2 py-1 text-center">

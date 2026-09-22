@@ -2,6 +2,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { ParsedCSV, ComputedKpis } from "./types";
 import { computeOverallScore, scoreGrade } from "./scoreUtils";
+import { severityLevel } from "./scoring";
 import { generateBlockMapDataUrl, buildLegendItems } from "../maps/blockMapUtils";
 
 // ─── Page geometry ────────────────────────────────────────────────────────────
@@ -112,17 +113,25 @@ function sanitize(s: string): string {
     .replace(/[^\x00-\x7E]/g, "?");
 }
 
-function scoreRGB(s: number): RGB {
+/** "72.5%", or "N/A" for a component that could not be scored. */
+function pdfScore(s: number | null, digits = 1): string {
+  return s === null ? "N/A" : `${s.toFixed(digits)}%`;
+}
+
+function scoreRGB(s: number | null): RGB {
+  if (s === null) return P.ink500;
   if (s >= 70) return P.good;
   if (s >= 40) return P.warn;
   return P.danger;
 }
-function scoreSoftRGB(s: number): RGB {
+function scoreSoftRGB(s: number | null): RGB {
+  if (s === null) return P.bg100;
   if (s >= 70) return P.goodSoft;
   if (s >= 40) return P.warnSoft;
   return P.dangerSoft;
 }
-function scoreLabel(s: number) {
+function scoreLabel(s: number | null) {
+  if (s === null) return "Not assessed";
   if (s >= 80) return "Good";
   if (s >= 60) return "Satisfactory";
   if (s >= 40) return "Needs Improvement";
@@ -251,9 +260,9 @@ function buildCover(
   // ── Key stats row ─────────────────────────────────────────────────────────
   const stats = [
     { n: String(totalFac),               lbl: "Facilities",   color: P.blue },
-    { n: String(csv.globalBlockCount),   lbl: "Blocks",       color: P.blue },
+    { n: String(kpis.globalBlockCount),   lbl: "Blocks",       color: P.blue },
     { n: String(kpis.selMonths.length),  lbl: "Months",       color: P.blue },
-    { n: `${scoreResult.overall.toFixed(1)}%`, lbl: "Overall Score", color: scoreRGB(scoreResult.overall) },
+    { n: pdfScore(scoreResult.overall), lbl: "Overall Score", color: scoreRGB(scoreResult.overall) },
   ];
   const statW = CW / stats.length;
   const statY = 228;
@@ -304,7 +313,7 @@ function buildCover(
 
     textC(doc, color);
     font(doc, "bold", 13);
-    doc.text(`${comp.score.toFixed(0)}%`, cx, cy + 4, { align: "center" });
+    doc.text(pdfScore(comp.score, 0), cx, cy + 4, { align: "center" });
 
     textC(doc, P.ink700);
     font(doc, "bold", 7);
@@ -369,7 +378,7 @@ function buildSummary(
   doc.circle(CX, CY, R, "S");
   textC(doc, scoreRGB(sc));
   font(doc, "bold", 21);
-  doc.text(`${sc.toFixed(1)}%`, CX, CY + 5, { align: "center" });
+  doc.text(pdfScore(sc), CX, CY + 5, { align: "center" });
   textC(doc, P.ink500);
   font(doc, "normal", 6.5);
   doc.text("OVERALL SCORE", CX, CY + 17, { align: "center" });
@@ -392,7 +401,7 @@ function buildSummary(
     body: ["availability","completeness","accuracy","consistency"].map(g => {
       const comp = scoreResult.components[g];
       if (!comp) return [GROUP_LABEL[g], "—", "—", "—", "—"];
-      return [GROUP_LABEL[g], `${comp.score.toFixed(1)}%`, scoreGrade(comp.score), scoreLabel(comp.score), `${comp.maxTot.toFixed(1)}%`];
+      return [GROUP_LABEL[g], pdfScore(comp.score), scoreGrade(comp.score), scoreLabel(comp.score), pdfScore(comp.maxTot)];
     }),
     styles: { fontSize: 8, cellPadding: 4.5, font: "helvetica" },
     headStyles: { fillColor: P.bg100, textColor: P.ink700, fontStyle: "bold", fontSize: 7.5, lineColor: P.border, lineWidth: 0.4 },
@@ -438,7 +447,10 @@ function buildSummary(
     ["Months Analyzed",          String(kpis.selMonths.length)],
     ["Total Facilities (CSV)",   String(csv.globalFacilityCount)],
     ["Facilities in Analysis",   String(totalFac)],
-    ["Blocks",                   String(csv.globalBlockCount)],
+    ["Blocks in Analysis",       String(kpis.globalBlockCount)],
+    ["Blocks (CSV)",             String(csv.globalBlockCount)],
+    ["Components scored",        `${scoreResult.scoredComponents} of ${scoreResult.totalComponents}`],
+    ["Scoring settings",         kpis.customMethod ? "Standard (tables use custom analysis settings)" : "Standard"],
     ["Public / Private",         `${csv.publicCount} / ${csv.privateCount}`],
     ["Rural / Urban",            `${csv.ruralCount} / ${csv.urbanCount}`],
   ];
@@ -667,7 +679,7 @@ function buildComponentSection(
     font(doc, "bold", 8);
     doc.text("COMPONENT SCORE", PW - MR - 46, y + 18, { align: "center" });
     font(doc, "bold", 10);
-    doc.text(`${comp.score.toFixed(1)}%  ${scoreLabel(comp.score)}`, PW - MR - 46, y + 28, { align: "center" });
+    doc.text(`${pdfScore(comp.score)}  ${scoreLabel(comp.score)}`, PW - MR - 46, y + 28, { align: "center" });
   }
   y += 50;
 
@@ -715,10 +727,7 @@ function buildComponentSection(
       String(c.stat.any),
       String(c.stat.all),
       `${((c.stat.total / den) * 100).toFixed(1)}%`,
-      c.stat.total === 0 ? "None"
-        : c.stat.total / den >= 0.5 ? "High"
-        : c.stat.total / den >= 0.25 ? "Medium"
-        : "Low",
+      c.stat.eligible === 0 ? "N/A" : severityLevel(c.stat.total, kpis.globalDen),
     ]),
     styles: { fontSize: 7.5, cellPadding: 4, font: "helvetica", overflow: "linebreak" },
     headStyles: { fillColor: xsoft, textColor: dark, fontStyle: "bold", fontSize: 7, lineColor: soft, lineWidth: 0.4 },

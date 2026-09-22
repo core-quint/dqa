@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { downloadXLS } from "../dqa/exportUtils";
+import { formatScore } from "../dqa/scoring";
 import type { PctsCard, PctsComputed, PctsParsed } from "./types";
 
 type ExportRow = (string | number | null)[];
@@ -18,6 +19,7 @@ export function pctsCardRows(
     "Rural / Urban",
     "Ownership",
     ...months,
+    ...(card.basis === "period" ? ["Selected period (decides the flag)"] : []),
     "Flagged months",
   ]];
 
@@ -42,6 +44,7 @@ export function pctsCardRows(
       facility.ruralUrban,
       facility.ownership,
       ...months.map((month) => card.hits[facilityKey]?.[month]?.detail ?? "Not evaluated"),
+      ...(card.basis === "period" ? [card.periodHits?.[facilityKey]?.detail ?? "Not evaluated"] : []),
       flaggedMonths.length,
     ]);
   }
@@ -118,15 +121,23 @@ export function downloadPctsPdf(data: PctsParsed, computed: PctsComputed) {
     14,
     23,
   );
-  doc.text(`Overall score: ${computed.overallScore.toFixed(1)}`, 14, 29);
+  doc.text(
+    `Overall score: ${formatScore(computed.overallScore)}` +
+      (computed.scoredComponents < computed.totalComponents
+        ? ` (based on ${computed.scoredComponents} of ${computed.totalComponents} components)`
+        : "") +
+      (computed.customMethod ? " | scored with the standard settings" : ""),
+    14,
+    29,
+  );
 
   autoTable(doc, {
     startY: 34,
     head: [["Component", "Score", "Worst issue %"]],
     body: Object.values(computed.componentScores).map((component) => [
       component.group,
-      component.score.toFixed(1),
-      component.worstIssuePct.toFixed(1),
+      formatScore(component.score),
+      formatScore(component.worstIssuePct),
     ]),
   });
 

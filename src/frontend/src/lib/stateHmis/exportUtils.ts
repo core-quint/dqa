@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { downloadXLS } from "../dqa/exportUtils";
+import { formatScore } from "../dqa/scoring";
 import type { StateHmisCard, StateHmisComputed, StateHmisParsed } from "./types";
 
 export function stateCardRows(data: StateHmisParsed, card: StateHmisCard, months: string[]) {
@@ -8,6 +9,7 @@ export function stateCardRows(data: StateHmisParsed, card: StateHmisCard, months
     "District",
     ...(data.reportLevel === "block" ? ["Health Block"] : []),
     ...months,
+    ...(card.basis === "period" ? ["Selected period (decides the flag)"] : []),
     "Flagged months",
   ]];
   for (const id of Object.keys(card.hits).sort((a, b) => {
@@ -21,6 +23,7 @@ export function stateCardRows(data: StateHmisParsed, card: StateHmisCard, months
       unit?.district ?? id,
       ...(data.reportLevel === "block" ? [unit?.block ?? ""] : []),
       ...months.map((month) => card.hits[id]?.[month]?.detail ?? "Not evaluated"),
+      ...(card.basis === "period" ? [card.periodHits?.[id]?.detail ?? "Not evaluated"] : []),
       hitMonths.length,
     ]);
   }
@@ -57,11 +60,11 @@ export function downloadStateHmisPdf(data: StateHmisParsed, computed: StateHmisC
   doc.text(`HMIS State ${data.reportLevel === "block" ? "Block-wise" : "District-wise"} DQA Report`, 14, 16);
   doc.setFontSize(10);
   doc.text(`${data.stateName} | ${months[0] ?? "-"} to ${months[months.length - 1] ?? "-"} | ${computed.selectedUnits.length} ${unitLabel}`, 14, 23);
-  doc.text(`Overall score: ${computed.overallScore.toFixed(1)}`, 14, 29);
+  doc.text(`Overall score: ${formatScore(computed.overallScore)}${computed.customMethod ? " (standard scoring settings)" : ""}`, 14, 29);
   autoTable(doc, {
     startY: 34,
     head: [["Component", "Score", "Worst issue %"]],
-    body: Object.values(computed.componentScores).map((component) => [component.group, component.score.toFixed(1), component.worstIssuePct.toFixed(1)]),
+    body: Object.values(computed.componentScores).map((component) => [component.group, formatScore(component.score), formatScore(component.worstIssuePct)]),
   });
 
   if (data.reportLevel === "block") {

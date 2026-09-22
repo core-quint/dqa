@@ -151,6 +151,19 @@ function utcDay(iso: string): number {
   return Date.UTC(year, month - 1, day);
 }
 
+/**
+ * True when period `b` starts the day after period `a` ends — January then
+ * February, or one week then the next. Month-on-month checks may only compare
+ * such pairs: with February deselected, January -> March is a two-month change,
+ * not a monthly one.
+ */
+export function periodsAreConsecutive(a: string, b: string): boolean {
+  const first = periodDayRange(a);
+  const second = periodDayRange(b);
+  if (!first || !second) return false;
+  return utcDay(second.from) - utcDay(first.to) === 86400000;
+}
+
 /** Inclusive day count between two "YYYY-MM-DD" dates. */
 export function daysSpanInclusive(from: string, to: string): number | null {
   if (!ISO_DAY_RE.test(from) || !ISO_DAY_RE.test(to)) return null;

@@ -1,15 +1,42 @@
 import type { FilterState } from "./dqa/types";
 import type { AuthState } from "../components/dqa/LoginPage";
-import { periodMonthBounds } from "./dqa/parseUtils";
+import { periodDurationLabel, periodMonthBounds, periodMonths } from "./dqa/parseUtils";
+import { SCORING_METHOD_VERSION } from "./dqa/scoring";
 
 export type SnapshotPortal = "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
 export type SnapshotDqaLevel = "STATE" | "DISTRICT" | "BLOCK";
 
+/**
+ * Exactly what a saved review covered, so it is only ever compared with a review
+ * of the same scope. Empty lists mean "all".
+ */
+export interface SnapshotScope {
+  blocks: string[];
+  districts: string[];
+  /** Calendar months analysed ("YYYY-MM"). */
+  months: string[];
+  ownership: string[];
+  ruralUrban: string[];
+  facilityTypes: string[];
+  /** U-WIN facility / sub-center / session-site analysis; null elsewhere. */
+  analysisMode: string | null;
+  /** True when the review covers only part of the geography its level names. */
+  partial: boolean;
+}
+
 export interface SnapshotKpiData {
-  availabilityScore?: number;
-  completenessScore?: number;
-  accuracyScore?: number;
-  consistencyScore?: number;
+  /** null = the component could not be scored (method v2). */
+  availabilityScore?: number | null;
+  completenessScore?: number | null;
+  accuracyScore?: number | null;
+  consistencyScore?: number | null;
+  /** Scoring method the scores were computed with; absent = v1 (before 2026-09-22). */
+  methodVersion?: number | null;
+  scope?: SnapshotScope | null;
+  scoredComponents?: number | null;
+  uploadBlockCount?: number | null;
+  uploadFacilityCount?: number | null;
+  uploadSessionSiteCount?: number | null;
   dqaLevel?: SnapshotDqaLevel;
   block?: string | null;
   periodStart?: string | null;
@@ -49,6 +76,43 @@ export interface SnapshotSaveMeta {
   block?: string;
   periodStart?: string;
   periodEnd?: string;
+  /** Span of the analysed months, e.g. "3 months" — what the review covered, not the upload. */
+  duration: string;
+  scope: SnapshotScope;
+}
+
+/** Whether a saved review was scored with the current method (comparable with today's scores). */
+export function isCurrentMethod(snapshot: Pick<SnapshotRecord, "kpiData">): boolean {
+  return snapshot.kpiData?.methodVersion === SCORING_METHOD_VERSION;
+}
+
+function sortedList(values: string[] | undefined | null): string[] {
+  return [...new Set((values ?? []).map((value) => value.trim().toLowerCase()).filter(Boolean))].sort();
+}
+
+/**
+ * Everything about a review's scope except its period. Two reviews are only
+ * compared when this matches — a Public-only review or a 3-of-12-block review is
+ * never measured against the whole district.
+ */
+export function scopeSignature(snapshot: Pick<SnapshotRecord, "kpiData">): string {
+  const scope = snapshot.kpiData?.scope;
+  return JSON.stringify([
+    getSnapshotDqaLevel(snapshot),
+    (getSnapshotBlock(snapshot) ?? "").toLowerCase(),
+    sortedList(scope?.blocks),
+    sortedList(scope?.districts),
+    sortedList(scope?.ownership),
+    sortedList(scope?.ruralUrban),
+    sortedList(scope?.facilityTypes),
+    scope?.analysisMode ?? null,
+    snapshot.kpiData?.analysisGranularity ?? null,
+  ]);
+}
+
+/** Calendar months covered by a list of analysed period keys. */
+export function analysedMonths(periodKeys: string[]): string[] {
+  return [...new Set(periodKeys.flatMap(periodMonths))].sort();
 }
 
 export function normalizePortal(portal?: string | null): SnapshotPortal {
@@ -172,7 +236,7 @@ export interface ReviewBaseline {
   kind: BaselineKind;
   createdAt: string;
   period: { start: string; end: string } | null;
-  overall: number;
+  overall: number | null;
   availabilityScore: number | null;
   completenessScore: number | null;
   accuracyScore: number | null;
@@ -185,7 +249,7 @@ function toBaseline(snapshot: SnapshotRecord, kind: BaselineKind): ReviewBaselin
     kind,
     createdAt: snapshot.createdAt,
     period: getDataPeriod(snapshot),
-    overall: snapshot.overallScore ?? 0,
+    overall: typeof snapshot.overallScore === "number" ? snapshot.overallScore : null,
     availabilityScore: snapshot.kpiData?.availabilityScore ?? null,
     completenessScore: snapshot.kpiData?.completenessScore ?? null,
     accuracyScore: snapshot.kpiData?.accuracyScore ?? null,
@@ -197,12 +261,20 @@ function toBaseline(snapshot: SnapshotRecord, kind: BaselineKind): ReviewBaselin
  * Baselines for the review on screen, preferred first: the same-period review when
  * one exists, then the latest review when that is a different one. Pass the
  * snapshots already narrowed to this portal and geography.
+ *
+ * Only reviews scored with the current method, and — when `currentScope` is
+ * given — of the same scope, are eligible: anything else is not like-for-like.
  */
 export function pickReviewBaselines(
   matches: SnapshotRecord[],
   currentPeriod: { start: string; end: string } | null,
+  currentScope?: Pick<SnapshotRecord, "kpiData">,
 ): ReviewBaseline[] {
-  const sorted = [...matches].sort(
+  const wantedScope = currentScope ? scopeSignature(currentScope) : null;
+  const comparable = matches.filter(
+    (snapshot) => isCurrentMethod(snapshot) && (wantedScope === null || scopeSignature(snapshot) === wantedScope),
+  );
+  const sorted = [...comparable].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
   const latest = sorted[0];
@@ -256,18 +328,39 @@ export function snapshotOrderValue(
   return new Date(snapshot.createdAt).getTime();
 }
 
+/**
+ * Level, period and scope of an HMIS / U-WIN review as it will be saved — built
+ * from what was actually SCORED (the month and scope filters), never from the
+ * whole upload.
+ */
 export function buildSnapshotSaveMeta(
   auth: Pick<AuthState, "level" | "geoBlock">,
-  filters: Pick<FilterState, "blocks">,
+  filters: Pick<FilterState, "blocks" | "months" | "ownership" | "ru"> & Partial<Pick<FilterState, "districts" | "analysisMode">>,
   allMonths: Record<string, string>,
+  options: { analysisMode?: boolean } = {},
 ): SnapshotSaveMeta {
-  // Trends and the dashboard plot on a calendar-month axis, so a sub-month
-  // reporting period (a weekly U-WIN upload) is recorded as the month it falls in.
-  const bounds = periodMonthBounds(Object.keys(allMonths));
+  // `[]` means every month. Trends and the dashboard plot on a calendar-month
+  // axis, so a sub-month period (a weekly U-WIN upload) is recorded as its month.
+  const periodKeys = filters.months.length > 0 ? filters.months : Object.keys(allMonths);
+  const bounds = periodMonthBounds(periodKeys);
   const periodStart = bounds?.start;
   const periodEnd = bounds?.end;
   const selectedBlocks = uniqueNonEmpty(filters.blocks);
+  const selectedDistricts = uniqueNonEmpty(filters.districts ?? []);
   const scopedBlock = auth.geoBlock?.trim();
+  const narrowedFacilities = filters.ownership.length > 0 || filters.ru.length > 0;
+
+  const scope = (partial: boolean): SnapshotScope => ({
+    blocks: selectedBlocks,
+    districts: selectedDistricts,
+    months: analysedMonths(periodKeys),
+    ownership: uniqueNonEmpty(filters.ownership),
+    ruralUrban: uniqueNonEmpty(filters.ru),
+    facilityTypes: [],
+    analysisMode: options.analysisMode ? filters.analysisMode ?? "facility" : null,
+    partial,
+  });
+  const duration = periodDurationLabel(periodKeys);
 
   if (auth.level === "BLOCK" && scopedBlock) {
     return {
@@ -275,6 +368,8 @@ export function buildSnapshotSaveMeta(
       block: scopedBlock,
       periodStart,
       periodEnd,
+      duration,
+      scope: scope(narrowedFacilities),
     };
   }
 
@@ -284,6 +379,8 @@ export function buildSnapshotSaveMeta(
       block: selectedBlocks[0],
       periodStart,
       periodEnd,
+      duration,
+      scope: scope(narrowedFacilities),
     };
   }
 
@@ -291,6 +388,10 @@ export function buildSnapshotSaveMeta(
     dqaLevel: "DISTRICT",
     periodStart,
     periodEnd,
+    duration,
+    // Several (not all) blocks, a district subset of a state upload, or an
+    // ownership / rural-urban filter: only part of the named geography.
+    scope: scope(selectedBlocks.length > 1 || selectedDistricts.length > 0 || narrowedFacilities),
   };
 }
 

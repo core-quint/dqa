@@ -39,7 +39,12 @@ import {
   NOT_RECORDED,
   presetRange,
   recordsInDurationBucket,
+  SCORE_FAMILY_LABELS,
+  scoreFamilyCounts,
+  scoreFamilyOf,
+  scoresForFamily,
   toDashboardRecord,
+  type ScoreFamily,
   type CategoryRow,
   type DashboardFilters,
   type DashboardRecord,
@@ -357,9 +362,17 @@ function ReviewSummaryCard({
 function AverageScoreCard({
   overall,
   metrics,
+  family,
+  familyOptions,
+  onFamilyChange,
 }: {
   overall: number | null;
   metrics: ScoreMetric[];
+  /** The one scoring framework the averages are drawn from. */
+  family: ScoreFamily | null;
+  /** Families with current-method reviews in view; a picker shows when > 1. */
+  familyOptions: ScoreFamily[];
+  onFamilyChange?: (family: ScoreFamily) => void;
 }) {
   const clampedScore = Math.max(0, Math.min(100, overall ?? 0));
   const accent = overall === null
@@ -382,8 +395,22 @@ function AverageScoreCard({
               Data quality
             </div>
             <h2 id="average-score-kpi" className="mt-1 text-sm font-semibold text-slate-600">
-              Average overall score
+              Average overall score{family ? ` · ${SCORE_FAMILY_LABELS[family]}` : ""}
             </h2>
+            {familyOptions.length > 1 && onFamilyChange ? (
+              <label className="mt-2 flex items-center gap-2 text-[11px] font-semibold text-slate-500">
+                Scores from
+                <select
+                  value={family ?? ""}
+                  onChange={(event) => onFamilyChange(event.target.value as ScoreFamily)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
+                >
+                  {familyOptions.map((option) => (
+                    <option key={option} value={option}>{SCORE_FAMILY_LABELS[option]}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
           <div aria-hidden className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-emerald-100 bg-emerald-50 text-emerald-700">
             <Gauge className="h-5 w-5" />
@@ -434,7 +461,7 @@ function AverageScoreCard({
           })}
         </dl>
         <p className="mt-auto pt-4 text-[10px] leading-4 text-slate-400">
-          Component averages use available scored reviews; U-WIN does not report completeness.
+          Averages use reviews scored with the current method (from 22 Sep 2026), one source at a time — HMIS, U-WIN, PCTS and State DQA scores are not mixed. U-WIN does not report completeness.
         </p>
       </article>
     </GlassPanel>
@@ -1147,10 +1174,10 @@ function ComponentProfile({
 function ScoreDistribution({ records }: { records: DashboardRecord[] }) {
   const exportRef = useRef<HTMLDivElement>(null);
   const bands = [
-    { label: "Excellent", range: "85–100", color: "#059669", count: records.filter((r) => r.overall >= 85).length },
-    { label: "Good", range: "70–84", color: "#0284c7", count: records.filter((r) => r.overall >= 70 && r.overall < 85).length },
-    { label: "Moderate", range: "50–69", color: "#d97706", count: records.filter((r) => r.overall >= 50 && r.overall < 70).length },
-    { label: "Critical", range: "Below 50", color: "#dc2626", count: records.filter((r) => r.overall < 50).length },
+    { label: "Excellent", range: "85–100", color: "#059669", count: records.filter((r) => r.overall !== null && r.overall >= 85).length },
+    { label: "Good", range: "70–84", color: "#0284c7", count: records.filter((r) => r.overall !== null && r.overall >= 70 && r.overall < 85).length },
+    { label: "Moderate", range: "50–69", color: "#d97706", count: records.filter((r) => r.overall !== null && r.overall >= 50 && r.overall < 70).length },
+    { label: "Critical", range: "Below 50", color: "#dc2626", count: records.filter((r) => r.overall !== null && r.overall < 50).length },
   ];
   const max = Math.max(1, ...bands.map((band) => band.count));
   return (
@@ -1485,12 +1512,26 @@ export function DashboardPage({ auth }: Props) {
   );
 
   const filtered = useMemo(() => applyDashboardFilters(records, filters), [records, filters]);
+  // Score averages come from ONE scoring framework and the current method only.
+  // A source filter decides it; otherwise the reader picks, defaulting to the
+  // source with the most scored reviews in view.
+  const [scoreFamilyChoice, setScoreFamilyChoice] = useState<ScoreFamily | null>(null);
+  const familyCounts = useMemo(() => scoreFamilyCounts(filtered), [filtered]);
+  const familyOptions = useMemo(
+    () => (Object.keys(familyCounts) as ScoreFamily[]).filter((family) => familyCounts[family] > 0),
+    [familyCounts],
+  );
+  const scoreFamily: ScoreFamily | null = scoreFamilyOf(filters.portal)
+    ?? (scoreFamilyChoice && familyCounts[scoreFamilyChoice] > 0
+      ? scoreFamilyChoice
+      : [...familyOptions].sort((a, b) => familyCounts[b] - familyCounts[a])[0] ?? null);
+  const scored = useMemo(() => scoresForFamily(filtered, scoreFamily), [filtered, scoreFamily]);
   // Which duration column the reader opened, if any. Drilling reads the reviews
   // behind a column; scoping the whole dashboard to it stays a separate action.
   const [durationDrill, setDurationDrill] = useState<string | null>(null);
-  const stats = useMemo(() => computeDashboardStats(filtered, filters.districtScope), [filtered, filters.districtScope]);
-  const months = useMemo(() => groupByMonth(filtered, filters.basis), [filtered, filters.basis]);
-  const durations = useMemo(() => groupByDuration(filtered), [filtered]);
+  const stats = useMemo(() => computeDashboardStats(scored, filters.districtScope), [scored, filters.districtScope]);
+  const months = useMemo(() => groupByMonth(scored, filters.basis), [scored, filters.basis]);
+  const durations = useMemo(() => groupByDuration(scored), [scored]);
   const isPeriodBasis = filters.basis === "period";
   const axisNoun = isPeriodBasis ? "data month" : "review month";
   // Counted before the date window so the notice still shows when the window
@@ -1554,14 +1595,14 @@ export function DashboardPage({ auth }: Props) {
     : filters.state || uniqueStates <= 1
       ? "district"
       : "state";
-  const geo = useMemo(() => groupByGeo(filtered, geoLevel, filters.districtScope), [filtered, geoLevel, filters.districtScope]);
+  const geo = useMemo(() => groupByGeo(scored, geoLevel, filters.districtScope), [scored, geoLevel, filters.districtScope]);
 
   const designations = useMemo(
-    () => groupByCategory(filtered, (r) => r.designation),
+    () => groupByCategory(scored, (r) => r.designation),
     [filtered],
   );
   const purposes = useMemo(
-    () => groupByCategory(filtered, (r) => r.purpose, (r) => r.purposeDetail),
+    () => groupByCategory(scored, (r) => r.purpose, (r) => r.purposeDetail),
     [filtered],
   );
 
@@ -1654,7 +1695,7 @@ export function DashboardPage({ auth }: Props) {
       const age = now - record.createdAtMs;
       return age > 30 * 86_400_000 && age <= 60 * 86_400_000;
     }).length;
-    const critical = filtered.filter((record) => record.overall < 50).length;
+    const critical = scored.filter((record) => record.overall !== null && record.overall < 50).length;
     const stateDqaStates = new Set(filtered.filter((record) => record.portal === "HMIS_STATE").map((record) => record.stateKey)).size;
     return { weakest, recent30, previous30, critical, stateDqaStates };
   }, [filtered, stats]);
@@ -2180,7 +2221,13 @@ export function DashboardPage({ auth }: Props) {
                   reviewers={stats.reviewers}
                   metrics={reviewTypeMetrics}
                 />
-                <AverageScoreCard overall={stats.avgOverall} metrics={scoreMetrics} />
+                <AverageScoreCard
+                  overall={stats.avgOverall}
+                  metrics={scoreMetrics}
+                  family={scoreFamily}
+                  familyOptions={scoreFamilyOf(filters.portal) ? [] : familyOptions}
+                  onFamilyChange={setScoreFamilyChoice}
+                />
                 <div className="md:col-span-2 xl:col-span-1">
                   <AreaCoverageCard
                     scope={filters.districtScope}
@@ -2206,7 +2253,7 @@ export function DashboardPage({ auth }: Props) {
 
                 <GlassPanel data-dashboard-graph="performance-distribution" className="p-5 lg:col-span-4">
                   <div className="mb-4 flex items-center justify-between gap-2"><div><div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Score mix</div><div className="mt-1 text-lg font-bold text-slate-950">Performance distribution</div></div><BarChart3 className="h-5 w-5 text-slate-400" /></div>
-                  <ScoreDistribution records={filtered} />
+                  <ScoreDistribution records={scored} />
                 </GlassPanel>
 
                 <GlassPanel className="p-5 lg:col-span-4">

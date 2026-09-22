@@ -19,9 +19,11 @@ import { OverallScore } from "./OverallScore";
 import { OverallSummaryTable } from "./OverallSummaryTable";
 import { apiFetch } from "../../api";
 import { computeOverallScore } from "../../lib/dqa/scoreUtils";
+import { componentCoverageNote, SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import { ScoreStrip, type ScoreStripRow } from "./ScoreStrip";
 import {
   buildSnapshotSaveMeta,
+  isCurrentMethod,
   pickReviewBaselines,
   type ReviewBaseline,
   type SnapshotRecord,
@@ -189,7 +191,10 @@ export function ResultsPage({
     savedMeta.periodStart && savedMeta.periodEnd
       ? { start: savedMeta.periodStart, end: savedMeta.periodEnd }
       : null;
-  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod);
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
+    kpiData: { dqaLevel: savedMeta.dqaLevel, block: savedMeta.block ?? null, scope: savedMeta.scope },
+  });
+  const legacyReviewCount = savedReviews.filter((review) => !isCurrentMethod(review)).length;
 
   useEffect(() => {
     if (!activeGroup) {
@@ -210,9 +215,11 @@ export function ResultsPage({
 
   const handleSave = async () => {
     if (!kpis) return;
+    const score = computeOverallScore(kpis, SCORED_GROUPS);
+    if (score.overall === null) return;
     try {
       setSaving(true);
-      const { overall, components } = computeOverallScore(kpis);
+      const { overall, components } = score;
       const snapshotMeta = savedMeta;
       const savedSnapshot = await apiFetch("/api/snapshots", {
         method: "POST",
@@ -220,22 +227,28 @@ export function ResultsPage({
           portal: "HMIS",
           state: csv.stateName,
           district: csv.distName,
-          duration: durationStr,
+          duration: snapshotMeta.duration,
           designation: reviewInfo?.designation || null,
           purpose: reviewInfo?.purpose || null,
           purposeDetail:
             reviewInfo?.purposeSubOption || reviewInfo?.purposeOtherText || null,
           overallScore: overall,
-          availabilityScore: components.availability?.score ?? 0,
-          completenessScore: components.completeness?.score ?? 0,
-          accuracyScore: components.accuracy?.score ?? 0,
-          consistencyScore: components.consistency?.score ?? 0,
+          availabilityScore: components.availability?.score ?? null,
+          completenessScore: components.completeness?.score ?? null,
+          accuracyScore: components.accuracy?.score ?? null,
+          consistencyScore: components.consistency?.score ?? null,
+          scoredComponents: score.scoredComponents,
+          methodVersion: SCORING_METHOD_VERSION,
+          scope: snapshotMeta.scope,
           dqaLevel: snapshotMeta.dqaLevel,
           block: snapshotMeta.block,
           periodStart: snapshotMeta.periodStart,
           periodEnd: snapshotMeta.periodEnd,
-          blockCount: csv.globalBlockCount,
-          facilityCount: csv.globalFacilityCount,
+          // What was analysed, then the upload totals for context.
+          blockCount: kpis.globalBlockCount,
+          facilityCount: kpis.globalDen,
+          uploadBlockCount: csv.globalBlockCount,
+          uploadFacilityCount: csv.globalFacilityCount,
         }),
       });
       setSavedReviews((current) => [savedSnapshot, ...current]);
@@ -253,18 +266,17 @@ export function ResultsPage({
         key: group,
         label: GROUP_META[group].label,
         color: GROUP_META[group].color,
-        current: liveScore.components[group]?.score ?? 0,
+        current: liveScore.components[group]?.score ?? null,
       }))
     : [];
+  const canSave = Boolean(liveScore && liveScore.overall !== null);
 
   const meta = activeGroup ? GROUP_META[activeGroup] : null;
   const groupCards =
     kpis && activeGroup
       ? kpis.cards.filter((card) => card.group === activeGroup)
       : [];
-  const totalFacilities = kpis
-    ? Math.max(1, Object.keys(kpis.filteredFacilities).length)
-    : 0;
+  const totalFacilities = kpis ? Math.max(1, kpis.globalDen) : 0;
 
   const contextStats = [
     { label: "Program", value: "HMIS" },
@@ -273,6 +285,9 @@ export function ResultsPage({
     { label: "Duration", value: durationStr },
     { label: "Blocks", value: String(csv.globalBlockCount) },
     { label: "Facilities", value: String(csv.globalFacilityCount) },
+    ...(kpis
+      ? [{ label: "In this analysis", value: `${kpis.globalDen} facilities · ${kpis.globalBlockCount} blocks` }]
+      : []),
   ];
 
   return (
@@ -342,7 +357,8 @@ export function ResultsPage({
               {kpis ? (
                 <button
                   onClick={handleSave}
-                  disabled={saving || snapshotSaved}
+                  disabled={saving || snapshotSaved || !canSave}
+                  title={canSave ? undefined : "Nothing in the current selection can be scored"}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Save className="h-3.5 w-3.5" />
@@ -378,6 +394,9 @@ export function ResultsPage({
           <ScoreStrip
             overall={liveScore.overall}
             rows={scoreRows}
+            coverageNote={componentCoverageNote(liveScore)}
+            customSettings={kpis?.customMethod ?? false}
+            legacyReviewCount={legacyReviewCount}
             baselines={baselines}
             saved={snapshotSaved}
             onOpenDetail={() => setShowOverall(true)}
@@ -437,7 +456,7 @@ export function ResultsPage({
               {kpis && meta && activeGroup !== "overall" ? (
                 <IndicatorSummaryPanel
                   meta={meta}
-                  monthsCount={Object.keys(csv.allMonths).length}
+                  monthsCount={kpis.selMonths.length}
                   totalUnits={totalFacilities}
                   unitLabel="facilities"
                   affectedUnique={
@@ -451,6 +470,7 @@ export function ResultsPage({
                     total: card.stat.total,
                     any: card.stat.any,
                     all: card.stat.all,
+                    eligible: card.stat.eligible,
                   }))}
                   onOpenCard={(id) => {
                     const card = groupCards.find((c) => c.id === id);

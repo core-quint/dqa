@@ -6,15 +6,37 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import { authorizePctsWrite } from "../lib/pctsAuthorization";
 import { canAccessPortal, normalizePortal } from "../lib/portalAuthorization";
 
+// Scoring method v2 (2026-09-22): a component that could not be scored is sent
+// as null (N/A), never as a made-up 0 or 100.
+const componentScore = z.number().min(0).max(100).nullable();
+const scopeList = z.array(z.string().trim().min(1).max(200)).max(1000);
+
+const snapshotScopeSchema = z.object({
+  blocks: scopeList.default([]),
+  districts: scopeList.default([]),
+  months: z.array(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)).max(120).default([]),
+  ownership: scopeList.default([]),
+  ruralUrban: scopeList.default([]),
+  facilityTypes: scopeList.default([]),
+  analysisMode: z.string().trim().max(40).nullable().optional(),
+  partial: z.boolean().default(false),
+});
+
 const snapshotSchema = z.object({
   state: z.string().min(1),
   district: z.string().min(1),
   duration: z.string().min(1),
-  overallScore: z.number(),
-  availabilityScore: z.number(),
-  completenessScore: z.number().optional().default(0),
-  accuracyScore: z.number(),
-  consistencyScore: z.number(),
+  overallScore: z.number().min(0).max(100),
+  availabilityScore: componentScore,
+  completenessScore: componentScore.optional(),
+  accuracyScore: componentScore,
+  consistencyScore: componentScore,
+  methodVersion: z.number().int().min(1).max(100).optional().nullable(),
+  scoredComponents: z.number().int().min(0).max(10).optional().nullable(),
+  scope: snapshotScopeSchema.optional().nullable(),
+  uploadBlockCount: z.number().optional().nullable(),
+  uploadFacilityCount: z.number().optional().nullable(),
+  uploadSessionSiteCount: z.number().optional().nullable(),
   portal: z.string().optional().default("HMIS"),
   dqaLevel: z.enum(["STATE", "DISTRICT", "BLOCK"]).optional(),
   block: z.string().trim().min(1).optional().nullable(),
@@ -45,6 +67,8 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
     portal, dqaLevel, block, periodStart, periodEnd,
     blockCount, facilityCount, sessionSiteCount, districtCount, analysisGranularity, designation,
     purpose, purposeDetail,
+    methodVersion, scoredComponents, scope,
+    uploadBlockCount, uploadFacilityCount, uploadSessionSiteCount,
   } = parsed.data;
 
   const normalizedPortal = normalizePortal(portal);
@@ -75,9 +99,17 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
       overallScore,
       kpiData: {
         availabilityScore,
-        completenessScore,
+        completenessScore: completenessScore ?? null,
         accuracyScore,
         consistencyScore,
+        // Absent on reviews saved before 2026-09-22 (method v1): those scores are
+        // not comparable with v2 ones and are kept out of trends and averages.
+        methodVersion: methodVersion ?? null,
+        scoredComponents: scoredComponents ?? null,
+        scope: scope ?? null,
+        uploadBlockCount: uploadBlockCount ?? null,
+        uploadFacilityCount: uploadFacilityCount ?? null,
+        uploadSessionSiteCount: uploadSessionSiteCount ?? null,
         dqaLevel: dqaLevel ?? null,
         block: block ?? null,
         periodStart: periodStart ?? null,

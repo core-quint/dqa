@@ -201,5 +201,9 @@ export interface UwinComputedKpis {
 
   globalDen: number;
   globalBlockCount: number;
+  /** Cards computed with the standard scoring settings; the score always uses these. */
+  scoreCards: KpiCard[];
+  /** True when the analysis settings differ from the standard scoring settings. */
+  customMethod: boolean;
   summaryByPid: Record<string, { any: SummaryRow[]; all: SummaryRow[]; overall?: SummaryRow[] }>;
 }

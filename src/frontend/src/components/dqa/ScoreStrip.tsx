@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, ChevronRight, Minus } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, ChevronRight, Info, Minus } from "lucide-react";
 import { scoreBadgeStyle, scoreGrade } from "../../lib/dqa/scoreUtils";
 import { periodRangeLabel, type ReviewBaseline } from "../../lib/snapshots";
 
@@ -8,12 +8,20 @@ export interface ScoreStripRow {
   label: string;
   /** The component's own colour, as the tabs use it. */
   color: string;
-  current: number;
+  /** null = N/A: none of this component's checks could be run on this selection. */
+  current: number | null;
 }
 
 interface Props {
-  overall: number;
+  /** null = nothing could be scored (for example, the filters leave no units). */
+  overall: number | null;
   rows: ScoreStripRow[];
+  /** e.g. "Based on 3 of 4 components" when a component is N/A. */
+  coverageNote?: string | null;
+  /** The reviewer changed analysis settings; the score still uses the standard ones. */
+  customSettings?: boolean;
+  /** Earlier reviews saved under the previous scoring method (not compared). */
+  legacyReviewCount?: number;
   /** Past reviews to measure against, preferred first; empty when none exist. */
   baselines: ReviewBaseline[];
   /** Whether this review has been saved in this session. */
@@ -78,11 +86,11 @@ function Delta({
   previous,
   size = "sm",
 }: {
-  current: number;
+  current: number | null;
   previous: number | null;
   size?: "sm" | "md";
 }) {
-  if (previous === null) return null;
+  if (previous === null || current === null) return null;
   const diff = current - previous;
   const flat = Math.abs(diff) < DELTA_EPSILON;
   const Icon = flat ? Minus : diff > 0 ? ArrowUpRight : ArrowDownRight;
@@ -118,6 +126,9 @@ function Delta({
 export function ScoreStrip({
   overall,
   rows,
+  coverageNote = null,
+  customSettings = false,
+  legacyReviewCount = 0,
   baselines,
   saved = false,
   onOpenDetail,
@@ -156,7 +167,7 @@ export function ScoreStrip({
               className="text-[30px] font-extrabold leading-none tabular-nums"
               style={{ color: badge.text }}
             >
-              {overall.toFixed(1)}
+              {overall === null ? "No data" : overall.toFixed(1)}
             </span>
             <span className="min-w-0">
               <span
@@ -166,8 +177,15 @@ export function ScoreStrip({
                 This review
               </span>
               <span className="mt-0.5 block text-[11px] font-semibold" style={{ color: badge.text }}>
-                Grade {grade} · {saved ? "saved" : "not saved yet"}
+                {overall === null
+                  ? "Nothing in this selection can be scored"
+                  : `Grade ${grade} · ${saved ? "saved" : "not saved yet"}`}
               </span>
+              {coverageNote ? (
+                <span className="mt-0.5 block text-[10px] font-semibold" style={{ color: badge.text }}>
+                  {coverageNote}
+                </span>
+              ) : null}
             </span>
             {onOpenDetail ? (
               <ChevronRight
@@ -184,7 +202,7 @@ export function ScoreStrip({
 
             {baselines.length === 0 ? (
               <div className="mt-1 text-[11px] italic text-slate-500">
-                No earlier review saved for this geography.
+                No earlier review of this scope saved under the current scoring method.
               </div>
             ) : (
               <div className="mt-1 space-y-1">
@@ -221,7 +239,7 @@ export function ScoreStrip({
                       </span>
                       <span className="shrink-0 text-right">
                         <span className="block text-[11px] font-bold tabular-nums text-slate-700">
-                          {baseline.overall.toFixed(1)}
+                          {baseline.overall === null ? "N/A" : baseline.overall.toFixed(1)}
                         </span>
                         {isActive ? (
                           <Delta current={overall} previous={baseline.overall} />
@@ -232,6 +250,12 @@ export function ScoreStrip({
                 })}
               </div>
             )}
+            {legacyReviewCount > 0 ? (
+              <div className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                {legacyReviewCount} earlier review{legacyReviewCount === 1 ? " was" : "s were"} scored with the previous
+                method and {legacyReviewCount === 1 ? "is" : "are"} not compared.
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -248,14 +272,17 @@ export function ScoreStrip({
                 </span>
                 <Delta current={row.current} previous={baselineComponentScore(active, row.key)} />
               </div>
-              <div className="mt-1 text-lg font-bold leading-none tabular-nums text-slate-900">
-                {row.current.toFixed(1)}
+              <div
+                className="mt-1 text-lg font-bold leading-none tabular-nums text-slate-900"
+                title={row.current === null ? "None of this component's checks could be run on this selection." : undefined}
+              >
+                {row.current === null ? "N/A" : row.current.toFixed(1)}
               </div>
               <div className="mt-1.5 h-1 rounded-full bg-slate-100">
                 <div
                   className="h-1 rounded-full"
                   style={{
-                    width: `${Math.max(0, Math.min(100, row.current))}%`,
+                    width: `${Math.max(0, Math.min(100, row.current ?? 0))}%`,
                     background: row.color,
                   }}
                 />
@@ -280,6 +307,15 @@ export function ScoreStrip({
           ) : null}
         </div>
       </div>
+      {customSettings ? (
+        <div className="mt-2 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-600">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-500" />
+          <span>
+            Scores use the standard scoring settings. Your changes to outlier, dropout or
+            inconsistency settings only change the indicator tables below.
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

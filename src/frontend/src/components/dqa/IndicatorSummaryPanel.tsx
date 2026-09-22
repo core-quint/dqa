@@ -1,4 +1,5 @@
 import { ArrowUpRight } from "lucide-react";
+import { severityLevel, type SeverityLevel } from "../../lib/dqa/scoring";
 
 export interface RankedIndicatorCard {
   id: string;
@@ -6,6 +7,8 @@ export interface RankedIndicatorCard {
   total: number;
   any: number;
   all: number;
+  /** Units the check could be run for; 0 shows the card as not evaluable. */
+  eligible?: number;
 }
 
 interface GroupMetaLike {
@@ -30,15 +33,14 @@ interface Props {
   subtitle?: string;
 }
 
-function severityBadge(pct: number) {
-  if (pct >= 50) {
-    return { bg: "bg-red-100", text: "text-red-700", label: "High" };
-  }
-  if (pct >= 25) {
-    return { bg: "bg-amber-100", text: "text-amber-700", label: "Medium" };
-  }
-  return { bg: "bg-emerald-100", text: "text-emerald-700", label: "Low" };
-}
+// The one severity rule (lib/dqa/scoring.ts), shared with the PDFs and reports.
+const SEVERITY_STYLE: Record<SeverityLevel | "N/A", { bg: string; text: string; label: string }> = {
+  High: { bg: "bg-red-100", text: "text-red-700", label: "High" },
+  Medium: { bg: "bg-amber-100", text: "text-amber-700", label: "Medium" },
+  Low: { bg: "bg-emerald-100", text: "text-emerald-700", label: "Low" },
+  None: { bg: "bg-slate-100", text: "text-slate-600", label: "None" },
+  "N/A": { bg: "bg-slate-100", text: "text-slate-500", label: "Not evaluable" },
+};
 
 export function IndicatorSummaryPanel({
   meta,
@@ -122,7 +124,8 @@ export function IndicatorSummaryPanel({
             const pct = Math.round((card.total / totalUnits) * 100);
             const anyPct = Math.round((card.any / totalUnits) * 100);
             const allPct = Math.round((card.all / totalUnits) * 100);
-            const severity = severityBadge(pct);
+            const notEvaluable = card.eligible === 0;
+            const severity = SEVERITY_STYLE[notEvaluable ? "N/A" : severityLevel(card.total, totalUnits)];
             const isEmpty = card.total === 0;
 
             return (
@@ -196,7 +199,11 @@ export function IndicatorSummaryPanel({
 
                 <div className="mt-4 flex items-center justify-between gap-3 text-xs font-semibold uppercase tracking-[0.16em]">
                   <span style={{ color: meta.color }}>
-                    {isEmpty ? `No affected ${unitLabel}` : "Open drill-down"}
+                    {notEvaluable
+                      ? "No data to run this check"
+                      : isEmpty
+                        ? `No affected ${unitLabel}`
+                        : "Open drill-down"}
                   </span>
                   {!isEmpty ? (
                     <ArrowUpRight className="h-4 w-4" style={{ color: meta.color }} />

@@ -2,11 +2,10 @@ import { apiFetch } from "../../api";
 import { API_BASE } from "../../config";
 import { auth } from "../firebase";
 import type { FilterState } from "../dqa/types";
-import { computeOverallScore } from "../dqa/scoreUtils";
 import { periodMonthBounds, periodMonths } from "../dqa/parseUtils";
 import type { PreUploadInfo } from "../dqa/preUploadOptions";
 import type { UwinComputedKpis, UwinParsedCSV } from "./types";
-import { buildUwinStateFactPack, UWIN_STATE_REPORT_RULES_VERSION, type UwinStateReportFactPack } from "./stateReportFacts";
+import { buildUwinStateFactPack, uwinStateReportScores, UWIN_STATE_REPORT_RULES_VERSION, type UwinStateReportFactPack } from "./stateReportFacts";
 
 export type UwinStateReportStatus = "SAVED" | "DRAFT" | "REVIEWED" | "APPROVED" | "SUPERSEDED";
 
@@ -71,10 +70,11 @@ function compactHash(value: string): string {
   return `${(a >>> 0).toString(16).padStart(8, "0")}${(b >>> 0).toString(16).padStart(8, "0")}`;
 }
 
-export function getUwinStateReportPeriod(csv: UwinParsedCSV) {
-  // The report API is keyed on calendar months, so a sub-month reporting period
-  // (a weekly upload) is reported as the month it falls in.
-  const bounds = periodMonthBounds(Object.keys(csv.allMonths));
+export function getUwinStateReportPeriod(csv: UwinParsedCSV, kpis?: Pick<UwinComputedKpis, "selMonths">) {
+  // The report covers the months actually analysed (the month filter), not every
+  // month in the upload. The report API is keyed on calendar months, so a
+  // sub-month reporting period (a weekly upload) is reported as the month it falls in.
+  const bounds = periodMonthBounds(kpis ? kpis.selMonths : Object.keys(csv.allMonths));
   return { periodStart: bounds?.start ?? "", periodEnd: bounds?.end ?? "" };
 }
 
@@ -85,8 +85,8 @@ export function buildUwinStateReportRequest(
   reviewInfo: PreUploadInfo | null,
   narrativeMode: "DETERMINISTIC" | "AI_ASSISTED" = "DETERMINISTIC",
 ) {
-  const score = computeOverallScore(kpis as never, ["availability", "accuracy", "consistency"]);
-  const { periodStart, periodEnd } = getUwinStateReportPeriod(csv);
+  const score = uwinStateReportScores(kpis);
+  const { periodStart, periodEnd } = getUwinStateReportPeriod(csv, kpis);
   if (!periodStart || !periodEnd) throw new Error("The reporting period could not be determined");
 
   const factPack = buildUwinStateFactPack(csv, kpis);
@@ -124,9 +124,9 @@ export function buildUwinStateReportRequest(
     },
     scores: {
       overall: score.overall,
-      availability: score.components.availability?.score ?? 0,
-      accuracy: score.components.accuracy?.score ?? 0,
-      consistency: score.components.consistency?.score ?? 0,
+      availability: score.availability,
+      accuracy: score.accuracy,
+      consistency: score.consistency,
     },
     counts: {
       districts: new Set(Object.values(kpis.filteredFacilities).map((item) => item.district).filter(Boolean)).size,

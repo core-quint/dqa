@@ -1,5 +1,12 @@
 // ============================================================
-// KPI Computation Engine
+// KPI Computation Engine (HMIS)
+//
+// Scoring method v2 (agreed 2026-09-22) — see lib/dqa/scoring.ts and
+// lib/dqa/checkRules.ts for the shared rules. HMIS-specific points:
+//   - The denominator is the facilities left after the scope filters.
+//   - A facility in the upload with no row for a selected month is treated
+//     as an all-blank (missing) report for that month.
+//   - "All months" means every month the check could actually be run.
 // ============================================================
 
 import type {
@@ -25,14 +32,22 @@ import type {
 import { FacilityRecord } from './types';
 import {
   displayBlockLabel,
-  pctChange,
   safeKey,
   monthLongLabel,
+  periodsAreConsecutive,
 } from './parseUtils';
-import { coadminHasDifference } from './coadmin';
+import { coadminHasDifference, coadminMatchedTotals } from './coadmin';
+import {
+  monthOnMonthChange,
+  outlierBand,
+  dropoutPct,
+  dropoutRange,
+  matchedTotals,
+} from './checkRules';
+import { standardMethodFilters, methodSignature } from './scoringProfile';
 import {
   BASE_VAX,
-  ADD_VAX,
+  DEFAULT_FILTERS,
   GROUP_COLORS,
   DROPOUT_COLOR,
   OUTLIER_COLOR,
@@ -48,16 +63,27 @@ function emptyKpiStat(): KpiStat {
     total: 0,
     any: 0,
     all: 0,
+    eligible: 0,
+    eligibleKeys: new Set(),
     facilityKeys: new Set(),
     anyFacilityKeys: new Set(),
     allFacilityKeys: new Set(),
   };
 }
 
-function finalizeKpiStat(stat: KpiStat): void {
+function finalizeKpiStat(stat: KpiStat, eligible: Set<string>): void {
   stat.total = stat.facilityKeys.size;
   stat.any = stat.anyFacilityKeys.size;
   stat.all = stat.allFacilityKeys.size;
+  stat.eligibleKeys = eligible;
+  stat.eligible = eligible.size;
+}
+
+/** Record a flagged facility as "all months" when every checkable month was flagged. */
+function flag(stat: KpiStat, key: string, hitMonths: number, evaluableMonths: number): void {
+  stat.facilityKeys.add(key);
+  if (evaluableMonths > 0 && hitMonths === evaluableMonths) stat.allFacilityKeys.add(key);
+  else stat.anyFacilityKeys.add(key);
 }
 
 function chartCountsByBlock(
@@ -79,9 +105,32 @@ function chartCountsByBlock(
   };
 }
 
+function pctLabel(from: number, to: number): string {
+  return from > 0 ? `+${(((to - from) / from) * 100).toFixed(1)}%` : '';
+}
+
 // ---- main export ----
 
+/**
+ * KPIs for the reviewer's settings, plus the cards the SCORE is computed from.
+ * When the reviewer has changed any method setting (outlier bands, dropout pairs,
+ * custom pairs...), the score cards are recomputed with the standard settings on
+ * the same scope, so the score never depends on exploratory choices.
+ */
 export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis {
+  const view = computeKpisForSettings(csv, filters);
+  const standard = standardMethodFilters(filters, DEFAULT_FILTERS);
+  if (methodSignature(filters) === methodSignature(standard)) {
+    return { ...view, scoreCards: view.cards, customMethod: false };
+  }
+  const scored = computeKpisForSettings(csv, standard);
+  return { ...view, scoreCards: scored.cards, customMethod: true };
+}
+
+function computeKpisForSettings(
+  csv: ParsedCSV,
+  filters: FilterState,
+): Omit<ComputedKpis, 'scoreCards' | 'customMethod'> {
   const { facilityData, allMonths, indicatorMap, idxMonth, header } = csv;
 
   // ---- resolve selected months ----
@@ -92,18 +141,17 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
   // ("January 2026"), never a bare month name, so multi-year datasets stay unambiguous.
   for (const mk of selMonths) selMonthLabels[mk] = monthLongLabel(mk);
 
-  // ---- resolve selected vaccines ----
+  // ---- resolve selected vaccines (outliers only) ----
   const selVaxBase = filters.outliersVax.length > 0 ? filters.outliersVax : BASE_VAX;
   const selVaxAdd = filters.addVax ?? [];
   const allSelVax = [...new Set([...selVaxBase, ...selVaxAdd])];
   const selVaxList = allSelVax.filter((v) => indicatorMap[v] !== undefined);
   const effectiveVaxList = selVaxList.length > 0 ? selVaxList : BASE_VAX.filter((v) => indicatorMap[v] !== undefined);
+  // Completeness always checks the fixed key-indicator list — it must not move
+  // when the reviewer changes which vaccines the outlier check looks at.
+  const completenessVaxList = BASE_VAX.filter((v) => indicatorMap[v] !== undefined);
 
-  // ---- global counts for denominator ----
-  const globalDen = csv.globalFacilityCount;
-  const globalBlockCount = csv.globalBlockCount;
-
-  // ---- apply global filters ----
+  // ---- apply scope filters ----
   const selBlocksSet = new Set(filters.blocks.length > 0 ? filters.blocks : Object.keys(
     Object.values(facilityData).reduce<Record<string, true>>((acc, fd) => {
       if (fd.block) acc[fd.block] = true;
@@ -111,21 +159,30 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
     }, {})
   ));
   const selMonthsSet = new Set(selMonths);
-  const selOwnerSet = new Set(filters.ownership.length > 0 ? filters.ownership : ['Public', 'Private']);
-  const selRUSet = new Set(filters.ru.length > 0 ? filters.ru : ['Rural', 'Urban']);
+  // No ownership / rural-urban filter means no exclusion at all: a facility whose
+  // value is "Mixed", "Trust" or anything else must still be analysed.
+  const selOwnerSet = filters.ownership.length > 0 ? new Set(filters.ownership) : null;
+  const selRUSet = filters.ru.length > 0 ? new Set(filters.ru) : null;
 
   const filteredFacilities: Record<string, FacilityRecord> = {};
   for (const [key, fd] of Object.entries(facilityData)) {
     if (fd.block && !selBlocksSet.has(fd.block)) continue;
-    if (fd.ownership && !selOwnerSet.has(fd.ownership)) continue;
-    if (fd.ru && !selRUSet.has(fd.ru)) continue;
+    if (selOwnerSet && fd.ownership && !selOwnerSet.has(fd.ownership)) continue;
+    if (selRUSet && fd.ru && !selRUSet.has(fd.ru)) continue;
     const monthsKeep: FacilityRecord['months'] = {};
     for (const [mk, md] of Object.entries(fd.months)) {
       if (selMonthsSet.has(mk)) monthsKeep[mk] = md;
     }
-    if (Object.keys(monthsKeep).length === 0) continue;
+    // Kept even with no row in the selected months: the facility is in the
+    // uploaded roster, so those months are missing reports, not "no facility".
     filteredFacilities[key] = { ...fd, months: monthsKeep };
   }
+
+  const facilityCount = Object.keys(filteredFacilities).length;
+  const globalDen = selMonths.length > 0 ? facilityCount : 0;
+  const globalBlockCount = new Set(
+    Object.values(filteredFacilities).map((fd) => fd.block.trim()).filter(Boolean),
+  ).size;
 
   const totalMonthsSel = selMonths.length;
 
@@ -133,7 +190,7 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
   // AVAILABILITY
   // ============================================================
 
-  // t1: All indicators blank
+  // t1: All indicators blank. A month with no row at all counts as blank.
   const t1Stat = emptyKpiStat();
   const t1Rows: TableRows = [['Block Name', 'Facility Name', ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
 
@@ -142,9 +199,8 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
     let hitCount = 0;
     for (const mk of selMonths) {
       const md = fd.months[mk];
-      let isBlank = false;
+      let isBlank = true;
       if (md) {
-        isBlank = true;
         for (let ci = idxMonth + 1; ci < header.length; ci++) {
           if (md.vals[ci] !== null) { isBlank = false; break; }
         }
@@ -153,25 +209,26 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
       if (isBlank) hitCount++;
     }
     if (hitCount > 0) {
-      t1Stat.facilityKeys.add(key);
-      if (hitCount === totalMonthsSel) t1Stat.allFacilityKeys.add(key);
-      else t1Stat.anyFacilityKeys.add(key);
+      flag(t1Stat, key, hitCount, totalMonthsSel);
       t1Rows.push(row);
     }
   }
-  finalizeKpiStat(t1Stat);
+  finalizeKpiStat(t1Stat, new Set(totalMonthsSel > 0 ? Object.keys(filteredFacilities) : []));
 
-  // t0: All zero but not blank
+  // t0: All zero but not blank (only months with a row can be checked)
   const t0Stat = emptyKpiStat();
   const t0Rows: TableRows = [['Block Name', 'Facility Name', ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
+  const t0Eligible = new Set<string>();
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
     const row: (string | number | null)[] = [displayBlockLabel(fd.block), fd.facility];
     let hitCount = 0;
+    let evaluable = 0;
     for (const mk of selMonths) {
       const md = fd.months[mk];
       let isZero = false;
       if (md) {
+        evaluable++;
         let allZero = true; let hasAny = false;
         for (let ci = idxMonth + 1; ci < header.length; ci++) {
           const v = md.vals[ci];
@@ -184,26 +241,28 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
       row.push(isZero ? 'Y' : 'N');
       if (isZero) hitCount++;
     }
+    if (evaluable > 0) t0Eligible.add(key);
     if (hitCount > 0) {
-      t0Stat.facilityKeys.add(key);
-      if (hitCount === totalMonthsSel) t0Stat.allFacilityKeys.add(key);
-      else t0Stat.anyFacilityKeys.add(key);
+      flag(t0Stat, key, hitCount, evaluable);
       t0Rows.push(row);
     }
   }
-  finalizeKpiStat(t0Stat);
+  finalizeKpiStat(t0Stat, t0Eligible);
 
   // t7: Same repeating values
   const t7Stat = emptyKpiStat();
   const t7Rows: TableRows = [['Block Name', 'Facility Name', ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
+  const t7Eligible = new Set<string>();
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
     const row: (string | number | null)[] = [displayBlockLabel(fd.block), fd.facility];
-    let anyY = false; let allY = true;
+    let hitCount = 0;
+    let evaluable = 0;
     for (const mk of selMonths) {
       const md = fd.months[mk];
       let isRepeat = false;
       if (md) {
+        evaluable++;
         let firstVal: number | null = null; let ok = true; let hasAny = false;
         for (let ci = idxMonth + 1; ci < header.length; ci++) {
           const v = md.vals[ci];
@@ -215,16 +274,15 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
         isRepeat = hasAny && ok;
       }
       row.push(isRepeat ? 'Y' : 'N');
-      if (isRepeat) anyY = true; else allY = false;
+      if (isRepeat) hitCount++;
     }
-    if (anyY) {
-      t7Stat.facilityKeys.add(key);
-      if (allY) t7Stat.allFacilityKeys.add(key);
-      else t7Stat.anyFacilityKeys.add(key);
+    if (evaluable > 0) t7Eligible.add(key);
+    if (hitCount > 0) {
+      flag(t7Stat, key, hitCount, evaluable);
       t7Rows.push(row);
     }
   }
-  finalizeKpiStat(t7Stat);
+  finalizeKpiStat(t7Stat, t7Eligible);
 
   // ============================================================
   // COMPLETENESS
@@ -234,42 +292,33 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
   const t2MatrixRows: Record<string, T2MatrixRow> = {};
   const blankCountsByVax: Record<string, number> = {};
   const blankAllCountsByVax: Record<string, number> = {};
-  for (const vx of effectiveVaxList) { blankCountsByVax[vx] = 0; blankAllCountsByVax[vx] = 0; }
+  for (const vx of completenessVaxList) { blankCountsByVax[vx] = 0; blankAllCountsByVax[vx] = 0; }
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
     let anyBlank = false;
-    let allMonthsHaveBlank = true;
     const cellMap: Record<string, Record<string, string>> = {};
 
-    for (const vx of effectiveVaxList) {
-      const ci = indicatorMap[vx] ?? null;
+    for (const vx of completenessVaxList) {
+      const ci = indicatorMap[vx];
       let hasBlankForVx = false;
       let vxAllBlank = true;
+      cellMap[vx] = {};
       for (const mk of selMonths) {
         const md = fd.months[mk];
-        let isBlank = false;
-        if (md && ci !== null) {
-          isBlank = md.vals[ci] === null;
-        }
-        if (!cellMap[vx]) cellMap[vx] = {};
+        // No row for the month = the whole report is missing.
+        const isBlank = !md || md.vals[ci] === null;
         cellMap[vx][mk] = isBlank ? 'Y' : 'N';
         if (isBlank) { anyBlank = true; hasBlankForVx = true; } else { vxAllBlank = false; }
       }
       if (hasBlankForVx) blankCountsByVax[vx]++;
-      if (vxAllBlank) blankAllCountsByVax[vx]++;
+      if (vxAllBlank && selMonths.length > 0) blankAllCountsByVax[vx]++;
     }
 
     if (anyBlank) {
-      for (const mk of selMonths) {
-        let has = false;
-        for (const vx of effectiveVaxList) {
-          if (cellMap[vx]?.[mk] === 'Y') { has = true; break; }
-        }
-        if (!has) { allMonthsHaveBlank = false; break; }
-      }
-      t2Stat.facilityKeys.add(key);
-      if (allMonthsHaveBlank) t2Stat.allFacilityKeys.add(key);
-      else t2Stat.anyFacilityKeys.add(key);
+      const blankMonths = selMonths.filter((mk) =>
+        completenessVaxList.some((vx) => cellMap[vx]?.[mk] === 'Y'),
+      ).length;
+      flag(t2Stat, key, blankMonths, totalMonthsSel);
       t2MatrixRows[key] = {
         block: displayBlockLabel(fd.block),
         facility: fd.facility,
@@ -277,10 +326,10 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
       };
     }
   }
-  finalizeKpiStat(t2Stat);
+  finalizeKpiStat(t2Stat, new Set(completenessVaxList.length > 0 && totalMonthsSel > 0 ? Object.keys(filteredFacilities) : []));
 
   const t2Web: T2Web = {
-    vaccines: effectiveVaxList,
+    vaccines: completenessVaxList,
     months: selMonths,
     monthLabels: selMonthLabels,
     rows: t2MatrixRows,
@@ -290,9 +339,10 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
   // ACCURACY
   // ============================================================
 
-  // t6: Sessions Held > Planned
+  // t6: Sessions Held > Planned — including planned 0 with sessions held.
   const t6Stat = emptyKpiStat();
-  const t6Rows: TableRows = [['Block Name', 'Facility Name', 'Details (months with Held>Planned)', 'Totals']];
+  const t6Rows: TableRows = [['Block Name', 'Facility Name', 'Details (months with Held>Planned)', 'Totals (months with both reported)']];
+  const t6Eligible = new Set<string>();
 
   if (csv.idxSessPlanned !== null && csv.idxSessHeld !== null) {
     const iSP = csv.idxSessPlanned;
@@ -300,55 +350,45 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
 
     for (const [key, fd] of Object.entries(filteredFacilities)) {
       const parts: string[] = [];
-      let sumP = 0; let sumH = 0; let hitCount = 0;
+      const pairs: Array<[number | null, number | null]> = [];
+      let hitCount = 0;
+      let evaluable = 0;
       for (const mk of selMonths) {
         const md = fd.months[mk];
         const P = md?.vals[iSP] ?? null;
         const H = md?.vals[iSH] ?? null;
-        if (P !== null) sumP += P;
-        if (H !== null) sumH += H;
-        if (P !== null && P > 0 && H !== null && H > P) {
+        pairs.push([P, H]);
+        if (P === null || H === null) continue;
+        evaluable++;
+        if (H > P) {
           hitCount++;
-          const pct = ((H - P) / P) * 100;
-          parts.push(`${selMonthLabels[mk] ?? mk} +${pct.toFixed(1)}%`);
+          const detail = P > 0 ? `+${(((H - P) / P) * 100).toFixed(1)}%` : `planned 0, held ${H}`;
+          parts.push(`${selMonthLabels[mk] ?? mk} ${detail}`);
         }
       }
-      let tot = '';
-      let hasTot = false;
-      if (sumP > 0 && sumH > sumP) {
-        tot = `All months +${(((sumH - sumP) / sumP) * 100).toFixed(1)}%`;
-        hasTot = true;
-      }
-      if (parts.length > 0 || hasTot) {
-        t6Stat.facilityKeys.add(key);
-        if (hitCount === totalMonthsSel) t6Stat.allFacilityKeys.add(key);
-        else t6Stat.anyFacilityKeys.add(key);
+      if (evaluable > 0) t6Eligible.add(key);
+      if (hitCount > 0) {
+        const totals = matchedTotals(pairs);
+        const tot = totals.b > totals.a
+          ? (totals.a > 0
+            ? `All months +${(((totals.b - totals.a) / totals.a) * 100).toFixed(1)}%`
+            : `All months: planned 0, held ${totals.b}`)
+          : `All months: planned ${totals.a}, held ${totals.b}`;
+        flag(t6Stat, key, hitCount, evaluable);
         t6Rows.push([displayBlockLabel(fd.block), fd.facility, parts.join('; '), tot]);
       }
     }
   }
-  finalizeKpiStat(t6Stat);
+  finalizeKpiStat(t6Stat, t6Eligible);
 
-  // t3: Outliers
+  // t3: Outliers — calendar-adjacent months only, volume floor, rises from 0.
   const incBucketsSel = new Set(filters.outliersInc);
   const dropBucketsSel = new Set(filters.outliersDrop);
-
-  function bucketHit(p: number): boolean {
-    if (p > 0) {
-      if (incBucketsSel.has('INC_LOW') && p >= 25 && p <= 50.49) return true;
-      if (incBucketsSel.has('INC_MOD') && p >= 50.5 && p <= 100) return true;
-      if (incBucketsSel.has('INC_EXT') && p > 100) return true;
-    } else if (p < 0) {
-      if (dropBucketsSel.has('DROP_LOW') && p <= -25 && p >= -50.49) return true;
-      if (dropBucketsSel.has('DROP_MOD') && p <= -50.5 && p >= -100) return true;
-      if (dropBucketsSel.has('DROP_EXT') && p < -100) return true;
-    }
-    return false;
-  }
 
   const pairList: PairMeta[] = [];
   for (let i = 0; i < selMonths.length - 1; i++) {
     const m1 = selMonths[i]; const m2 = selMonths[i + 1];
+    if (!periodsAreConsecutive(m1, m2)) continue;
     pairList.push({
       k: `${m1}|${m2}`, m1, m2,
       m1lbl: selMonthLabels[m1] ?? m1,
@@ -362,25 +402,32 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
   const outAnyCounts: Record<string, number> = {};
   const outAllCounts: Record<string, number> = {};
   for (const vx of effectiveVaxList) { outAnyCounts[vx] = 0; outAllCounts[vx] = 0; }
+  const t3Eligible = new Set<string>();
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
-    let any = false;
     const cells: Record<string, Record<string, T3Cell>> = {};
+    const evaluablePairs = new Set<string>();
+    const hitPairs = new Set<string>();
 
     for (const vx of effectiveVaxList) {
       const ci = indicatorMap[vx];
       if (ci === undefined) continue;
       cells[vx] = {};
+      let vxEvaluable = 0;
+      let vxHits = 0;
       for (const p of pairList) {
         const v1 = fd.months[p.m1]?.vals[ci] ?? null;
         const v2 = fd.months[p.m2]?.vals[ci] ?? null;
-        const pc = pctChange(v1, v2);
+        const change = monthOnMonthChange(v1, v2);
         let hit = false;
-        let pctVal: number | null = null;
-        if (pc !== null) {
-          pctVal = pc;
-          if (bucketHit(pctVal)) {
-            hit = true; any = true;
+        if (change) {
+          evaluablePairs.add(p.k);
+          vxEvaluable++;
+          const band = outlierBand(change);
+          if (band && (incBucketsSel.has(band) || dropBucketsSel.has(band))) {
+            hit = true;
+            vxHits++;
+            hitPairs.add(p.k);
             if (!t3HitMap[key]) t3HitMap[key] = {};
             if (!t3HitMap[key][p.m1]) t3HitMap[key][p.m1] = {};
             if (!t3HitMap[key][p.m2]) t3HitMap[key][p.m2] = {};
@@ -388,43 +435,30 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
             t3HitMap[key][p.m2][vx] = true;
           }
         }
-        cells[vx][p.k] = { a: v1, b: v2, pct: pctVal, hit };
+        cells[vx][p.k] = { a: v1, b: v2, pct: change?.pct ?? null, hit, fromZero: change?.fromZero ?? false };
       }
+      if (vxHits > 0) outAnyCounts[vx]++;
+      if (vxEvaluable > 0 && vxHits === vxEvaluable) outAllCounts[vx]++;
     }
 
-    if (any) {
-      t3Stat.facilityKeys.add(key);
-      const pairHits = pairList.filter((p) =>
-        effectiveVaxList.some((vx) => cells[vx]?.[p.k]?.hit)
-      ).length;
-      if (pairList.length > 0 && pairHits === pairList.length) t3Stat.allFacilityKeys.add(key);
-      else t3Stat.anyFacilityKeys.add(key);
+    if (evaluablePairs.size > 0) t3Eligible.add(key);
+    if (hitPairs.size > 0) {
+      flag(t3Stat, key, hitPairs.size, evaluablePairs.size);
       t3MatrixRows[key] = { block: displayBlockLabel(fd.block), facility: fd.facility, cells };
     }
   }
-
-  // per-vaccine outlier counts
-  for (const row of Object.values(t3MatrixRows)) {
-    for (const vx of effectiveVaxList) {
-      const anyHit = pairList.some((p) => row.cells[vx]?.[p.k]?.hit);
-      const allHit = pairList.length > 0 && pairList.every((p) => row.cells[vx]?.[p.k]?.hit);
-      if (anyHit) outAnyCounts[vx]++;
-      if (allHit) outAllCounts[vx]++;
-    }
-  }
-
-  finalizeKpiStat(t3Stat);
+  finalizeKpiStat(t3Stat, t3Eligible);
 
   const t3Web: T3Web = { vaccines: effectiveVaxList, pairs: pairList, rows: t3MatrixRows };
 
-  // Dropout pairs
+  // Dropouts — judged on the cumulative dropout over the selected period
+  // (months where both doses were reported). Children take the later dose weeks
+  // after the earlier one, so a single month's pair is not the same cohort.
   const selDropRanges = new Set(filters.dropRanges);
-  function dropMatch(pct: number): boolean {
-    if (selDropRanges.has('R5_10') && pct >= 5 && pct <= 10.99) return true;
-    if (selDropRanges.has('R11_20') && pct >= 11 && pct <= 19.99) return true;
-    if (selDropRanges.has('R20P') && pct >= 20) return true;
-    return false;
-  }
+  const inRange = (pct: number | null) => {
+    const range = dropoutRange(pct);
+    return range !== null && selDropRanges.has(range);
+  };
 
   const selectedPairsSet = new Set<string>(filters.dropPairs);
   const fromList = filters.dropFrom ?? [];
@@ -455,50 +489,51 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
     const dropStat = emptyKpiStat();
     const dropRows: Record<string, DropoutRow> = {};
     const hitSet: Record<string, Record<string, boolean>> = {};
+    const eligible = new Set<string>();
 
     for (const [fkey, fd] of Object.entries(filteredFacilities)) {
       const cells: Record<string, { from: number | null; to: number | null; pct: number | null }> = {};
-      let sumA = 0; let sumB = 0; let anyHit = false;
+      const pairs: Array<[number | null, number | null]> = [];
+      const matchedMonths: string[] = [];
+      let evaluable = 0;
+      let monthHits = 0;
 
       for (const mk of selMonths) {
         const A = fd.months[mk]?.vals[iFrom] ?? null;
         const B = fd.months[mk]?.vals[iTo] ?? null;
-        if (A !== null) sumA += A;
-        if (B !== null) sumB += B;
-        let cell: DropoutRow['cells'][string] = { from: null, to: null, pct: null };
-        if (A !== null && B !== null && A > 0 && B < A) {
-          const drop = ((A - B) / A) * 100;
-          if (dropMatch(drop)) {
-            anyHit = true;
-            if (!hitSet[fkey]) hitSet[fkey] = {};
-            hitSet[fkey][mk] = true;
-            cell = { from: A, to: B, pct: drop };
-          }
+        pairs.push([A, B]);
+        cells[mk] = { from: null, to: null, pct: null };
+        if (A === null || B === null) continue;
+        matchedMonths.push(mk);
+        const monthPct = dropoutPct(A, B);
+        cells[mk] = { from: A, to: B, pct: monthPct };
+        if (monthPct !== null) {
+          evaluable++;
+          if (inRange(monthPct)) monthHits++;
         }
-        cells[mk] = cell;
       }
 
-      let all: DropoutRow['all'] = { from: null, to: null, pct: null };
-      if (sumA > 0 && sumB < sumA) {
-        const dropAll = ((sumA - sumB) / sumA) * 100;
-        if (dropMatch(dropAll)) all = { from: sumA, to: sumB, pct: dropAll };
-      }
+      const totals = matchedTotals(pairs);
+      const periodPct = dropoutPct(totals.a, totals.b);
+      if (periodPct !== null) eligible.add(fkey);
 
-      if (anyHit) {
+      if (inRange(periodPct)) {
         dropStat.facilityKeys.add(fkey);
-        const hitMonths = selMonths.filter((mk) => hitSet[fkey]?.[mk]).length;
-        if (hitMonths === totalMonthsSel) dropStat.allFacilityKeys.add(fkey);
+        if (evaluable > 0 && monthHits === evaluable) dropStat.allFacilityKeys.add(fkey);
         else dropStat.anyFacilityKeys.add(fkey);
+        // Every matched month is evidence for the period dropout, so all of
+        // them are marked in the export.
+        hitSet[fkey] = Object.fromEntries(matchedMonths.map((mk) => [mk, true]));
         dropRows[fkey] = {
           block: displayBlockLabel(fd.block),
           facility: fd.facility,
           cells,
-          all,
+          all: { from: totals.a, to: totals.b, pct: periodPct },
         };
       }
     }
 
-    finalizeKpiStat(dropStat);
+    finalizeKpiStat(dropStat, eligible);
     dropTables[pairKey] = {
       pairLabel, from, to,
       months: selMonths,
@@ -513,49 +548,49 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
   // CONSISTENCY
   // ============================================================
 
-  // i1: Penta3 > Penta1
+  // Later dose > earlier dose (i1, i2, custom pairs) — judged on the period
+  // totals over months where both doses were reported. A blank is missing data,
+  // never a zero, and a single month is not the same cohort of children.
+  function doseOrderCheck(
+    iFrom: number,
+    iTo: number,
+    stat: KpiStat,
+    rows: TableRows,
+  ): void {
+    const eligible = new Set<string>();
+    for (const [key, fd] of Object.entries(filteredFacilities)) {
+      const pairs: Array<[number | null, number | null]> = [];
+      let monthHits = 0;
+      for (const mk of selMonths) {
+        const A = fd.months[mk]?.vals[iFrom] ?? null;
+        const B = fd.months[mk]?.vals[iTo] ?? null;
+        pairs.push([A, B]);
+        if (A !== null && B !== null && B > A) monthHits++;
+      }
+      const totals = matchedTotals(pairs);
+      if (totals.months === 0) continue;
+      eligible.add(key);
+      if (totals.b > totals.a) {
+        flag(stat, key, monthHits, totals.months);
+        rows.push([
+          displayBlockLabel(fd.block), fd.facility,
+          Math.round(totals.b), Math.round(totals.a),
+          pctLabel(totals.a, totals.b),
+        ]);
+      }
+    }
+    finalizeKpiStat(stat, eligible);
+  }
+
   const i1Stat = emptyKpiStat();
   const i1Rows: TableRows = [['Block Name', 'Facility Name', 'Penta3 (total)', 'Penta1 (total)', '% change']];
   const iP1 = indicatorMap['Penta1']; const iP3 = indicatorMap['Penta3'];
+  if (iP1 !== undefined && iP3 !== undefined) doseOrderCheck(iP1, iP3, i1Stat, i1Rows);
 
-  // i2: OPV3 > OPV1
   const i2Stat = emptyKpiStat();
   const i2Rows: TableRows = [['Block Name', 'Facility Name', 'OPV3 (total)', 'OPV1 (total)', '% change']];
   const iO1 = indicatorMap['OPV1']; const iO3 = indicatorMap['OPV3'];
-
-  for (const [key, fd] of Object.entries(filteredFacilities)) {
-    let sumP1 = 0; let sumP3 = 0; let sumO1 = 0; let sumO3 = 0;
-    for (const md of Object.values(fd.months)) {
-      if (iP1 !== undefined) sumP1 += md.vals[iP1] ?? 0;
-      if (iP3 !== undefined) sumP3 += md.vals[iP3] ?? 0;
-      if (iO1 !== undefined) sumO1 += md.vals[iO1] ?? 0;
-      if (iO3 !== undefined) sumO3 += md.vals[iO3] ?? 0;
-    }
-
-    if (iP1 !== undefined && iP3 !== undefined && sumP3 > sumP1) {
-      i1Stat.facilityKeys.add(key);
-      i1Stat.anyFacilityKeys.add(key);
-      const pct = sumP1 > 0 ? ((sumP3 - sumP1) / sumP1) * 100 : null;
-      i1Rows.push([
-        displayBlockLabel(fd.block), fd.facility,
-        Math.round(sumP3), Math.round(sumP1),
-        pct !== null ? `+${pct.toFixed(1)}%` : '',
-      ]);
-    }
-
-    if (iO1 !== undefined && iO3 !== undefined && sumO3 > sumO1) {
-      i2Stat.facilityKeys.add(key);
-      i2Stat.anyFacilityKeys.add(key);
-      const pct = sumO1 > 0 ? ((sumO3 - sumO1) / sumO1) * 100 : null;
-      i2Rows.push([
-        displayBlockLabel(fd.block), fd.facility,
-        Math.round(sumO3), Math.round(sumO1),
-        pct !== null ? `+${pct.toFixed(1)}%` : '',
-      ]);
-    }
-  }
-  finalizeKpiStat(i1Stat);
-  finalizeKpiStat(i2Stat);
+  if (iO1 !== undefined && iO3 !== undefined) doseOrderCheck(iO1, iO3, i2Stat, i2Rows);
 
   // Dynamic inconsistency pairs
   const inconsTables: Record<string, TableRows> = {};
@@ -580,51 +615,28 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
     const labelName = `Inconsistencies — ${t}>${f}`;
 
     const tbl: TableRows = [['Block Name', 'Facility Name', `${t} (total)`, `${f} (total)`, '% change']];
-    const facSet = new Set<string>();
-
-    for (const [fkey, fd] of Object.entries(filteredFacilities)) {
-      let sumFrom = 0; let sumTo = 0;
-      for (const md of Object.values(fd.months)) {
-        sumFrom += md.vals[iFrom] ?? 0;
-        sumTo += md.vals[iTo] ?? 0;
-      }
-      if (sumTo > sumFrom) {
-        facSet.add(fkey);
-        const pct = sumFrom > 0 ? ((sumTo - sumFrom) / sumFrom) * 100 : null;
-        tbl.push([
-          displayBlockLabel(fd.block), fd.facility,
-          Math.round(sumTo), Math.round(sumFrom),
-          pct !== null ? `+${pct.toFixed(1)}%` : '',
-        ]);
-      }
-    }
-
     const stat = emptyKpiStat();
-    stat.facilityKeys = facSet;
-    stat.anyFacilityKeys = new Set(facSet);
-    finalizeKpiStat(stat);
+    doseOrderCheck(iFrom, iTo, stat, tbl);
 
     inconsTables[pid] = tbl;
     inconsStats[pid] = stat;
     inconsPairMap[downloadKey] = { from: f, to: t, label: labelName, pid };
   }
 
-  // Co-admin
+  // Co-admin — monthly only: a facility is flagged when some month's reported
+  // values disagree. Blanks are ignored (they are a completeness finding).
   const coTables: Record<string, CoAdminWeb> = {};
   const coStats: Record<string, KpiStat> = {};
 
   for (const [coKey, vaxList] of Object.entries(CO_SPECS)) {
     const coStat = emptyKpiStat();
     const coRows: Record<string, CoAdminRow> = {};
+    const eligible = new Set<string>();
 
     for (const [fkey, fd] of Object.entries(filteredFacilities)) {
       const rowVals: Record<string, Record<string, number | null>> = {};
-      // null until the vaccine is actually reported at least once — see
-      // coadminTotal() in lib/dqa/coadmin.ts for why a 0 default is wrong.
-      const totals: Record<string, number | null> = {};
-      for (const vx of vaxList) totals[vx] = null;
-      let viol = false;
       let monthViolCount = 0;
+      let evaluable = 0;
 
       for (const mk of selMonths) {
         rowVals[mk] = {};
@@ -634,27 +646,24 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
           const val = (ci !== undefined && fd.months[mk]) ? fd.months[mk].vals[ci] ?? null : null;
           rowVals[mk][vx] = val;
           valsMonth.push(val);
-          if (val !== null) totals[vx] = (totals[vx] ?? 0) + val;
         }
-        if (coadminHasDifference(valsMonth)) { viol = true; monthViolCount++; }
+        if (valsMonth.filter((v) => v !== null).length >= 2) evaluable++;
+        if (coadminHasDifference(valsMonth)) monthViolCount++;
       }
 
-      if (coadminHasDifference(Object.values(totals))) viol = true;
-
-      if (viol) {
-        coStat.facilityKeys.add(fkey);
-        if (totalMonthsSel > 0 && monthViolCount === totalMonthsSel) coStat.allFacilityKeys.add(fkey);
-        else coStat.anyFacilityKeys.add(fkey);
+      if (evaluable > 0) eligible.add(fkey);
+      if (monthViolCount > 0) {
+        flag(coStat, fkey, monthViolCount, evaluable);
         coRows[fkey] = {
           block: displayBlockLabel(fd.block),
           facility: fd.facility,
           vals: rowVals,
-          totals,
+          totals: coadminMatchedTotals(rowVals, vaxList),
         };
       }
     }
 
-    finalizeKpiStat(coStat);
+    finalizeKpiStat(coStat, eligible);
     coTables[coKey] = {
       key: coKey,
       vaccines: vaxList,
@@ -693,7 +702,7 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
   for (const [dk, ds] of Object.entries(dropStats)) {
     charts[dk] = mkChart(ds.facilityKeys, DROPOUT_COLOR);
   }
-  for (const [dlKey, meta] of Object.entries(inconsPairMap)) {
+  for (const meta of Object.values(inconsPairMap)) {
     const stat = inconsStats[meta.pid];
     if (stat) charts[meta.pid] = mkChart(stat.facilityKeys, INCONS_LIGHT);
   }
@@ -771,7 +780,7 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
   const den = Math.max(1, globalDen);
 
   function mkRow(name: string, count: number): SummaryRow {
-    return { name, count, pct: den > 0 ? Math.round((count / den) * 10000) / 100 : 0 };
+    return { name, count, pct: Math.round((count / den) * 10000) / 100 };
   }
 
   summaryByPid.t1 = {
@@ -789,13 +798,13 @@ export function computeKpis(csv: ParsedCSV, filters: FilterState): ComputedKpis 
 
   // t2 by indicator
   {
-    const anyRows = effectiveVaxList.map((vx) => {
+    const anyRows = completenessVaxList.map((vx) => {
       const allCnt = blankAllCountsByVax[vx] ?? 0;
       const tot = blankCountsByVax[vx] ?? 0;
       return mkRow(vx, Math.max(0, tot - allCnt));
     }).sort((a, b) => b.pct - a.pct);
-    const allRows = effectiveVaxList.map((vx) => mkRow(vx, blankAllCountsByVax[vx] ?? 0)).sort((a, b) => b.pct - a.pct);
-    const overallRows = effectiveVaxList.map((vx) => mkRow(vx, blankCountsByVax[vx] ?? 0)).sort((a, b) => b.pct - a.pct);
+    const allRows = completenessVaxList.map((vx) => mkRow(vx, blankAllCountsByVax[vx] ?? 0)).sort((a, b) => b.pct - a.pct);
+    const overallRows = completenessVaxList.map((vx) => mkRow(vx, blankCountsByVax[vx] ?? 0)).sort((a, b) => b.pct - a.pct);
     summaryByPid.t2 = { any: anyRows, all: allRows, overall: overallRows };
   }
 

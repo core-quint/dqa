@@ -181,9 +181,9 @@ export function generateUwinStateExecutivePdf(report: UwinStateReportRecord) {
     body: facts.districts.slice(0, 18).map((district) => [
       safe(district.district),
       `${district.scores.overall.toFixed(1)}%`,
-      `${district.scores.availability.toFixed(1)}%`,
-      `${district.scores.accuracy.toFixed(1)}%`,
-      `${district.scores.consistency.toFixed(1)}%`,
+      district.scores.availability === null ? "N/A" : `${district.scores.availability.toFixed(1)}%`,
+      district.scores.accuracy === null ? "N/A" : `${district.scores.accuracy.toFixed(1)}%`,
+      district.scores.consistency === null ? "N/A" : `${district.scores.consistency.toFixed(1)}%`,
       district.priority,
       district.mainFindingEvidenceId ?? "No flag",
     ]),

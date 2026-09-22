@@ -15,6 +15,8 @@ import {
 import type { ComputedKpis, ParsedCSV } from "../../lib/dqa/types";
 import { monthYearLabel, periodDurationLabel } from "../../lib/dqa/parseUtils";
 import { GROUP_COLORS } from "../../lib/dqa/constants";
+import { computeOverallScore } from "../../lib/dqa/scoreUtils";
+import { componentCoverageNote, formatScore } from "../../lib/dqa/scoring";
 import { BrandMark } from "../branding/BrandMark";
 import { GlassPanel } from "../branding/GlassPanel";
 import { PageBackdrop } from "../branding/PageBackdrop";
@@ -34,74 +36,6 @@ interface Props {
   onClose: () => void;
   groups?: string[];
   unitLabel?: string;
-}
-
-interface ComponentScore {
-  name: string;
-  score: number;
-  maxTot: number;
-  maxAny: number;
-  maxAll: number;
-  topKpis: { name: string; total: number; pct: number }[];
-}
-
-function computeOverallScore(kpis: ComputedKpis, groups: string[]): {
-  overall: number;
-  components: Record<string, ComponentScore>;
-} {
-  const denominator = Math.max(1, kpis.globalDen);
-  const components: Record<string, ComponentScore> = {};
-  const scores: number[] = [];
-
-  for (const group of groups) {
-    const kpisInGroup = kpis.cards.filter((card) => card.group === group);
-    const kpiData = kpisInGroup.map((card) => ({
-      name: card.name,
-      total: card.stat.total,
-      any: card.stat.any,
-      all: card.stat.all,
-      pct: (card.stat.total / denominator) * 100,
-      pctAny: (card.stat.any / denominator) * 100,
-      pctAll: (card.stat.all / denominator) * 100,
-    }));
-
-    kpiData.sort((a, b) => b.pct - a.pct);
-    const topN = group === "consistency" ? 7 : 5;
-    const topKpis = kpiData.slice(0, topN);
-
-    const maxTot = kpiData.length > 0 ? kpiData[0].pct : 0;
-    const maxAny = Math.max(0, ...kpiData.map((kpi) => kpi.pctAny));
-    const maxAll = Math.max(0, ...kpiData.map((kpi) => kpi.pctAll));
-    const score = Math.max(0, 100 - maxTot);
-    scores.push(score);
-
-    const names: Record<string, string> = {
-      availability: "Availability",
-      completeness: "Completeness",
-      accuracy: "Accuracy",
-      consistency: "Consistency",
-    };
-
-    components[group] = {
-      name: names[group] ?? group,
-      score,
-      maxTot,
-      maxAny,
-      maxAll,
-      topKpis: topKpis.map((kpi) => ({
-        name: kpi.name,
-        total: kpi.total,
-        pct: kpi.pct,
-      })),
-    };
-  }
-
-  const overall =
-    scores.length > 0
-      ? scores.reduce((sum, value) => sum + value, 0) / scores.length
-      : 0;
-
-  return { overall, components };
 }
 
 const barValuePlugin: Plugin<"bar"> = {
@@ -140,10 +74,15 @@ export function OverallScore({
   groups = [...ALL_GROUPS],
   unitLabel = "Facilities",
 }: Props) {
-  const { overall, components } = computeOverallScore(kpis, groups);
-  const overallRound = Math.round(overall);
+  // The shared scoring function — the same numbers as the score strip, the saved
+  // review and the PDF (lib/dqa/scoring.ts).
+  const result = computeOverallScore(kpis, groups);
+  const { overall, components } = result;
+  const overallRound = overall === null ? null : Math.round(overall);
+  const coverageNote = componentCoverageNote(result);
 
-  const months = Object.keys(csv.allMonths).sort();
+  // The months actually analysed, not every month in the upload.
+  const months = [...kpis.selMonths].sort();
   let durationStr = "-";
   if (months.length > 0) {
     const min = months[0];
@@ -286,7 +225,7 @@ export function OverallScore({
                 data={{
                   datasets: [
                     {
-                      data: [overallRound, 100 - overallRound],
+                      data: [overallRound ?? 0, 100 - (overallRound ?? 0)],
                       backgroundColor: [GROUP_COLORS.availability, "#e5e7eb"],
                       borderWidth: 0,
                     },
@@ -304,7 +243,7 @@ export function OverallScore({
               />
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                 <span className="font-display text-6xl font-extrabold text-slate-950">
-                  {overallRound}
+                  {overallRound ?? "N/A"}
                 </span>
                 <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                   Overall score
@@ -313,9 +252,14 @@ export function OverallScore({
             </div>
 
             <div className="mt-4 rounded-[24px] border border-slate-200/80 bg-slate-50/90 px-4 py-4 text-sm leading-7 text-slate-600">
-              Denominator: {kpis.globalDen} {unitLabel.toLowerCase()}. Component score =
-              100 - worst KPI percentage. Overall score = average across the
-              selected components.
+              Denominator: {kpis.globalDen} {unitLabel.toLowerCase()} in this selection.
+              Component score = 100 - worst KPI percentage (a component with no
+              check that could be run is N/A). Overall score = average of the
+              components that could be scored.
+              {coverageNote ? ` ${coverageNote}.` : ""}
+              {kpis.customMethod
+                ? " Scores use the standard scoring settings; your analysis settings only change the indicator tables."
+                : ""}
             </div>
           </GlassPanel>
 
@@ -332,14 +276,16 @@ export function OverallScore({
                       className="font-display text-4xl font-extrabold"
                       style={{ color: componentColors[group] }}
                     >
-                      {Math.round(component.score)}
+                      {component.score === null ? "N/A" : Math.round(component.score)}
                     </span>
                     <span className="pb-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
                       score
                     </span>
                   </div>
                   <div className="mt-2 text-sm text-slate-600">
-                    Worst KPI exposure: {component.maxTot.toFixed(1)}%
+                    {component.maxTot === null
+                      ? "No check in this component could be run on this selection."
+                      : `Worst KPI exposure: ${formatScore(component.maxTot)}%`}
                   </div>
                 </GlassPanel>
               );

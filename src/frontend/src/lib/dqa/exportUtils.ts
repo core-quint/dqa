@@ -237,11 +237,9 @@ function triggerDownload(blob: Blob, filename: string): void {
 
 /**
  * Mark a "later dose exceeds earlier dose" pair, but only on the months that
- * actually breach it. The KPI itself is decided on the sum across the selected
- * months, and the old code therefore painted every month of a flagged facility —
- * measured at 302 rows marked where only 202 breached. Comparing with `?? 0`
- * (rather than skipping blanks) guarantees at least one month is always marked
- * whenever the sums breach, so a flagged facility never exports unmarked.
+ * actually breach it, and only where BOTH doses were reported (a blank is
+ * missing data, never zero). The KPI is decided on the totals over those same
+ * matched months, so a flagged facility always has at least one marked month.
  */
 export function markInconsistencyPair(
   styleMap: Record<number, Record<number, string>>,
@@ -255,9 +253,9 @@ export function markInconsistencyPair(
   const fromCi = idxByShort[fromShort];
   const toCi = idxByShort[toShort];
   if (fromCi === undefined || toCi === undefined) return;
-  const from = asNumOrNull(row[fromCi]) ?? 0;
-  const to = asNumOrNull(row[toCi]) ?? 0;
-  if (to <= from) return;
+  const from = asNumOrNull(row[fromCi]);
+  const to = asNumOrNull(row[toCi]);
+  if (from === null || to === null || to <= from) return;
   if (!styleMap[ri]) styleMap[ri] = {};
   styleMap[ri][fromCi] = color;
   styleMap[ri][toCi] = color;
@@ -346,7 +344,7 @@ export function downloadHighlightedXLS(
     } else if (kpiKey === 't2') {
       // Highlight blank vaccine columns
       for (const [vx, ci] of Object.entries(idxByShort)) {
-        if (kpis.selVaxList.includes(vx)) {
+        if (kpis.t2Web.vaccines.includes(vx)) {
           const v = (r[ci] ?? '').trim();
           if (v === '') {
             if (!styleMap[ri]) styleMap[ri] = {};
@@ -356,9 +354,11 @@ export function downloadHighlightedXLS(
       }
     } else if (kpiKey === 't6') {
       if (idxSessPlanned !== null && idxSessHeld !== null) {
-        const P = Number(r[idxSessPlanned] ?? '');
-        const H = Number(r[idxSessHeld] ?? '');
-        if (!isNaN(P) && !isNaN(H) && P > 0 && H > P) {
+        // asNumOrNull, not Number(): Number('') is 0, which would turn a blank
+        // planned value into a reported zero. Planned 0 with sessions held counts.
+        const P = asNumOrNull(r[idxSessPlanned] ?? '');
+        const H = asNumOrNull(r[idxSessHeld] ?? '');
+        if (P !== null && H !== null && H > P) {
           if (!styleMap[ri]) styleMap[ri] = {};
           styleMap[ri][idxSessPlanned] = PINK;
           styleMap[ri][idxSessHeld] = PINK;

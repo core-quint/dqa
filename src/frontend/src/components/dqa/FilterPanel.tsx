@@ -367,16 +367,20 @@ export function FilterPanel({
       ...f,
       months: isAllMonths ? [] : f.months,
       blocks: isAllBlocks ? [] : f.blocks,
+      // Both options ticked is "no filter" — which keeps facilities whose value is
+      // neither (e.g. "Mixed"), and does not mark the review as partial.
+      ownership: ["Public", "Private"].every((value) => f.ownership.includes(value)) ? [] : f.ownership,
+      ru: ["Rural", "Urban"].every((value) => f.ru.includes(value)) ? [] : f.ru,
     };
     if (f.districts) next.districts = isAllDistricts ? [] : f.districts;
     onApply(next);
   };
 
   const isAcc = activeGroup === "accuracy";
-  const isComp = activeGroup === "completeness";
   const isCons = activeGroup === "consistency";
-  const showCompletenessIndicatorFilters = isComp && !isUwin;
-  const hasKeyInd = isAcc || showCompletenessIndicatorFilters;
+  // Completeness checks a fixed key-indicator list (scoring method v2), so the
+  // indicator choice only applies to the outlier check on the Accuracy tab.
+  const hasKeyInd = isAcc;
   const isRail = layout === "rail";
 
   const maxDropPairs = Math.max(f.dropFrom.length, f.dropTo.length, 1);
@@ -523,9 +527,9 @@ export function FilterPanel({
           <Dropdown label="Outliers" fullWidth={isRail}>
             <SectionLabel>Increase buckets</SectionLabel>
             {[
-              ["INC_LOW", "25-50.49% Low"],
-              ["INC_MOD", "50.50-100% Moderate"],
-              ["INC_EXT", ">100% Extreme"],
+              ["INC_LOW", "25 to <50% Low"],
+              ["INC_MOD", "50-100% Moderate"],
+              ["INC_EXT", ">100% or rise from 0 (Extreme)"],
             ].map(([value, label]) => (
               <CheckItem
                 key={value}
@@ -542,9 +546,9 @@ export function FilterPanel({
 
             <SectionLabel>Drop buckets</SectionLabel>
             {[
-              ["DROP_LOW", "-25 to -50.49% Low"],
-              ["DROP_MOD", "-50.50 to -100% Moderate"],
-              ["DROP_EXT", "<-100% Extreme"],
+              ["DROP_LOW", "-25 to >-50% Low"],
+              ["DROP_MOD", "-50 to >-75% Moderate"],
+              ["DROP_EXT", "-75 to -100% Extreme"],
             ].map(([value, label]) => (
               <CheckItem
                 key={value}
@@ -565,9 +569,9 @@ export function FilterPanel({
           <Dropdown label="Dropouts" fullWidth={isRail}>
             <SectionLabel>Dropout % ranges</SectionLabel>
             {[
-              ["R5_10", "5-10.99% (Low)"],
-              ["R11_20", "11-19.99% (Moderate)"],
-              ["R20P", ">=20% (Extreme)"],
+              ["R5_10", "5 to <10% (Low)"],
+              ["R11_20", "10 to <20% (Moderate)"],
+              ["R20P", ">=20% (High)"],
             ].map(([value, label]) => (
               <CheckItem
                 key={value}

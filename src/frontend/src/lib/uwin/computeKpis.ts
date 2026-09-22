@@ -26,13 +26,22 @@ import type {
 import { FacilityRecord } from '../dqa/types';
 import {
   displayBlockLabel,
-  pctChange,
   safeKey,
   monthShortLabel,
+  periodsAreConsecutive,
 } from '../dqa/parseUtils';
-import { coadminHasDifference } from '../dqa/coadmin';
+import { coadminHasDifference, coadminMatchedTotals } from '../dqa/coadmin';
+import {
+  monthOnMonthChange,
+  outlierBand,
+  dropoutPct,
+  dropoutRange,
+  matchedTotals,
+} from '../dqa/checkRules';
+import { standardMethodFilters, methodSignature } from '../dqa/scoringProfile';
 import {
   BASE_VAX,
+  UWIN_DEFAULT_FILTERS,
   GROUP_COLORS,
   DROPOUT_COLOR,
   OUTLIER_COLOR,
@@ -49,16 +58,31 @@ function emptyKpiStat(): KpiStat {
     total: 0,
     any: 0,
     all: 0,
+    eligible: 0,
+    eligibleKeys: new Set(),
     facilityKeys: new Set(),
     anyFacilityKeys: new Set(),
     allFacilityKeys: new Set(),
   };
 }
 
-function finalizeKpiStat(stat: KpiStat): void {
+function finalizeKpiStat(stat: KpiStat, eligible: Set<string>): void {
   stat.total = stat.facilityKeys.size;
   stat.any = stat.anyFacilityKeys.size;
   stat.all = stat.allFacilityKeys.size;
+  stat.eligibleKeys = eligible;
+  stat.eligible = eligible.size;
+}
+
+/** Record a flagged unit as "all periods" when every checkable period was flagged. */
+function flag(stat: KpiStat, key: string, hitMonths: number, evaluableMonths: number): void {
+  stat.facilityKeys.add(key);
+  if (evaluableMonths > 0 && hitMonths === evaluableMonths) stat.allFacilityKeys.add(key);
+  else stat.anyFacilityKeys.add(key);
+}
+
+function pctLabel(from: number, to: number): string {
+  return from > 0 ? `+${(((to - from) / from) * 100).toFixed(1)}%` : '';
 }
 
 function chartCountsByGeography(
@@ -137,7 +161,25 @@ function aggregateToLevel(
 
 // ---- main export ----
 
+/**
+ * KPIs for the reviewer's settings, plus the cards the SCORE is computed from
+ * (always the standard scoring settings on the same scope — see
+ * lib/dqa/scoringProfile.ts).
+ */
 export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinComputedKpis {
+  const view = computeUwinKpisForSettings(csv, filters);
+  const standard = standardMethodFilters(filters, UWIN_DEFAULT_FILTERS);
+  if (methodSignature(filters) === methodSignature(standard)) {
+    return { ...view, scoreCards: view.cards, customMethod: false };
+  }
+  const scored = computeUwinKpisForSettings(csv, standard);
+  return { ...view, scoreCards: scored.cards, customMethod: true };
+}
+
+function computeUwinKpisForSettings(
+  csv: UwinParsedCSV,
+  filters: FilterState,
+): Omit<UwinComputedKpis, 'scoreCards' | 'customMethod'> {
   const {
     allMonths, indicatorMap, idxMonth, header,
     idxSessPlanned, idxSessHeld,
@@ -197,14 +239,6 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     ? completenessVaxList
     : BASE_VAX.filter((v) => indicatorMap[v] !== undefined);
 
-  // ---- global counts ----
-  let globalDen = analysisMode === 'sessionsite'
-    ? csv.globalSessionSiteCount
-    : analysisMode === 'subcenter'
-      ? csv.globalSubCenterCount
-      : csv.globalFacilityCount;
-  let globalBlockCount = csv.globalBlockCount;
-
   // ---- apply global filters ----
   const selBlocksSet = new Set(filters.blocks.length > 0 ? filters.blocks : Object.keys(
     Object.values(facilityData).reduce<Record<string, true>>((acc, fd) => {
@@ -216,26 +250,29 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     filters.districts && filters.districts.length > 0 ? filters.districts : csv.districts,
   );
   const selMonthsSet = new Set(selMonths);
-  const selOwnerSet = new Set(filters.ownership.length > 0 ? filters.ownership : ['Public', 'Private']);
-  const selRUSet = new Set(filters.ru.length > 0 ? filters.ru : ['Rural', 'Urban']);
+  // No ownership / rural-urban filter means no exclusion at all ("Mixed" and
+  // other values must still be analysed).
+  const selOwnerSet = filters.ownership.length > 0 ? new Set(filters.ownership) : null;
+  const selRUSet = filters.ru.length > 0 ? new Set(filters.ru) : null;
 
   const filteredFacilities: Record<string, FacilityRecord> = {};
   for (const [key, fd] of Object.entries(facilityData)) {
     if (stateLevel && fd.district && !selDistrictsSet.has(fd.district)) continue;
     if (fd.block && !selBlocksSet.has(fd.block)) continue;
-    if (fd.ownership && !selOwnerSet.has(fd.ownership)) continue;
-    if (fd.ru && !selRUSet.has(fd.ru)) continue;
+    if (selOwnerSet && fd.ownership && !selOwnerSet.has(fd.ownership)) continue;
+    if (selRUSet && fd.ru && !selRUSet.has(fd.ru)) continue;
     const monthsKeep: FacilityRecord['months'] = {};
     for (const [mk, md] of Object.entries(fd.months)) {
       if (selMonthsSet.has(mk)) monthsKeep[mk] = md;
     }
+    // A session site that ran no session in the selected periods has no row —
+    // that is not a missing report, so it is outside the analysis.
     if (Object.keys(monthsKeep).length === 0) continue;
     filteredFacilities[key] = { ...fd, months: monthsKeep };
   }
-  globalDen = Object.keys(filteredFacilities).length;
-  globalBlockCount = new Set(Object.values(filteredFacilities).map((fd) => `${fd.district ?? ''}||${fd.block}`).filter((key) => !key.endsWith('||'))).size;
-
-  const totalMonthsSel = selMonths.length;
+  const unitCount = Object.keys(filteredFacilities).length;
+  const globalDen = unitCount;
+  const globalBlockCount = new Set(Object.values(filteredFacilities).map((fd) => `${fd.district ?? ''}||${fd.block}`).filter((key) => !key.endsWith('||'))).size;
 
   // ============================================================
   // AVAILABILITY
@@ -243,14 +280,17 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
 
   const t0Stat = emptyKpiStat();
   const t0Rows: TableRows = [[...idHeaderCols, ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
+  const t0Eligible = new Set<string>();
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
     const row: (string | number | null)[] = idRowCols(fd);
     let hitCount = 0;
+    let evaluable = 0;
     for (const mk of selMonths) {
       const md = fd.months[mk];
       let isZero = false;
       if (md) {
+        evaluable++;
         // Scoped to vaccine-dose "target" indicator columns only — Session
         // Planned/Held and beneficiary/Td columns are excluded (matches PHP's
         // $indicatorIdxTargets), otherwise a real session (which always has a
@@ -268,25 +308,27 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       row.push(isZero ? 'Y' : 'N');
       if (isZero) hitCount++;
     }
+    if (evaluable > 0 && targetIndicatorIndices.length > 0) t0Eligible.add(key);
     if (hitCount > 0) {
-      t0Stat.facilityKeys.add(key);
-      if (hitCount === totalMonthsSel) t0Stat.allFacilityKeys.add(key);
-      else t0Stat.anyFacilityKeys.add(key);
+      flag(t0Stat, key, hitCount, evaluable);
       t0Rows.push(row);
     }
   }
-  finalizeKpiStat(t0Stat);
+  finalizeKpiStat(t0Stat, t0Eligible);
 
   const t7Stat = emptyKpiStat();
   const t7Rows: TableRows = [[...idHeaderCols, ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
+  const t7Eligible = new Set<string>();
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
     const row: (string | number | null)[] = idRowCols(fd);
-    let anyY = false; let allY = true;
+    let hitCount = 0;
+    let evaluable = 0;
     for (const mk of selMonths) {
       const md = fd.months[mk];
       let isRepeat = false;
       if (md) {
+        evaluable++;
         let firstVal: number | null = null; let ok = true; let hasAny = false;
         for (let ci = idxMonth + 1; ci < header.length; ci++) {
           const v = md.vals[ci];
@@ -298,19 +340,22 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
         isRepeat = hasAny && ok;
       }
       row.push(isRepeat ? 'Y' : 'N');
-      if (isRepeat) anyY = true; else allY = false;
+      if (isRepeat) hitCount++;
     }
-    if (anyY) {
-      t7Stat.facilityKeys.add(key);
-      if (allY) t7Stat.allFacilityKeys.add(key);
-      else t7Stat.anyFacilityKeys.add(key);
+    if (evaluable > 0) t7Eligible.add(key);
+    if (hitCount > 0) {
+      flag(t7Stat, key, hitCount, evaluable);
       t7Rows.push(row);
     }
   }
-  finalizeKpiStat(t7Stat);
+  finalizeKpiStat(t7Stat, t7Eligible);
 
   // t9: Zero coverage session — PW + Infants + Children + Adolescents + Td1/Td2/Td-Booster/Td10/Td16 = 0
+  // in a period where at least one session was actually held. A session that was
+  // not held has nobody to vaccinate; that is "Planned but not held" (t6), not
+  // zero coverage. (Departs from the PHP reference, which ignored Sessions Held.)
   const t9Stat = emptyKpiStat();
+  const t9Eligible = new Set<string>();
   const t9Rows: TableRows = [[...idHeaderCols, ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
   const t9HitMap: Record<string, Record<string, boolean>> = {};
   const t9BenIdxList = [idxBenPW, idxBenInf, idxBenChild, idxBenAdol, idxBenTd1, idxBenTd2, idxBenTdB, idxBenTd10, idxBenTd16]
@@ -320,15 +365,19 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     for (const [key, fd] of Object.entries(filteredFacilities)) {
       const row: (string | number | null)[] = idRowCols(fd);
       let hitCount = 0;
+      let evaluable = 0;
       for (const mk of selMonths) {
         const md = fd.months[mk];
         let isZero = false;
-        if (md) {
+        const held = md && idxSessHeld !== null ? md.vals[idxSessHeld] ?? null : null;
+        const sessionHeld = idxSessHeld === null || (held !== null && held > 0);
+        if (md && sessionHeld) {
           let sum = 0; let hasAny = false;
           for (const idx of t9BenIdxList) {
             const v = md.vals[idx];
             if (v !== null) { sum += v; hasAny = true; }
           }
+          if (hasAny) evaluable++;
           isZero = hasAny && sum === 0;
         }
         row.push(isZero ? 'Y' : 'N');
@@ -338,15 +387,14 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
           t9HitMap[key][mk] = true;
         }
       }
+      if (evaluable > 0) t9Eligible.add(key);
       if (hitCount > 0) {
-        t9Stat.facilityKeys.add(key);
-        if (hitCount === totalMonthsSel) t9Stat.allFacilityKeys.add(key);
-        else t9Stat.anyFacilityKeys.add(key);
+        flag(t9Stat, key, hitCount, evaluable);
         t9Rows.push(row);
       }
     }
   }
-  finalizeKpiStat(t9Stat);
+  finalizeKpiStat(t9Stat, t9Eligible);
 
   // ============================================================
   // COMPLETENESS
@@ -360,7 +408,6 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
     let anyBlank = false;
-    let allMonthsHaveBlank = true;
     const cellMap: Record<string, Record<string, string>> = {};
 
     for (const vx of effectiveCompletenessVaxList) {
@@ -382,23 +429,18 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     }
 
     if (anyBlank) {
-      for (const mk of selMonths) {
-        let has = false;
-        for (const vx of effectiveCompletenessVaxList) {
-          if (cellMap[vx]?.[mk] === 'Y') { has = true; break; }
-        }
-        if (!has) { allMonthsHaveBlank = false; break; }
-      }
-      t2Stat.facilityKeys.add(key);
-      if (allMonthsHaveBlank) t2Stat.allFacilityKeys.add(key);
-      else t2Stat.anyFacilityKeys.add(key);
+      const reportedMonths = selMonths.filter((mk) => fd.months[mk]).length;
+      const blankMonths = selMonths.filter((mk) =>
+        effectiveCompletenessVaxList.some((vx) => cellMap[vx]?.[mk] === 'Y'),
+      ).length;
+      flag(t2Stat, key, blankMonths, reportedMonths);
       t2MatrixRows[key] = {
         ...idObjCols(fd),
         cells: cellMap,
       };
     }
   }
-  finalizeKpiStat(t2Stat);
+  finalizeKpiStat(t2Stat, new Set(effectiveCompletenessVaxList.length > 0 ? Object.keys(filteredFacilities) : []));
 
   const t2Web: T2Web = {
     vaccines: effectiveCompletenessVaxList,
@@ -412,8 +454,11 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   // ============================================================
 
   // t6: Planned but not held (Sessions Held < Sessions Planned)
+  // Compared only in periods where both Planned and Held were reported; the
+  // totals column sums those same periods (a blank is missing, never zero).
   const t6Stat = emptyKpiStat();
-  const t6Rows: TableRows = [[...idHeaderCols, 'Details (months with Planned>Held)', 'Totals']];
+  const t6Rows: TableRows = [[...idHeaderCols, 'Details (months with Planned>Held)', 'Totals (months with both reported)']];
+  const t6Eligible = new Set<string>();
 
   if (idxSessPlanned !== null && idxSessHeld !== null) {
     const iSP = idxSessPlanned;
@@ -421,47 +466,48 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
 
     for (const [key, fd] of Object.entries(filteredFacilities)) {
       const parts: string[] = [];
-      let sumP = 0; let sumH = 0; let hitCount = 0;
+      const pairs: Array<[number | null, number | null]> = [];
+      let hitCount = 0;
+      let evaluable = 0;
       for (const mk of selMonths) {
         const md = fd.months[mk];
         const P = md?.vals[iSP] ?? null;
         const H = md?.vals[iSH] ?? null;
-        if (P !== null) sumP += P;
-        if (H !== null) sumH += H;
-        if (P !== null && P > 0 && H !== null && H < P) {
+        pairs.push([P, H]);
+        if (P === null || H === null) continue;
+        evaluable++;
+        if (P > 0 && H < P) {
           hitCount++;
           const pct = ((P - H) / P) * 100;
           parts.push(`${selMonthLabels[mk] ?? mk} -${pct.toFixed(1)}%`);
         }
       }
-      let tot = '';
-      let hasTot = false;
-      if (sumP > 0 && sumH < sumP) {
-        tot = `All months -${(((sumP - sumH) / sumP) * 100).toFixed(1)}%`;
-        hasTot = true;
-      }
-      if (parts.length > 0 || hasTot) {
-        t6Stat.facilityKeys.add(key);
-        if (hitCount === totalMonthsSel) t6Stat.allFacilityKeys.add(key);
-        else t6Stat.anyFacilityKeys.add(key);
+      if (evaluable > 0) t6Eligible.add(key);
+      if (hitCount > 0) {
+        const totals = matchedTotals(pairs);
+        const tot = totals.a > 0 && totals.b < totals.a
+          ? `All months -${(((totals.a - totals.b) / totals.a) * 100).toFixed(1)}%`
+          : `All months: planned ${totals.a}, held ${totals.b}`;
+        flag(t6Stat, key, hitCount, evaluable);
         t6Rows.push([...idRowCols(fd), parts.join('; '), tot]);
       }
     }
   }
-  finalizeKpiStat(t6Stat);
+  finalizeKpiStat(t6Stat, t6Eligible);
 
   // t8: Avg Beneficiaries per Session < 5
   const t8Stat = emptyKpiStat();
   const t8HitMap: Record<string, Record<string, boolean>> = {};
   const t8WebRows: Record<string, T8Row> = {};
+  const t8Eligible = new Set<string>();
 
   if (idxSessHeld !== null) {
     const iSH = idxSessHeld;
 
     for (const [key, fd] of Object.entries(filteredFacilities)) {
       const monthData: Record<string, T8MonthData> = {};
-      let anyFlag = false;
-      let allFlag = true;
+      let flaggedMonths = 0;
+      let evaluable = 0;
       let totalSess = 0;
       let totalBen = 0;
 
@@ -486,10 +532,10 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
           avg = ben / sessHeld;
         }
 
-        const flag = avg !== null && avg < 5;
-        monthData[mk] = { sessHeld, beneficiaries: ben, avg, flag };
-        if (flag) anyFlag = true;
-        else allFlag = false;
+        const lowAvg = avg !== null && avg < 5;
+        monthData[mk] = { sessHeld, beneficiaries: ben, avg, flag: lowAvg };
+        if (avg !== null) evaluable++;
+        if (lowAvg) flaggedMonths++;
 
         if (sessHeld !== null) totalSess += sessHeld;
         if (ben !== null) totalBen += ben;
@@ -498,10 +544,9 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       const allAvg = totalSess > 0 ? totalBen / totalSess : null;
       const allFlag2 = allAvg !== null && allAvg < 5;
 
-      if (anyFlag) {
-        t8Stat.facilityKeys.add(key);
-        if (allFlag) t8Stat.allFacilityKeys.add(key);
-        else t8Stat.anyFacilityKeys.add(key);
+      if (evaluable > 0) t8Eligible.add(key);
+      if (flaggedMonths > 0) {
+        flag(t8Stat, key, flaggedMonths, evaluable);
 
         t8HitMap[key] = {};
         for (const mk of selMonths) {
@@ -521,7 +566,7 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
       }
     }
   }
-  finalizeKpiStat(t8Stat);
+  finalizeKpiStat(t8Stat, t8Eligible);
 
   const t8Web: T8Web = {
     months: selMonths,
@@ -529,26 +574,14 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     rows: t8WebRows,
   };
 
-  // t3: Outliers
+  // t3: Outliers — calendar-adjacent periods only, volume floor, rises from 0.
   const incBucketsSel = new Set(filters.outliersInc);
   const dropBucketsSel = new Set(filters.outliersDrop);
-
-  function bucketHit(p: number): boolean {
-    if (p > 0) {
-      if (incBucketsSel.has('INC_LOW') && p >= 25 && p <= 50.49) return true;
-      if (incBucketsSel.has('INC_MOD') && p >= 50.5 && p <= 100) return true;
-      if (incBucketsSel.has('INC_EXT') && p > 100) return true;
-    } else if (p < 0) {
-      if (dropBucketsSel.has('DROP_LOW') && p <= -25 && p >= -50.49) return true;
-      if (dropBucketsSel.has('DROP_MOD') && p <= -50.5 && p >= -100) return true;
-      if (dropBucketsSel.has('DROP_EXT') && p < -100) return true;
-    }
-    return false;
-  }
 
   const pairList: PairMeta[] = [];
   for (let i = 0; i < selMonths.length - 1; i++) {
     const m1 = selMonths[i]; const m2 = selMonths[i + 1];
+    if (!periodsAreConsecutive(m1, m2)) continue;
     pairList.push({
       k: `${m1}|${m2}`, m1, m2,
       m1lbl: selMonthLabels[m1] ?? m1,
@@ -562,25 +595,32 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   const outAnyCounts: Record<string, number> = {};
   const outAllCounts: Record<string, number> = {};
   for (const vx of effectiveAccuracyVaxList) { outAnyCounts[vx] = 0; outAllCounts[vx] = 0; }
+  const t3Eligible = new Set<string>();
 
   for (const [key, fd] of Object.entries(filteredFacilities)) {
-    let any = false;
     const cells: Record<string, Record<string, T3Cell>> = {};
+    const evaluablePairs = new Set<string>();
+    const hitPairs = new Set<string>();
 
     for (const vx of effectiveAccuracyVaxList) {
       const ci = indicatorMap[vx];
       if (ci === undefined) continue;
       cells[vx] = {};
+      let vxEvaluable = 0;
+      let vxHits = 0;
       for (const p of pairList) {
         const v1 = fd.months[p.m1]?.vals[ci] ?? null;
         const v2 = fd.months[p.m2]?.vals[ci] ?? null;
-        const pc = pctChange(v1, v2);
+        const change = monthOnMonthChange(v1, v2);
         let hit = false;
-        let pctVal: number | null = null;
-        if (pc !== null) {
-          pctVal = pc;
-          if (bucketHit(pctVal)) {
-            hit = true; any = true;
+        if (change) {
+          evaluablePairs.add(p.k);
+          vxEvaluable++;
+          const band = outlierBand(change);
+          if (band && (incBucketsSel.has(band) || dropBucketsSel.has(band))) {
+            hit = true;
+            vxHits++;
+            hitPairs.add(p.k);
             if (!t3HitMap[key]) t3HitMap[key] = {};
             if (!t3HitMap[key][p.m1]) t3HitMap[key][p.m1] = {};
             if (!t3HitMap[key][p.m2]) t3HitMap[key][p.m2] = {};
@@ -588,42 +628,29 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
             t3HitMap[key][p.m2][vx] = true;
           }
         }
-        cells[vx][p.k] = { a: v1, b: v2, pct: pctVal, hit };
+        cells[vx][p.k] = { a: v1, b: v2, pct: change?.pct ?? null, hit, fromZero: change?.fromZero ?? false };
       }
+      if (vxHits > 0) outAnyCounts[vx]++;
+      if (vxEvaluable > 0 && vxHits === vxEvaluable) outAllCounts[vx]++;
     }
 
-    if (any) {
-      t3Stat.facilityKeys.add(key);
-      const pairHits = pairList.filter((p) =>
-        effectiveAccuracyVaxList.some((vx) => cells[vx]?.[p.k]?.hit)
-      ).length;
-      if (pairList.length > 0 && pairHits === pairList.length) t3Stat.allFacilityKeys.add(key);
-      else t3Stat.anyFacilityKeys.add(key);
+    if (evaluablePairs.size > 0) t3Eligible.add(key);
+    if (hitPairs.size > 0) {
+      flag(t3Stat, key, hitPairs.size, evaluablePairs.size);
       t3MatrixRows[key] = { ...idObjCols(fd), cells };
     }
   }
-
-  for (const row of Object.values(t3MatrixRows)) {
-    for (const vx of effectiveAccuracyVaxList) {
-      const anyHit = pairList.some((p) => row.cells[vx]?.[p.k]?.hit);
-      const allHit = pairList.length > 0 && pairList.every((p) => row.cells[vx]?.[p.k]?.hit);
-      if (anyHit) outAnyCounts[vx]++;
-      if (allHit) outAllCounts[vx]++;
-    }
-  }
-
-  finalizeKpiStat(t3Stat);
+  finalizeKpiStat(t3Stat, t3Eligible);
 
   const t3Web: T3Web = { vaccines: effectiveAccuracyVaxList, pairs: pairList, rows: t3MatrixRows };
 
-  // Dropout pairs
+  // Dropouts — judged on the cumulative dropout over the selected periods
+  // (periods where both doses were reported).
   const selDropRanges = new Set(filters.dropRanges);
-  function dropMatch(pct: number): boolean {
-    if (selDropRanges.has('R5_10') && pct >= 5 && pct <= 10.99) return true;
-    if (selDropRanges.has('R11_20') && pct >= 11 && pct <= 19.99) return true;
-    if (selDropRanges.has('R20P') && pct >= 20) return true;
-    return false;
-  }
+  const inRange = (pct: number | null) => {
+    const range = dropoutRange(pct);
+    return range !== null && selDropRanges.has(range);
+  };
 
   const selectedPairsSet = new Set<string>(filters.dropPairs);
   const fromList = filters.dropFrom ?? [];
@@ -654,49 +681,48 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     const dropStat = emptyKpiStat();
     const dropRows: Record<string, DropoutRow> = {};
     const hitSet: Record<string, Record<string, boolean>> = {};
+    const eligible = new Set<string>();
 
     for (const [fkey, fd] of Object.entries(filteredFacilities)) {
       const cells: Record<string, { from: number | null; to: number | null; pct: number | null }> = {};
-      let sumA = 0; let sumB = 0; let anyHit = false;
+      const pairs: Array<[number | null, number | null]> = [];
+      const matchedMonths: string[] = [];
+      let evaluable = 0;
+      let monthHits = 0;
 
       for (const mk of selMonths) {
         const A = fd.months[mk]?.vals[iFrom] ?? null;
         const B = fd.months[mk]?.vals[iTo] ?? null;
-        if (A !== null) sumA += A;
-        if (B !== null) sumB += B;
-        let cell: DropoutRow['cells'][string] = { from: null, to: null, pct: null };
-        if (A !== null && B !== null && A > 0 && B < A) {
-          const drop = ((A - B) / A) * 100;
-          if (dropMatch(drop)) {
-            anyHit = true;
-            if (!hitSet[fkey]) hitSet[fkey] = {};
-            hitSet[fkey][mk] = true;
-            cell = { from: A, to: B, pct: drop };
-          }
+        pairs.push([A, B]);
+        cells[mk] = { from: null, to: null, pct: null };
+        if (A === null || B === null) continue;
+        matchedMonths.push(mk);
+        const monthPct = dropoutPct(A, B);
+        cells[mk] = { from: A, to: B, pct: monthPct };
+        if (monthPct !== null) {
+          evaluable++;
+          if (inRange(monthPct)) monthHits++;
         }
-        cells[mk] = cell;
       }
 
-      let all: DropoutRow['all'] = { from: null, to: null, pct: null };
-      if (sumA > 0 && sumB < sumA) {
-        const dropAll = ((sumA - sumB) / sumA) * 100;
-        if (dropMatch(dropAll)) all = { from: sumA, to: sumB, pct: dropAll };
-      }
+      const totals = matchedTotals(pairs);
+      const periodPct = dropoutPct(totals.a, totals.b);
+      if (periodPct !== null) eligible.add(fkey);
 
-      if (anyHit) {
+      if (inRange(periodPct)) {
         dropStat.facilityKeys.add(fkey);
-        const hitMonths = selMonths.filter((mk) => hitSet[fkey]?.[mk]).length;
-        if (hitMonths === totalMonthsSel) dropStat.allFacilityKeys.add(fkey);
+        if (evaluable > 0 && monthHits === evaluable) dropStat.allFacilityKeys.add(fkey);
         else dropStat.anyFacilityKeys.add(fkey);
+        hitSet[fkey] = Object.fromEntries(matchedMonths.map((mk) => [mk, true]));
         dropRows[fkey] = {
           ...idObjCols(fd),
           cells,
-          all,
+          all: { from: totals.a, to: totals.b, pct: periodPct },
         };
       }
     }
 
-    finalizeKpiStat(dropStat);
+    finalizeKpiStat(dropStat, eligible);
     dropTables[pairKey] = {
       pairLabel, from, to,
       months: selMonths,
@@ -711,47 +737,48 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
   // CONSISTENCY
   // ============================================================
 
+  // Later dose > earlier dose — period totals over periods where both doses
+  // were reported (a blank is missing, never zero).
+  function doseOrderCheck(
+    iFrom: number,
+    iTo: number,
+    stat: KpiStat,
+    rows: TableRows,
+  ): void {
+    const eligible = new Set<string>();
+    for (const [key, fd] of Object.entries(filteredFacilities)) {
+      const pairs: Array<[number | null, number | null]> = [];
+      let monthHits = 0;
+      for (const mk of selMonths) {
+        const A = fd.months[mk]?.vals[iFrom] ?? null;
+        const B = fd.months[mk]?.vals[iTo] ?? null;
+        pairs.push([A, B]);
+        if (A !== null && B !== null && B > A) monthHits++;
+      }
+      const totals = matchedTotals(pairs);
+      if (totals.months === 0) continue;
+      eligible.add(key);
+      if (totals.b > totals.a) {
+        flag(stat, key, monthHits, totals.months);
+        rows.push([
+          ...idRowCols(fd),
+          Math.round(totals.b), Math.round(totals.a),
+          pctLabel(totals.a, totals.b),
+        ]);
+      }
+    }
+    finalizeKpiStat(stat, eligible);
+  }
+
   const i1Stat = emptyKpiStat();
   const i1Rows: TableRows = [[...idHeaderCols, 'Penta3 (total)', 'Penta1 (total)', '% change']];
   const iP1 = indicatorMap['Penta1']; const iP3 = indicatorMap['Penta3'];
+  if (iP1 !== undefined && iP3 !== undefined) doseOrderCheck(iP1, iP3, i1Stat, i1Rows);
 
   const i2Stat = emptyKpiStat();
   const i2Rows: TableRows = [[...idHeaderCols, 'OPV3 (total)', 'OPV1 (total)', '% change']];
   const iO1 = indicatorMap['OPV1']; const iO3 = indicatorMap['OPV3'];
-
-  for (const [key, fd] of Object.entries(filteredFacilities)) {
-    let sumP1 = 0; let sumP3 = 0; let sumO1 = 0; let sumO3 = 0;
-    for (const md of Object.values(fd.months)) {
-      if (iP1 !== undefined) sumP1 += md.vals[iP1] ?? 0;
-      if (iP3 !== undefined) sumP3 += md.vals[iP3] ?? 0;
-      if (iO1 !== undefined) sumO1 += md.vals[iO1] ?? 0;
-      if (iO3 !== undefined) sumO3 += md.vals[iO3] ?? 0;
-    }
-
-    if (iP1 !== undefined && iP3 !== undefined && sumP3 > sumP1) {
-      i1Stat.facilityKeys.add(key);
-      i1Stat.anyFacilityKeys.add(key);
-      const pct = sumP1 > 0 ? ((sumP3 - sumP1) / sumP1) * 100 : null;
-      i1Rows.push([
-        ...idRowCols(fd),
-        Math.round(sumP3), Math.round(sumP1),
-        pct !== null ? `+${pct.toFixed(1)}%` : '',
-      ]);
-    }
-
-    if (iO1 !== undefined && iO3 !== undefined && sumO3 > sumO1) {
-      i2Stat.facilityKeys.add(key);
-      i2Stat.anyFacilityKeys.add(key);
-      const pct = sumO1 > 0 ? ((sumO3 - sumO1) / sumO1) * 100 : null;
-      i2Rows.push([
-        ...idRowCols(fd),
-        Math.round(sumO3), Math.round(sumO1),
-        pct !== null ? `+${pct.toFixed(1)}%` : '',
-      ]);
-    }
-  }
-  finalizeKpiStat(i1Stat);
-  finalizeKpiStat(i2Stat);
+  if (iO1 !== undefined && iO3 !== undefined) doseOrderCheck(iO1, iO3, i2Stat, i2Rows);
 
   // Dynamic inconsistency pairs
   const inconsTables: Record<string, TableRows> = {};
@@ -776,51 +803,27 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
     const labelName = `Inconsistencies — ${t}>${f}`;
 
     const tbl: TableRows = [[...idHeaderCols, `${t} (total)`, `${f} (total)`, '% change']];
-    const facSet = new Set<string>();
-
-    for (const [fkey, fd] of Object.entries(filteredFacilities)) {
-      let sumFrom = 0; let sumTo = 0;
-      for (const md of Object.values(fd.months)) {
-        sumFrom += md.vals[iFrom] ?? 0;
-        sumTo += md.vals[iTo] ?? 0;
-      }
-      if (sumTo > sumFrom) {
-        facSet.add(fkey);
-        const pct = sumFrom > 0 ? ((sumTo - sumFrom) / sumFrom) * 100 : null;
-        tbl.push([
-          ...idRowCols(fd),
-          Math.round(sumTo), Math.round(sumFrom),
-          pct !== null ? `+${pct.toFixed(1)}%` : '',
-        ]);
-      }
-    }
-
     const stat = emptyKpiStat();
-    stat.facilityKeys = facSet;
-    stat.anyFacilityKeys = new Set(facSet);
-    finalizeKpiStat(stat);
+    doseOrderCheck(iFrom, iTo, stat, tbl);
 
     inconsTables[pid] = tbl;
     inconsStats[pid] = stat;
     inconsPairMap[downloadKey] = { from: f, to: t, label: labelName, pid };
   }
 
-  // Co-admin
+  // Co-admin — monthly only; blanks are ignored (a completeness finding).
   const coTables: Record<string, CoAdminWeb> = {};
   const coStats: Record<string, KpiStat> = {};
 
   for (const [coKey, vaxList] of Object.entries(CO_SPECS)) {
     const coStat = emptyKpiStat();
     const coRows: Record<string, CoAdminRow> = {};
+    const eligible = new Set<string>();
 
     for (const [fkey, fd] of Object.entries(filteredFacilities)) {
       const rowVals: Record<string, Record<string, number | null>> = {};
-      // null until the vaccine is actually reported at least once — see
-      // coadminTotal() in lib/dqa/coadmin.ts for why a 0 default is wrong.
-      const totals: Record<string, number | null> = {};
-      for (const vx of vaxList) totals[vx] = null;
-      let viol = false;
       let monthViolCount = 0;
+      let evaluable = 0;
 
       for (const mk of selMonths) {
         rowVals[mk] = {};
@@ -830,26 +833,23 @@ export function computeUwinKpis(csv: UwinParsedCSV, filters: FilterState): UwinC
           const val = (ci !== undefined && fd.months[mk]) ? fd.months[mk].vals[ci] ?? null : null;
           rowVals[mk][vx] = val;
           valsMonth.push(val);
-          if (val !== null) totals[vx] = (totals[vx] ?? 0) + val;
         }
-        if (coadminHasDifference(valsMonth)) { viol = true; monthViolCount++; }
+        if (valsMonth.filter((v) => v !== null).length >= 2) evaluable++;
+        if (coadminHasDifference(valsMonth)) monthViolCount++;
       }
 
-      if (coadminHasDifference(Object.values(totals))) viol = true;
-
-      if (viol) {
-        coStat.facilityKeys.add(fkey);
-        if (totalMonthsSel > 0 && monthViolCount === totalMonthsSel) coStat.allFacilityKeys.add(fkey);
-        else coStat.anyFacilityKeys.add(fkey);
+      if (evaluable > 0) eligible.add(fkey);
+      if (monthViolCount > 0) {
+        flag(coStat, fkey, monthViolCount, evaluable);
         coRows[fkey] = {
           ...idObjCols(fd),
           vals: rowVals,
-          totals,
+          totals: coadminMatchedTotals(rowVals, vaxList),
         };
       }
     }
 
-    finalizeKpiStat(coStat);
+    finalizeKpiStat(coStat, eligible);
     coTables[coKey] = {
       key: coKey,
       vaccines: vaxList,

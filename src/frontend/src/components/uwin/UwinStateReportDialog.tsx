@@ -77,7 +77,7 @@ export function UwinStateReportDialog({ csv, kpis, filters, reviewInfo }: Props)
   const [useAi, setUseAi] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const period = getUwinStateReportPeriod(csv);
+  const period = getUwinStateReportPeriod(csv, kpis);
   const progressReports = latestReportPerPeriod(
     allReports.filter((report) => report.analysisMode === kpis.analysisMode),
   );

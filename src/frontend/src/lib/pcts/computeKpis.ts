@@ -1,4 +1,19 @@
+// ============================================================
+// PCTS KPI engine — scoring method v2 (agreed 2026-09-22)
+//
+// Shared rules live in lib/dqa/checkRules.ts (outlier bands, volume floor,
+// dropout thresholds, matched-month totals) and lib/dqa/scoring.ts (component
+// and overall scores). PCTS specifics:
+//   - Month-on-month checks compare calendar-adjacent months only.
+//   - Dropouts and later-dose > earlier-dose checks are judged on the totals of
+//     the selected period (months where both doses were reported).
+//   - Co-administered doses must match exactly at facility level.
+//   - The score always uses the standard settings; the reviewer's settings
+//     only change the drill-downs.
+// ============================================================
+
 import {
+  DEFAULT_PCTS_FILTERS,
   PCTS_INDICATORS,
   type PctsBlockSummary,
   type PctsCard,
@@ -11,8 +26,27 @@ import {
   type PctsPair,
   type PctsParsed,
 } from "./types";
+import { scoreComponents, type OverallScoreResult, type ScoringCard } from "../dqa/scoring";
+import { coadminHasDifference } from "../dqa/coadmin";
+import {
+  dropoutPct,
+  formatChange,
+  matchedTotals,
+  monthOnMonthChange,
+  passesChangeSeverity,
+} from "../dqa/checkRules";
+import { periodsAreConsecutive } from "../dqa/parseUtils";
 
 type Evaluator = (facilityKey: string, month: string) => PctsHit | null;
+
+interface PeriodResult {
+  period: PctsHit;
+  months: Record<string, PctsHit>;
+  evaluableMonths: number;
+  hitMonths: number;
+}
+
+type PeriodEvaluator = (facilityKey: string) => PeriodResult;
 
 const GROUPS: PctsGroup[] = ["availability", "completeness", "accuracy", "consistency"];
 
@@ -54,6 +88,7 @@ const DEFAULT_DROPOUT_PAIRS: PctsPair[] = [
   { from: "penta3", to: "mr1" },
 ];
 
+/** A month-by-month check: flagged when any checkable month is flagged. */
 function makeCard(
   id: string,
   name: string,
@@ -65,6 +100,7 @@ function makeCard(
 ): PctsCard {
   const hits: PctsCard["hits"] = {};
   const affectedFacilities: string[] = [];
+  const eligibleFacilities: string[] = [];
   let all = 0;
   for (const facilityKey of facilityKeys) {
     hits[facilityKey] = {};
@@ -73,10 +109,12 @@ function makeCard(
       const hit = evaluator(facilityKey, month);
       if (hit === null) continue;
       hits[facilityKey][month] = hit;
-      evaluated.push(hit);
+      if (hit.evaluable !== false) evaluated.push(hit);
     }
+    if (evaluated.length === 0) continue;
+    eligibleFacilities.push(facilityKey);
     if (evaluated.some((hit) => hit.flag)) affectedFacilities.push(facilityKey);
-    if (evaluated.length > 0 && evaluated.every((hit) => hit.flag)) all += 1;
+    if (evaluated.every((hit) => hit.flag)) all += 1;
   }
   const total = affectedFacilities.length;
   return {
@@ -87,8 +125,53 @@ function makeCard(
     total,
     any: total - all,
     all,
+    eligible: eligibleFacilities.length,
+    eligibleFacilities,
     affectedFacilities,
+    basis: "month",
     hits,
+  };
+}
+
+/** A check judged on the selected period's totals; monthly detail is context. */
+function makePeriodCard(
+  id: string,
+  name: string,
+  description: string,
+  group: PctsGroup,
+  facilityKeys: string[],
+  evaluator: PeriodEvaluator,
+): PctsCard {
+  const hits: PctsCard["hits"] = {};
+  const periodHits: Record<string, PctsHit> = {};
+  const affectedFacilities: string[] = [];
+  const eligibleFacilities: string[] = [];
+  let all = 0;
+  for (const facilityKey of facilityKeys) {
+    const result = evaluator(facilityKey);
+    hits[facilityKey] = result.months;
+    periodHits[facilityKey] = result.period;
+    if (result.period.evaluable === false) continue;
+    eligibleFacilities.push(facilityKey);
+    if (!result.period.flag) continue;
+    affectedFacilities.push(facilityKey);
+    if (result.evaluableMonths > 0 && result.hitMonths === result.evaluableMonths) all += 1;
+  }
+  const total = affectedFacilities.length;
+  return {
+    id,
+    name,
+    description,
+    group,
+    total,
+    any: total - all,
+    all,
+    eligible: eligibleFacilities.length,
+    eligibleFacilities,
+    affectedFacilities,
+    basis: "period",
+    hits,
+    periodHits,
   };
 }
 
@@ -102,43 +185,128 @@ function uniquePairs(pairs: PctsPair[]): PctsPair[] {
   });
 }
 
-function pctChange(previous: number | null, current: number | null): number | null {
-  if (previous === null || current === null || previous === 0) return null;
-  return ((current - previous) / previous) * 100;
+// ---- standard scoring profile ----
+
+function standardPctsFilters(filters: PctsFilters): PctsFilters {
+  return {
+    ...filters,
+    keyIndicators: [...DEFAULT_PCTS_FILTERS.keyIndicators],
+    additionalIndicators: [],
+    outlierSeverity: DEFAULT_PCTS_FILTERS.outlierSeverity,
+    dropoutThreshold: DEFAULT_PCTS_FILTERS.dropoutThreshold,
+    additionalPairs: [],
+    dropoutPairs: [],
+  };
 }
 
-function passesOutlier(change: number, severity: PctsFilters["outlierSeverity"]): boolean {
-  if (severity === "low") return change >= 25 || change <= -25;
-  if (severity === "moderate") return change > 50 || change < -50;
-  return change > 100 || change <= -75;
+function methodSignature(filters: PctsFilters): string {
+  const pairKeys = (pairs: PctsPair[] | undefined) =>
+    uniquePairs(pairs ?? []).map((pair) => `${pair.from}->${pair.to}`).sort();
+  const defaultDropouts = new Set(pairKeys(DEFAULT_DROPOUT_PAIRS));
+  return JSON.stringify([
+    [...new Set([...filters.keyIndicators, ...(filters.additionalIndicators ?? [])])].sort(),
+    filters.outlierSeverity,
+    filters.dropoutThreshold,
+    pairKeys(filters.additionalPairs),
+    pairKeys(filters.dropoutPairs).filter((key) => !defaultDropouts.has(key)),
+  ]);
 }
 
-function scoreComponents(
-  cards: PctsCard[],
-  denominator: number,
-  facilityKeys?: Set<string>,
-): Record<PctsGroup, PctsComponentScore> {
-  return Object.fromEntries(GROUPS.map((group) => {
-    const groupCards = cards.filter((card) => card.group === group);
-    const counts = groupCards.map((card) => facilityKeys
-      ? card.affectedFacilities.filter((key) => facilityKeys.has(key)).length
-      : card.total);
-    const worstIssuePct = denominator > 0
-      ? Math.max(0, ...counts.map((count) => (count / denominator) * 100))
-      : 100;
-    return [group, {
-      group,
-      worstIssuePct,
-      score: denominator > 0 ? Math.max(0, 100 - worstIssuePct) : 0,
-    }];
-  })) as Record<PctsGroup, PctsComponentScore>;
+// ---- scoring ----
+
+function countIn(keys: string[], subset: Set<string>): number {
+  let count = 0;
+  for (const key of keys) if (subset.has(key)) count += 1;
+  return count;
 }
 
-function averageComponentScore(scores: Record<PctsGroup, PctsComponentScore>): number {
-  return GROUPS.reduce((sum, group) => sum + scores[group].score, 0) / GROUPS.length;
+function scoringCards(cards: PctsCard[], subset?: Set<string>): ScoringCard[] {
+  return cards.map((card) => {
+    const flagged = subset ? countIn(card.affectedFacilities, subset) : card.total;
+    return {
+      id: card.id,
+      name: card.name,
+      group: card.group,
+      flagged,
+      eligible: subset ? countIn(card.eligibleFacilities, subset) : card.eligible,
+      any: subset ? flagged : card.any,
+      all: subset ? 0 : card.all,
+    };
+  });
 }
+
+function toComponentScores(result: OverallScoreResult): Record<PctsGroup, PctsComponentScore> {
+  return Object.fromEntries(GROUPS.map((group) => [group, {
+    group,
+    score: result.components[group]?.score ?? null,
+    worstIssuePct: result.components[group]?.maxTot ?? null,
+  }])) as Record<PctsGroup, PctsComponentScore>;
+}
+
+// ---- main export ----
 
 export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsComputed {
+  const view = computeCards(data, filters);
+  const standard = standardPctsFilters(filters);
+  const customMethod = methodSignature(filters) !== methodSignature(standard);
+  const scoreCards = customMethod ? computeCards(data, standard).cards : view.cards;
+
+  const { cards, selectedFacilityKeys, selectedMonths } = view;
+  const facility = (facilityKey: string): PctsFacilityRecord => data.facilities[facilityKey];
+  const denominator = selectedMonths.length > 0 ? selectedFacilityKeys.length : 0;
+  const result = scoreComponents(scoringCards(scoreCards), denominator, GROUPS);
+
+  const issueNamesByFacility: Record<string, string[]> = Object.fromEntries(
+    selectedFacilityKeys.map((facilityKey) => [facilityKey, []]),
+  );
+  for (const card of cards) {
+    for (const facilityKey of card.affectedFacilities) issueNamesByFacility[facilityKey].push(card.name);
+  }
+  const issueCountByFacility = Object.fromEntries(
+    selectedFacilityKeys.map((facilityKey) => [facilityKey, issueNamesByFacility[facilityKey].length]),
+  );
+  const affectedSet = new Set(cards.flatMap((card) => card.affectedFacilities));
+  const visibleFacilityKeys = filters.issuesOnly
+    ? selectedFacilityKeys.filter((facilityKey) => affectedSet.has(facilityKey))
+    : selectedFacilityKeys;
+
+  const selectedBlocks = [...new Set(selectedFacilityKeys.map((facilityKey) => facility(facilityKey).block))];
+  const blockSummaries: Record<string, PctsBlockSummary> = {};
+  for (const block of selectedBlocks) {
+    const blockKeys = selectedFacilityKeys.filter((facilityKey) => facility(facilityKey).block === block);
+    const blockKeySet = new Set(blockKeys);
+    const blockResult = scoreComponents(
+      scoringCards(scoreCards, blockKeySet),
+      selectedMonths.length > 0 ? blockKeys.length : 0,
+      GROUPS,
+    );
+    blockSummaries[block] = {
+      block,
+      denominator: blockKeys.length,
+      affectedFacilities: blockKeys.filter((facilityKey) => affectedSet.has(facilityKey)).length,
+      componentScores: toComponentScores(blockResult),
+      overallScore: blockResult.overall,
+    };
+  }
+
+  return {
+    cards,
+    selectedFacilityKeys,
+    visibleFacilityKeys,
+    selectedMonths,
+    denominator,
+    componentScores: toComponentScores(result),
+    overallScore: result.overall,
+    scoredComponents: result.scoredComponents,
+    totalComponents: result.totalComponents,
+    customMethod,
+    issueCountByFacility,
+    issueNamesByFacility,
+    blockSummaries,
+  };
+}
+
+function computeCards(data: PctsParsed, filters: PctsFilters) {
   const indicatorById = new Map(data.indicators.map((indicator) => [indicator.id, indicator]));
   const label = (id: string) => indicatorById.get(id)?.label
     ?? PCTS_INDICATORS.find((indicator) => indicator.id === id)?.label
@@ -174,6 +342,14 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
   const valuesFor = (facilityKey: string, month: string, indicatorIds: string[]) => indicatorIds.map(
     (indicatorId) => value(facilityKey, month, indicatorId),
   );
+  /** The previous selected month, only when it is the calendar month before. */
+  const previousMonthOf = (month: string): string | null => {
+    const index = selectedMonths.indexOf(month);
+    if (index <= 0) return null;
+    const previous = selectedMonths[index - 1];
+    return periodsAreConsecutive(previous, month) ? previous : null;
+  };
+  const missingReport = (detail = "Facility report is missing"): PctsHit => ({ flag: false, evaluable: false, detail });
 
   cards.push(makeCard(
     "all_indicators_zero",
@@ -184,7 +360,7 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     selectedMonths,
     (facilityKey, month) => {
       const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return { flag: false, detail: "Facility report is missing" };
+      if (!monthRecord) return missingReport();
       const values = data.orderedIndicatorIds.map((id) => monthRecord.values[id]);
       const flag = values.length > 0 && values.every((item) => item !== null && item !== undefined && item === 0);
       return { flag, detail: flag ? "All indicators are zero" : "At least one indicator is non-zero or blank" };
@@ -200,9 +376,10 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     selectedMonths,
     (facilityKey, month) => {
       const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return { flag: false, detail: "Facility report is missing" };
+      if (!monthRecord) return missingReport();
+      if (selectedIndicators.length === 0) return missingReport("No key indicator selected");
       const values = valuesFor(facilityKey, month, selectedIndicators);
-      const flag = values.length > 0 && values.every((item) => item !== null && item === 0);
+      const flag = values.every((item) => item !== null && item === 0);
       return {
         flag,
         detail: flag ? "All selected key indicators are zero" : "At least one selected indicator is non-zero or blank",
@@ -221,9 +398,10 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     selectedMonths,
     (facilityKey, month) => {
       const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return { flag: false, detail: "Facility report is missing" };
+      if (!monthRecord) return missingReport();
+      if (activeServiceIndicators.length === 0) return missingReport("No service indicator in this file");
       const values = valuesFor(facilityKey, month, activeServiceIndicators);
-      const flag = values.length > 0 && values.every((item) => item !== null && item === 0);
+      const flag = values.every((item) => item !== null && item === 0);
       return { flag, detail: flag ? "No active immunization service reported" : "Service activity or a blank value is present" };
     },
   ));
@@ -231,42 +409,42 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
   cards.push(makeCard(
     "repeated_full_profile",
     "Repeated Complete Profile",
-    "The full indicator profile exactly matches the preceding selected month.",
+    "The full indicator profile exactly matches the preceding calendar month.",
     "availability",
     selectedFacilityKeys,
     selectedMonths,
     (facilityKey, month) => {
-      const index = selectedMonths.indexOf(month);
-      if (index <= 0) return null;
-      const previousMonth = selectedMonths[index - 1];
+      const previousMonth = previousMonthOf(month);
+      if (!previousMonth) return null;
       const current = record(facilityKey, month);
       const previous = record(facilityKey, previousMonth);
-      if (!current || !previous) return { flag: false, detail: "One of the compared facility reports is missing" };
+      if (!current || !previous) return missingReport("One of the compared facility reports is missing");
       const complete = data.orderedIndicatorIds.every((id) =>
         current.values[id] !== null && current.values[id] !== undefined
         && previous.values[id] !== null && previous.values[id] !== undefined);
-      const flag = complete && data.orderedIndicatorIds.every((id) => current.values[id] === previous.values[id]);
-      return { flag, detail: flag ? `Complete profile exactly matches ${data.months[previousMonth]}` : `Profile differs from ${data.months[previousMonth]} or is incomplete` };
+      if (!complete) return missingReport(`Profile incomplete in ${data.months[month]} or ${data.months[previousMonth]}`);
+      const flag = data.orderedIndicatorIds.every((id) => current.values[id] === previous.values[id]);
+      return { flag, detail: flag ? `Complete profile exactly matches ${data.months[previousMonth]}` : `Profile differs from ${data.months[previousMonth]}` };
     },
   ));
 
   cards.push(makeCard(
     "repeated_key_profile",
     "Repeated Key-Indicator Profile",
-    "All selected key indicators exactly match the preceding selected month.",
+    "All selected key indicators exactly match the preceding calendar month.",
     "availability",
     selectedFacilityKeys,
     selectedMonths,
     (facilityKey, month) => {
-      const index = selectedMonths.indexOf(month);
-      if (index <= 0) return null;
-      const previousMonth = selectedMonths[index - 1];
+      const previousMonth = previousMonthOf(month);
+      if (!previousMonth) return null;
       const currentValues = valuesFor(facilityKey, month, selectedIndicators);
       const previousValues = valuesFor(facilityKey, previousMonth, selectedIndicators);
       const complete = selectedIndicators.length > 0
         && [...currentValues, ...previousValues].every((item) => item !== null);
-      const flag = complete && currentValues.every((item, valueIndex) => item === previousValues[valueIndex]);
-      return { flag, detail: flag ? `Selected profile exactly matches ${data.months[previousMonth]}` : `Selected profile differs from ${data.months[previousMonth]} or is incomplete` };
+      if (!complete) return missingReport(`Selected profile incomplete in ${data.months[month]} or ${data.months[previousMonth]}`);
+      const flag = currentValues.every((item, valueIndex) => item === previousValues[valueIndex]);
+      return { flag, detail: flag ? `Selected profile exactly matches ${data.months[previousMonth]}` : `Selected profile differs from ${data.months[previousMonth]}` };
     },
   ));
 
@@ -292,7 +470,8 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     selectedMonths,
     (facilityKey, month) => {
       const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return { flag: false, detail: "Facility report is missing and counted separately" };
+      if (!monthRecord) return missingReport("Facility report is missing and counted separately");
+      if (selectedIndicators.length === 0) return missingReport("No key indicator selected");
       const missing = selectedIndicators.filter((id) =>
         !Object.prototype.hasOwnProperty.call(monthRecord.values, id) || monthRecord.values[id] === null);
       return {
@@ -312,7 +491,7 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     selectedMonths,
     (facilityKey, month) => {
       const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return { flag: false, detail: "Facility report is missing and counted separately" };
+      if (!monthRecord) return missingReport("Facility report is missing and counted separately");
       const blank = data.orderedIndicatorIds.filter((id) =>
         !Object.prototype.hasOwnProperty.call(monthRecord.values, id) || monthRecord.values[id] === null);
       return {
@@ -331,7 +510,9 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     selectedFacilityKeys,
     selectedMonths,
     (facilityKey, month) => {
-      const invalid = record(facilityKey, month)?.invalidIndicators ?? [];
+      const monthRecord = record(facilityKey, month);
+      if (!monthRecord) return missingReport();
+      const invalid = monthRecord.invalidIndicators ?? [];
       return {
         flag: invalid.length > 0,
         detail: invalid.length > 0 ? `Invalid: ${invalid.map(label).join(", ")}` : "All counts are non-negative integers or blank",
@@ -343,15 +524,17 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
   cards.push(makeCard(
     "abrupt_zero",
     "Abrupt Zero",
-    "A selected indicator falls from a positive value to zero.",
+    "A selected indicator falls from a positive value to zero in the next calendar month.",
     "accuracy",
     selectedFacilityKeys,
     selectedMonths,
     (facilityKey, month) => {
-      const index = selectedMonths.indexOf(month);
-      if (index <= 0) return null;
-      const previousMonth = selectedMonths[index - 1];
-      const affected = selectedIndicators.filter((id) =>
+      const previousMonth = previousMonthOf(month);
+      if (!previousMonth) return null;
+      const comparable = selectedIndicators.filter((id) =>
+        value(facilityKey, previousMonth, id) !== null && value(facilityKey, month, id) !== null);
+      if (comparable.length === 0) return missingReport(`No indicator reported in both ${data.months[previousMonth]} and ${data.months[month]}`);
+      const affected = comparable.filter((id) =>
         (value(facilityKey, previousMonth, id) ?? 0) > 0 && value(facilityKey, month, id) === 0);
       return {
         flag: affected.length > 0,
@@ -364,23 +547,26 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
   cards.push(makeCard(
     "month_outliers",
     "Month-on-Month Outliers",
-    "Selected indicators cross the chosen increase/decrease threshold.",
+    "Selected indicators cross the chosen increase/decrease threshold (months under 10 on both sides are not compared).",
     "accuracy",
     selectedFacilityKeys,
     selectedMonths,
     (facilityKey, month) => {
-      const index = selectedMonths.indexOf(month);
-      if (index <= 0) return null;
-      const previousMonth = selectedMonths[index - 1];
-      const outliers: { id: string; change: number }[] = [];
+      const previousMonth = previousMonthOf(month);
+      if (!previousMonth) return null;
+      const outliers: { id: string; change: string }[] = [];
+      let comparable = 0;
       for (const id of selectedIndicators) {
-        const change = pctChange(value(facilityKey, previousMonth, id), value(facilityKey, month, id));
-        if (change !== null && passesOutlier(change, filters.outlierSeverity)) outliers.push({ id, change });
+        const change = monthOnMonthChange(value(facilityKey, previousMonth, id), value(facilityKey, month, id));
+        if (!change) continue;
+        comparable += 1;
+        if (passesChangeSeverity(change, filters.outlierSeverity)) outliers.push({ id, change: formatChange(change) });
       }
+      if (comparable === 0) return missingReport(`No indicator comparable with ${data.months[previousMonth]}`);
       return {
         flag: outliers.length > 0,
         detail: outliers.length > 0
-          ? outliers.map((item) => `${label(item.id)} ${item.change.toFixed(1)}%`).join("; ")
+          ? outliers.map((item) => `${label(item.id)} ${item.change}`).join("; ")
           : `No outlier from ${data.months[previousMonth]}`,
         indicators: outliers.map((item) => item.id),
       };
@@ -397,10 +583,9 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     (facilityKey, month) => {
       const fully = value(facilityKey, month, "fullyImmunized");
       const prerequisites = ["penta3", "opv3", "mr1"];
-      const exceeded = prerequisites.filter((id) => {
-        const prerequisite = value(facilityKey, month, id);
-        return fully !== null && prerequisite !== null && fully > prerequisite;
-      });
+      const present = prerequisites.filter((id) => value(facilityKey, month, id) !== null);
+      if (fully === null || present.length === 0) return missingReport("Fully Immunized or its prerequisites not reported");
+      const exceeded = present.filter((id) => fully > (value(facilityKey, month, id) as number));
       return {
         flag: exceeded.length > 0,
         detail: exceeded.length > 0
@@ -417,31 +602,110 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     },
   ));
 
+  // Dropouts — cumulative over the selected period, months where both doses
+  // were reported. A single month's pair is not the same cohort of children.
   const dropoutPairs = uniquePairs([...DEFAULT_DROPOUT_PAIRS, ...(filters.dropoutPairs ?? [])]);
   for (const pair of dropoutPairs) {
-    cards.push(makeCard(
+    cards.push(makePeriodCard(
       `drop_${pair.from}_${pair.to}`,
       `${label(pair.from)} → ${label(pair.to)} Dropout`,
-      `Dropout is at least ${filters.dropoutThreshold}%.`,
+      `Cumulative dropout over the selected period is at least ${filters.dropoutThreshold}%.`,
       "accuracy",
       selectedFacilityKeys,
-      selectedMonths,
-      (facilityKey, month) => {
-        const from = value(facilityKey, month, pair.from);
-        const to = value(facilityKey, month, pair.to);
-        const dropout = from !== null && to !== null && from > 0 && to < from
-          ? ((from - to) / from) * 100
-          : null;
-        const flag = dropout !== null && dropout >= filters.dropoutThreshold;
+      (facilityKey) => {
+        const months: Record<string, PctsHit> = {};
+        const pairs: Array<[number | null, number | null]> = [];
+        let evaluableMonths = 0;
+        let hitMonths = 0;
+        for (const month of selectedMonths) {
+          const from = value(facilityKey, month, pair.from);
+          const to = value(facilityKey, month, pair.to);
+          pairs.push([from, to]);
+          const monthly = dropoutPct(from, to);
+          if (monthly === null) continue;
+          evaluableMonths += 1;
+          const monthFlag = monthly >= filters.dropoutThreshold;
+          if (monthFlag) hitMonths += 1;
+          months[month] = {
+            flag: monthFlag,
+            detail: `${monthly.toFixed(1)}% (${from} → ${to})`,
+            values: { [pair.from]: from, [pair.to]: to },
+          };
+        }
+        const totals = matchedTotals(pairs);
+        const pct = dropoutPct(totals.a, totals.b);
+        const flag = pct !== null && pct >= filters.dropoutThreshold;
         return {
-          flag,
-          detail: dropout === null ? "Not evaluable or no dropout" : `${dropout.toFixed(1)}% dropout`,
-          values: { [pair.from]: from, [pair.to]: to },
-          indicators: flag ? [pair.from, pair.to] : undefined,
+          period: pct === null
+            ? { flag: false, evaluable: false, detail: "Not evaluable: no month with both doses reported" }
+            : {
+                flag,
+                detail: `${pct.toFixed(1)}% over ${totals.months} month${totals.months === 1 ? "" : "s"} (${totals.a} → ${totals.b})`,
+                values: { [pair.from]: totals.a, [pair.to]: totals.b },
+                indicators: flag ? [pair.from, pair.to] : undefined,
+              },
+          months,
+          evaluableMonths,
+          hitMonths,
         };
       },
     ));
   }
+
+  // Later dose > earlier dose — judged on the selected period's totals over
+  // months where both doses were reported. Monthly reversals are shown as context.
+  const doseOrderCard = (id: string, name: string, description: string, links: Array<[string, string]>) =>
+    makePeriodCard(id, name, description, "consistency", selectedFacilityKeys, (facilityKey) => {
+      const months: Record<string, PctsHit> = {};
+      let evaluableMonths = 0;
+      let hitMonths = 0;
+      for (const month of selectedMonths) {
+        const reversals: string[] = [];
+        let comparable = false;
+        for (const [beforeId, afterId] of links) {
+          const before = value(facilityKey, month, beforeId);
+          const after = value(facilityKey, month, afterId);
+          if (before === null || after === null) continue;
+          comparable = true;
+          if (after > before) reversals.push(`${label(afterId)} ${after} > ${label(beforeId)} ${before}`);
+        }
+        if (!comparable) continue;
+        evaluableMonths += 1;
+        if (reversals.length > 0) hitMonths += 1;
+        months[month] = {
+          flag: reversals.length > 0,
+          detail: reversals.length > 0 ? reversals.join("; ") : "Dose order consistent this month",
+        };
+      }
+      const reversals: string[] = [];
+      const affected = new Set<string>();
+      let comparableLinks = 0;
+      for (const [beforeId, afterId] of links) {
+        const totals = matchedTotals(selectedMonths.map((month) => [
+          value(facilityKey, month, beforeId),
+          value(facilityKey, month, afterId),
+        ] as [number | null, number | null]));
+        if (totals.months === 0) continue;
+        comparableLinks += 1;
+        if (totals.b > totals.a) {
+          reversals.push(`${label(afterId)} ${totals.b} > ${label(beforeId)} ${totals.a}`);
+          affected.add(beforeId);
+          affected.add(afterId);
+        }
+      }
+      return {
+        period: comparableLinks === 0
+          ? { flag: false, evaluable: false, detail: "Not evaluable: no month with both doses reported" }
+          : {
+              flag: reversals.length > 0,
+              detail: reversals.length > 0 ? `Period totals: ${reversals.join("; ")}` : "Dose order consistent over the period",
+              indicators: [...affected],
+            },
+        months,
+        evaluableMonths,
+        hitMonths,
+      };
+    });
 
   const sequenceSpecs: { id: string; name: string; doses: string[] }[] = [
     { id: "penta_sequence", name: "Penta Dose Sequence", doses: ["penta1", "penta2", "penta3"] },
@@ -452,57 +716,21 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     { id: "mr_sequence", name: "MR Dose Sequence", doses: ["mr1", "mr2"] },
   ];
   for (const spec of sequenceSpecs) {
-    cards.push(makeCard(
-      spec.id,
-      spec.name,
-      "A later dose exceeds the preceding dose.",
-      "consistency",
-      selectedFacilityKeys,
-      selectedMonths,
-      (facilityKey, month) => {
-        const reversals: string[] = [];
-        const affected = new Set<string>();
-        for (let index = 1; index < spec.doses.length; index += 1) {
-          const beforeId = spec.doses[index - 1];
-          const afterId = spec.doses[index];
-          const before = value(facilityKey, month, beforeId);
-          const after = value(facilityKey, month, afterId);
-          if (before !== null && after !== null && after > before) {
-            reversals.push(`${label(afterId)} ${after} > ${label(beforeId)} ${before}`);
-            affected.add(beforeId); affected.add(afterId);
-          }
-        }
-        return {
-          flag: reversals.length > 0,
-          detail: reversals.length > 0 ? reversals.join("; ") : "Dose sequence is consistent",
-          indicators: [...affected],
-        };
-      },
-    ));
+    const links: Array<[string, string]> = spec.doses.slice(1).map((dose, index) => [spec.doses[index], dose]);
+    cards.push(doseOrderCard(spec.id, spec.name, "A later dose exceeds the preceding dose over the selected period.", links));
   }
 
   uniquePairs(filters.additionalPairs).forEach((pair, index) => {
-    cards.push(makeCard(
+    cards.push(doseOrderCard(
       `custom_consistency_${index}_${pair.from}_${pair.to}`,
       `${label(pair.to)} > ${label(pair.from)}`,
-      "User-defined later-dose comparison.",
-      "consistency",
-      selectedFacilityKeys,
-      selectedMonths,
-      (facilityKey, month) => {
-        const from = value(facilityKey, month, pair.from);
-        const to = value(facilityKey, month, pair.to);
-        const flag = from !== null && to !== null && to > from;
-        return {
-          flag,
-          detail: `${label(pair.from)} ${from ?? "blank"}; ${label(pair.to)} ${to ?? "blank"}`,
-          values: { [pair.from]: from, [pair.to]: to },
-          indicators: flag ? [pair.from, pair.to] : undefined,
-        };
-      },
+      "User-defined later-dose comparison over the selected period.",
+      [[pair.from, pair.to]],
     ));
   });
 
+  // Co-administered doses are given at the same visit, so at facility level
+  // their monthly counts must match exactly (blanks are a completeness finding).
   const coadminGroups: { id: string; name: string; ids: string[] }[] = [
     { id: "coadmin_6_weeks", name: "Co-administered Antigens — 6 weeks", ids: ["opv1", "penta1", "rota1", "pcv1", "fipv1"] },
     { id: "coadmin_10_weeks", name: "Co-administered Antigens — 10 weeks", ids: ["opv2", "penta2", "rota2"] },
@@ -514,7 +742,7 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     cards.push(makeCard(
       spec.id,
       spec.name,
-      `Relative spread exceeds ${filters.coadminTolerance}%.`,
+      "Doses given at the same visit are reported with different counts.",
       "consistency",
       selectedFacilityKeys,
       selectedMonths,
@@ -522,15 +750,13 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
         const comparable = spec.ids
           .map((id) => [id, value(facilityKey, month, id)] as const)
           .filter((entry): entry is readonly [string, number] => entry[1] !== null);
-        if (comparable.length < 2) return { flag: false, detail: "Fewer than two comparable values" };
-        const numericValues = comparable.map((entry) => entry[1]);
-        const maximum = Math.max(...numericValues);
-        const minimum = Math.min(...numericValues);
-        const spread = maximum > 0 ? ((maximum - minimum) / maximum) * 100 : 0;
-        const flag = spread > filters.coadminTolerance;
+        if (comparable.length < 2) return missingReport("Fewer than two comparable values");
+        const flag = coadminHasDifference(comparable.map((entry) => entry[1]));
         return {
           flag,
-          detail: `${spread.toFixed(1)}% relative spread`,
+          detail: flag
+            ? `Counts differ: ${comparable.map(([id, count]) => `${label(id)} ${count}`).join(", ")}`
+            : "All reported counts match",
           values: Object.fromEntries(comparable),
           indicators: flag ? comparable.map((entry) => entry[0]) : undefined,
         };
@@ -538,48 +764,5 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
     ));
   }
 
-  const denominator = selectedFacilityKeys.length;
-  const componentScores = scoreComponents(cards, denominator);
-  const overallScore = averageComponentScore(componentScores);
-  const issueNamesByFacility: Record<string, string[]> = Object.fromEntries(
-    selectedFacilityKeys.map((facilityKey) => [facilityKey, []]),
-  );
-  for (const card of cards) {
-    for (const facilityKey of card.affectedFacilities) issueNamesByFacility[facilityKey].push(card.name);
-  }
-  const issueCountByFacility = Object.fromEntries(
-    selectedFacilityKeys.map((facilityKey) => [facilityKey, issueNamesByFacility[facilityKey].length]),
-  );
-  const affectedSet = new Set(cards.flatMap((card) => card.affectedFacilities));
-  const visibleFacilityKeys = filters.issuesOnly
-    ? selectedFacilityKeys.filter((facilityKey) => affectedSet.has(facilityKey))
-    : selectedFacilityKeys;
-
-  const selectedBlocks = [...new Set(selectedFacilityKeys.map((facilityKey) => facility(facilityKey).block))];
-  const blockSummaries: Record<string, PctsBlockSummary> = {};
-  for (const block of selectedBlocks) {
-    const blockKeys = selectedFacilityKeys.filter((facilityKey) => facility(facilityKey).block === block);
-    const blockKeySet = new Set(blockKeys);
-    const blockScores = scoreComponents(cards, blockKeys.length, blockKeySet);
-    blockSummaries[block] = {
-      block,
-      denominator: blockKeys.length,
-      affectedFacilities: blockKeys.filter((facilityKey) => affectedSet.has(facilityKey)).length,
-      componentScores: blockScores,
-      overallScore: averageComponentScore(blockScores),
-    };
-  }
-
-  return {
-    cards,
-    selectedFacilityKeys,
-    visibleFacilityKeys,
-    selectedMonths,
-    denominator,
-    componentScores,
-    overallScore,
-    issueCountByFacility,
-    issueNamesByFacility,
-    blockSummaries,
-  };
+  return { cards, selectedFacilityKeys, selectedMonths };
 }

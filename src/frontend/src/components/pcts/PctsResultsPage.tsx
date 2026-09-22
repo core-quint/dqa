@@ -13,10 +13,17 @@ import {
 import { apiFetch } from "../../api";
 import type { AuthState } from "../dqa/LoginPage";
 import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
-import { monthsSpanInclusive } from "../../lib/dqa/parseUtils";
+import { monthsSpanInclusive, periodDurationLabel } from "../../lib/dqa/parseUtils";
 import { scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
+import { componentCoverageNote, formatScore, SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
-import { pickReviewBaselines, type ReviewBaseline, type SnapshotRecord } from "../../lib/snapshots";
+import {
+  isCurrentMethod,
+  pickReviewBaselines,
+  type ReviewBaseline,
+  type SnapshotRecord,
+  type SnapshotScope,
+} from "../../lib/snapshots";
 import { computePctsKpis } from "../../lib/pcts/computeKpis";
 import {
   DEFAULT_PCTS_FILTERS,
@@ -170,8 +177,27 @@ export function PctsResultsPage({
       .catch(() => {});
   }, [data.districtName, data.stateName]);
 
+  // Exactly what this review scored. PCTS reviews are always saved at DISTRICT
+  // level (backend policy), so a narrowed selection is recorded as a partial scope.
+  const selectedBlockCount = new Set(
+    computed.selectedFacilityKeys.map((facilityKey) => data.facilities[facilityKey]?.block),
+  ).size;
+  const narrowedBlocks = filters.blocks.length > 0 && filters.blocks.length < data.blocks.length;
+  const savedScope: SnapshotScope = {
+    blocks: narrowedBlocks ? [...filters.blocks].sort() : [],
+    districts: [],
+    months: [...computed.selectedMonths],
+    ownership: [...filters.ownership].sort(),
+    ruralUrban: [...filters.ruralUrban].sort(),
+    facilityTypes: [...filters.facilityTypes].sort(),
+    analysisMode: null,
+    // Anything that leaves out part of the district's facility roster.
+    partial: computed.selectedFacilityKeys.length < Object.keys(data.facilities).length,
+  };
+  const canSave = computed.selectedMonths.length > 0 && computed.overallScore !== null;
+
   const handleSave = async () => {
-    if (!computed.selectedMonths.length) return;
+    if (!canSave) return;
     setSaving(true);
     try {
       const saved: any = await apiFetch("/api/snapshots", {
@@ -180,7 +206,7 @@ export function PctsResultsPage({
           portal: "PCTS",
           state: data.stateName,
           district: data.districtName,
-          duration: `${computed.selectedMonths.length} month${computed.selectedMonths.length === 1 ? "" : "s"}`,
+          duration: periodDurationLabel(computed.selectedMonths),
           designation: reviewInfo?.designation || null,
           purpose: reviewInfo?.purpose || null,
           purposeDetail:
@@ -190,11 +216,17 @@ export function PctsResultsPage({
           completenessScore: computed.componentScores.completeness.score,
           accuracyScore: computed.componentScores.accuracy.score,
           consistencyScore: computed.componentScores.consistency.score,
+          scoredComponents: computed.scoredComponents,
+          methodVersion: SCORING_METHOD_VERSION,
+          scope: savedScope,
           dqaLevel: "DISTRICT",
           periodStart: computed.selectedMonths[0],
           periodEnd: computed.selectedMonths[computed.selectedMonths.length - 1],
-          blockCount: data.globalBlockCount,
+          // What was analysed, then the upload totals for context.
+          blockCount: selectedBlockCount,
           facilityCount: computed.denominator,
+          uploadBlockCount: data.globalBlockCount,
+          uploadFacilityCount: data.globalFacilityCount,
         }),
       });
       setSavedReviews((current) => [saved as SnapshotRecord, ...current]);
@@ -215,7 +247,7 @@ export function PctsResultsPage({
     key: group,
     label: GROUP_META[group].label,
     color: GROUP_META[group].color,
-    current: computed.componentScores[group]?.score ?? 0,
+    current: computed.componentScores[group]?.score ?? null,
   }));
 
   // The months this upload covers, derived exactly as the save path records them
@@ -226,7 +258,10 @@ export function PctsResultsPage({
         end: computed.selectedMonths[computed.selectedMonths.length - 1],
       }
     : null;
-  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod);
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
+    kpiData: { dqaLevel: "DISTRICT", block: null, scope: savedScope },
+  });
+  const legacyReviewCount = savedReviews.filter((review) => !isCurrentMethod(review)).length;
 
   const currentMeta = GROUP_META[activeGroup];
   const trendHandler = onOpenTrends ?? onTrend;
@@ -297,7 +332,8 @@ export function PctsResultsPage({
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={saving || snapshotSaved}
+                disabled={saving || snapshotSaved || !canSave}
+                title={canSave ? undefined : "Nothing in the current selection can be scored"}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
               >
                 <Save className="h-3.5 w-3.5" />
@@ -336,6 +372,9 @@ export function PctsResultsPage({
         <ScoreStrip
           overall={computed.overallScore}
           rows={scoreRows}
+          coverageNote={componentCoverageNote(computed)}
+          customSettings={computed.customMethod}
+          legacyReviewCount={legacyReviewCount}
           baselines={baselines}
           saved={snapshotSaved}
           onOpenDetail={() => changeActiveGroup("overall")}
@@ -393,6 +432,7 @@ export function PctsResultsPage({
                   total: card.total,
                   any: card.any,
                   all: card.all,
+                  eligible: card.eligible,
                 }))}
                 onOpenCard={(id) => {
                   const card = groupCards.find((candidate) => candidate.id === id);
@@ -570,6 +610,9 @@ function PctsCardTable({ data, card, months }: { data: PctsParsed; card: PctsCar
           <th className="px-4 py-3">Facility</th>
           <th className="px-4 py-3">Type</th>
           {months.map((month) => <th key={month} className="min-w-[180px] px-4 py-3">{month}</th>)}
+          {card.basis === "period" ? (
+            <th className="min-w-[200px] px-4 py-3">Selected period (decides the flag)</th>
+          ) : null}
         </tr>
       </thead>
       <tbody className="bg-white">
@@ -588,6 +631,11 @@ function PctsCardTable({ data, card, months }: { data: PctsParsed; card: PctsCar
                   </td>
                 );
               })}
+              {card.basis === "period" ? (
+                <td className={`px-4 py-2.5 text-xs font-semibold leading-5 ${card.periodHits?.[facilityKey]?.flag ? "bg-red-50 text-red-800" : "text-slate-600"}`}>
+                  {card.periodHits?.[facilityKey]?.detail ?? "Not evaluated"}
+                </td>
+              ) : null}
             </tr>
           );
         })}
@@ -633,7 +681,7 @@ function PctsOverallSummary({
               ["Consistency", computed.componentScores.consistency.score, { bg: "#e5f6ef", text: "#0d7a54" }],
             ] as const).map(([label, score, style]) => (
               <span key={label} className="rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: style.bg, color: style.text }}>
-                {label}: {Math.round(score)}
+                {label}: {formatScore(score, 0)}
               </span>
             ))}
           </div>

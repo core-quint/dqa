@@ -12,10 +12,17 @@ import {
 import type { AuthState } from "../dqa/LoginPage";
 import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
 import { apiFetch } from "../../api";
-import { monthsSpanInclusive } from "../../lib/dqa/parseUtils";
+import { monthsSpanInclusive, periodDurationLabel } from "../../lib/dqa/parseUtils";
 import { scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
+import { componentCoverageNote, formatScore, SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
-import { pickReviewBaselines, type ReviewBaseline, type SnapshotRecord } from "../../lib/snapshots";
+import {
+  isCurrentMethod,
+  pickReviewBaselines,
+  type ReviewBaseline,
+  type SnapshotRecord,
+  type SnapshotScope,
+} from "../../lib/snapshots";
 import { computeStateHmisKpis } from "../../lib/stateHmis/compute";
 import {
   DEFAULT_STATE_HMIS_FILTERS,
@@ -186,7 +193,24 @@ export function StateHmisResultsPage({
       .catch(() => {});
   }, [data.reportLevel, data.stateName]);
 
+  // Exactly what this review scored. State reviews are saved at STATE level; a
+  // district or block subset is recorded as a partial scope.
+  const totalUploadUnits = data.reportLevel === "block" ? data.blocks.length : data.districts.length;
+  const narrowedDistricts = filters.districts.length > 0 && filters.districts.length < data.districts.length;
+  const savedScope: SnapshotScope = {
+    blocks: data.reportLevel === "block" && computed.selectedUnits.length < totalUploadUnits ? [...filters.blocks].sort() : [],
+    districts: narrowedDistricts ? [...filters.districts].sort() : [],
+    months: [...computed.selectedMonths],
+    ownership: [],
+    ruralUrban: [],
+    facilityTypes: [],
+    analysisMode: null,
+    partial: computed.selectedUnits.length < totalUploadUnits,
+  };
+  const canSave = computed.selectedMonths.length > 0 && computed.overallScore !== null;
+
   const handleSave = async () => {
+    if (!canSave) return;
     try {
       setSaving(true);
       const period = computed.selectedMonths;
@@ -196,7 +220,7 @@ export function StateHmisResultsPage({
           portal: "HMIS_STATE",
           state: data.stateName,
           district: "All Districts",
-          duration: `${period.length} month${period.length === 1 ? "" : "s"}`,
+          duration: periodDurationLabel(period),
           designation: reviewInfo?.designation || null,
           purpose: reviewInfo?.purpose || null,
           purposeDetail:
@@ -206,6 +230,9 @@ export function StateHmisResultsPage({
           completenessScore: computed.componentScores.completeness.score,
           accuracyScore: computed.componentScores.accuracy.score,
           consistencyScore: computed.componentScores.consistency.score,
+          scoredComponents: computed.scoredComponents,
+          methodVersion: SCORING_METHOD_VERSION,
+          scope: savedScope,
           dqaLevel: "STATE",
           periodStart: period[0],
           periodEnd: period[period.length - 1],
@@ -227,7 +254,7 @@ export function StateHmisResultsPage({
     key: group,
     label: GROUP_META[group].label,
     color: GROUP_META[group].color,
-    current: computed.componentScores[group]?.score ?? 0,
+    current: computed.componentScores[group]?.score ?? null,
   }));
 
   // The months this upload covers, derived exactly as the save path records them
@@ -236,7 +263,10 @@ export function StateHmisResultsPage({
   const currentPeriod = selectedMonths.length
     ? { start: selectedMonths[0], end: selectedMonths[selectedMonths.length - 1] }
     : null;
-  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod);
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
+    kpiData: { dqaLevel: "STATE", block: null, scope: savedScope, analysisGranularity: data.reportLevel === "block" ? "BLOCK" : "DISTRICT" },
+  });
+  const legacyReviewCount = savedReviews.filter((review) => !isCurrentMethod(review)).length;
 
   const meta = GROUP_META[activeGroup];
   const groupCards =
@@ -323,7 +353,8 @@ export function StateHmisResultsPage({
               </button>
               <button
                 onClick={handleSave}
-                disabled={saving || snapshotSaved}
+                disabled={saving || snapshotSaved || !canSave}
+                title={canSave ? undefined : "Nothing in the current selection can be scored"}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Save className="h-3.5 w-3.5" />
@@ -352,6 +383,9 @@ export function StateHmisResultsPage({
         <ScoreStrip
           overall={computed.overallScore}
           rows={scoreRows}
+          coverageNote={componentCoverageNote(computed)}
+          customSettings={computed.customMethod}
+          legacyReviewCount={legacyReviewCount}
           baselines={baselines}
           saved={snapshotSaved}
           onOpenDetail={() => setActiveGroup("overall")}
@@ -424,6 +458,7 @@ export function StateHmisResultsPage({
                   total: card.total,
                   any: card.any,
                   all: card.all,
+                  eligible: card.eligible,
                 }))}
                 onOpenCard={(id) => {
                   const card = groupCards.find((c) => c.id === id);
@@ -669,6 +704,9 @@ function CardTable({ data, card, months }: { data: StateHmisParsed; card: StateH
               {month}
             </th>
           ))}
+          {card.basis === "period" ? (
+            <th className="px-4 py-3">Selected period (decides the flag)</th>
+          ) : null}
         </tr>
       </thead>
       <tbody className="bg-white">
@@ -691,6 +729,11 @@ function CardTable({ data, card, months }: { data: StateHmisParsed; card: StateH
                 </td>
               );
             })}
+            {card.basis === "period" ? (
+              <td className={`px-4 py-2.5 text-xs font-semibold ${card.periodHits?.[district]?.flag ? "bg-red-100 text-red-800" : "text-slate-600"}`}>
+                {card.periodHits?.[district]?.detail ?? "Not evaluated"}
+              </td>
+            ) : null}
           </tr>
         ))}
       </tbody>
@@ -868,7 +911,7 @@ function OverallDistrictSummary({
                 className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold"
                 style={{ background: style.bg, color: style.text }}
               >
-                {label}: {Math.round(score)}
+                {label}: {formatScore(score, 0)}
               </span>
             ))}
           </div>
