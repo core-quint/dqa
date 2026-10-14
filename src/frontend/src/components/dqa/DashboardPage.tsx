@@ -795,7 +795,12 @@ function roundedTopBar(x: number, y: number, w: number, h: number, r: number): s
 // Average score trend — line (SVG)
 // ---------------------------------------------------------------
 
-function ScoreTrendChart({ months }: { months: MonthBucket[] }) {
+/** Older multi-month reviews on the data-period axis: muted and dashed, never the main line. */
+const SPREAD_LINE = "#94a3b8";
+
+type TrendPoint = { i: number; x: number; y: number; v: number; label: string };
+
+function ScoreTrendChart({ months, twoLines = false }: { months: MonthBucket[]; twoLines?: boolean }) {
   const [hover, setHover] = useState<number | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
   const W = 360;
@@ -806,19 +811,34 @@ function ScoreTrendChart({ months }: { months: MonthBucket[] }) {
   const PAD_B = 26;
   const plotW = W - PAD_L - PAD_R;
   const plotH = H - PAD_T - PAD_B;
-  const scored = months.filter((m) => m.avgOverall !== null);
+  // One line on the review axis; on the data-period axis the main line is month
+  // scores only and older multi-month reviews get their own muted dashed line.
+  const mainValue = (m: MonthBucket) => (twoLines ? m.avgMonthScore : m.avgOverall);
   const band = plotW / Math.max(1, months.length);
   const cx = (i: number) => PAD_L + band * i + band / 2;
   const cy = (v: number) => PAD_T + plotH - (v / 100) * plotH;
-  const points = months
-    .map((m, i) => (m.avgOverall !== null ? { i, x: cx(i), y: cy(m.avgOverall), v: m.avgOverall, label: m.label } : null))
-    .filter((p): p is { i: number; x: number; y: number; v: number; label: string } => p !== null);
-  const path = points.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+  const toPoints = (value: (m: MonthBucket) => number | null) => months
+    .map((m, i) => {
+      const v = value(m);
+      return v !== null ? { i, x: cx(i), y: cy(v), v, label: m.label } : null;
+    })
+    .filter((p): p is TrendPoint => p !== null);
+  // With two lines a month without a value breaks the line, so sparse month scores
+  // never draw a stretch of data that does not exist; one line keeps joining them.
+  const toPath = (pts: TrendPoint[]) => pts
+    .map((p, idx) => `${idx === 0 || (twoLines && p.i !== pts[idx - 1].i + 1) ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+    .join(" ");
+  const points = toPoints(mainValue);
+  const spreadPoints = twoLines ? toPoints((m) => m.avgSpread) : [];
+  const path = toPath(points);
+  const spreadPath = toPath(spreadPoints);
   const last = points[points.length - 1];
   const labelEvery = Math.max(1, Math.ceil(months.length / 6));
-  const hoveredPoint = hover !== null ? points.find((p) => p.i === hover) ?? null : null;
+  const hoveredMonth = hover !== null ? months[hover] ?? null : null;
+  const hoveredX = hover !== null ? cx(hover) : null;
+  const hasAny = points.length > 0 || spreadPoints.length > 0;
 
-  if (scored.length === 0) {
+  if (!hasAny) {
     return <div className="flex h-[200px] items-center justify-center text-sm font-medium text-slate-400">No scored reviews in this slice.</div>;
   }
 
@@ -833,6 +853,18 @@ function ScoreTrendChart({ months }: { months: MonthBucket[] }) {
         }}
       />
       <div ref={exportRef} className="relative">
+        {twoLines ? (
+          <div className="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600">
+            <span className="inline-flex items-center gap-1.5">
+              <svg width="18" height="8" aria-hidden="true"><line x1="0" y1="4" x2="18" y2="4" stroke={INK} strokeWidth="2" /></svg>
+              Month scores
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <svg width="18" height="8" aria-hidden="true"><line x1="0" y1="4" x2="18" y2="4" stroke={SPREAD_LINE} strokeWidth="2" strokeDasharray="4 3" /></svg>
+              Older multi-month reviews (one score per review)
+            </span>
+          </div>
+        ) : null}
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Average overall DQA score per month">
         {[0, 25, 50, 75, 100].map((t) => (
           <g key={t}>
@@ -849,8 +881,16 @@ function ScoreTrendChart({ months }: { months: MonthBucket[] }) {
             </text>
           ) : null,
         )}
-        {hoveredPoint ? (
-          <line x1={hoveredPoint.x} x2={hoveredPoint.x} y1={PAD_T} y2={PAD_T + plotH} stroke="#94a3b8" strokeWidth={1} />
+        {hoveredX !== null && hoveredMonth && (mainValue(hoveredMonth) !== null || (twoLines && hoveredMonth.avgSpread !== null)) ? (
+          <line x1={hoveredX} x2={hoveredX} y1={PAD_T} y2={PAD_T + plotH} stroke="#94a3b8" strokeWidth={1} />
+        ) : null}
+        {spreadPoints.length > 0 ? (
+          <>
+            <path d={spreadPath} fill="none" stroke={SPREAD_LINE} strokeWidth={1.5} strokeDasharray="4 3" strokeLinejoin="round" strokeLinecap="round" />
+            {spreadPoints.map((p) => (
+              <circle key={`s${p.i}`} cx={p.x} cy={p.y} r={2.5} fill="#ffffff" stroke={SPREAD_LINE} strokeWidth={1.5} />
+            ))}
+          </>
         ) : null}
         <path d={path} fill="none" stroke={INK} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
         {points.map((p) => (
@@ -874,8 +914,12 @@ function ScoreTrendChart({ months }: { months: MonthBucket[] }) {
             width={band}
             height={plotH}
             fill="transparent"
-            tabIndex={m.avgOverall !== null ? 0 : -1}
-            aria-label={m.avgOverall !== null ? `${m.label}: average score ${m.avgOverall.toFixed(1)}` : undefined}
+            tabIndex={mainValue(m) !== null || (twoLines && m.avgSpread !== null) ? 0 : -1}
+            aria-label={
+              mainValue(m) !== null || (twoLines && m.avgSpread !== null)
+                ? `${m.label}: ${twoLines ? "month scores" : "average score"} ${mainValue(m)?.toFixed(1) ?? "none"}${twoLines ? `, older multi-month reviews ${m.avgSpread?.toFixed(1) ?? "none"}` : ""}`
+                : undefined
+            }
             onMouseEnter={() => setHover(i)}
             onMouseLeave={() => setHover(null)}
             onFocus={() => setHover(i)}
@@ -883,13 +927,32 @@ function ScoreTrendChart({ months }: { months: MonthBucket[] }) {
           />
         ))}
         </svg>
-        {hoveredPoint ? (
+        {hoveredX !== null && hoveredMonth && (mainValue(hoveredMonth) !== null || (twoLines && hoveredMonth.avgSpread !== null)) ? (
           <div
             className="pointer-events-none absolute z-10 rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-lg"
-            style={{ left: `${((hoveredPoint.x / W) * 100).toFixed(2)}%`, top: 0, transform: "translateX(-50%)" }}
+            style={{ left: `${((hoveredX / W) * 100).toFixed(2)}%`, top: 0, transform: "translateX(-50%)" }}
           >
-            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{hoveredPoint.label}</div>
-            <div className="text-sm font-bold tabular-nums text-slate-900">{hoveredPoint.v.toFixed(1)}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{hoveredMonth.label}</div>
+            {twoLines ? (
+              <>
+                <div className="flex items-baseline justify-between gap-3 text-xs text-slate-600">
+                  <span>Month scores</span>
+                  <span className="text-sm font-bold tabular-nums text-slate-900">
+                    {hoveredMonth.avgMonthScore?.toFixed(1) ?? "-"}
+                    <span className="ml-1 text-[10px] font-medium text-slate-400">({hoveredMonth.monthScoreReviews})</span>
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between gap-3 text-xs text-slate-500">
+                  <span>Older multi-month</span>
+                  <span className="text-sm font-semibold tabular-nums text-slate-500">
+                    {hoveredMonth.avgSpread?.toFixed(1) ?? "-"}
+                    <span className="ml-1 text-[10px] font-medium text-slate-400">({hoveredMonth.spreadReviews})</span>
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="text-sm font-bold tabular-nums text-slate-900">{mainValue(hoveredMonth)?.toFixed(1)}</div>
+            )}
           </div>
         ) : null}
       </div>
@@ -1564,7 +1627,6 @@ export function DashboardPage({ auth }: Props) {
   const [durationDrill, setDurationDrill] = useState<string | null>(null);
   const stats = useMemo(() => computeDashboardStats(scored, filters.districtScope), [scored, filters.districtScope]);
   const months = useMemo(() => groupByMonth(scored, filters.basis), [scored, filters.basis]);
-  const gridMonthReviews = useMemo(() => scored.filter((r) => r.monthScores !== null).length, [scored]);
   const durations = useMemo(() => groupByDuration(scored), [scored]);
   const isPeriodBasis = filters.basis === "period";
   const axisNoun = isPeriodBasis ? "data month" : "review month";
@@ -2347,7 +2409,14 @@ export function DashboardPage({ auth }: Props) {
                             <th className="px-2 py-1.5 text-right">U-WIN</th>
                             <th className="px-2 py-1.5 text-right">PCTS</th>
                             <th className="px-2 py-1.5 text-right">Total</th>
-                            <th className="px-2 py-1.5 text-right">Avg score</th>
+                            {isPeriodBasis ? (
+                              <>
+                                <th className="px-2 py-1.5 text-right" title="Scores for that month alone">Month score</th>
+                                <th className="px-2 py-1.5 text-right" title="Older multi-month reviews: one score counted in every month">Older multi-month</th>
+                              </>
+                            ) : (
+                              <th className="px-2 py-1.5 text-right">Avg score</th>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
@@ -2359,7 +2428,14 @@ export function DashboardPage({ auth }: Props) {
                               <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.uwin)}</td>
                               <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtCount(m.pcts)}</td>
                               <td className="px-2 py-1.5 text-right font-bold tabular-nums text-slate-900">{fmtCount(m.total)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtScore(m.avgOverall)}</td>
+                              {isPeriodBasis ? (
+                                <>
+                                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtScore(m.avgMonthScore)}</td>
+                                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtScore(m.avgSpread)}</td>
+                                </>
+                              ) : (
+                                <td className="px-2 py-1.5 text-right tabular-nums text-slate-700">{fmtScore(m.avgOverall)}</td>
+                              )}
                             </tr>
                           ))}
                         </tbody>
@@ -2375,16 +2451,14 @@ export function DashboardPage({ auth }: Props) {
                     <div className="text-sm font-bold text-slate-900">Average overall score by {axisNoun}</div>
                     {isPeriodBasis ? (
                       <div className="mt-1 text-[11px] leading-4 text-slate-500">
-                        {gridMonthReviews > 0
-                          ? `${fmtCount(gridMonthReviews)} review${gridMonthReviews === 1 ? "" : "s"} saved with a score grid count their own score for each month; older reviews count one score across all their months.`
-                          : "Each review counts its one score across all the months it analysed."}
+                        Solid: scores for that month alone (month scores saved from 14 Oct 2026, and one-month reviews). Dashed: older multi-month reviews, whose single score counts in every month they covered.
                       </div>
                     ) : null}
                   </div>
                   {months.length === 0 ? (
                     <div className="flex h-[200px] items-center justify-center text-sm font-medium text-slate-400">No reviews in this slice.</div>
                   ) : (
-                    <ScoreTrendChart months={months} />
+                    <ScoreTrendChart months={months} twoLines={isPeriodBasis} />
                   )}
                 </GlassPanel>
               </div>

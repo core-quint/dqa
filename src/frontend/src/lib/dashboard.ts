@@ -528,6 +528,18 @@ export interface MonthBucket {
   stateHmis: number;
   total: number;
   avgOverall: number | null;
+  /**
+   * Data-period axis only. Average of scores that describe this month alone: a
+   * score-grid month cell, or the score of a review that covered just this month.
+   */
+  avgMonthScore: number | null;
+  monthScoreReviews: number;
+  /**
+   * Data-period axis only. Average of multi-month reviews saved without month
+   * scores, whose one score is counted in every month they covered.
+   */
+  avgSpread: number | null;
+  spreadReviews: number;
 }
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -555,18 +567,25 @@ export function groupByMonth(records: DashboardRecord[], basis: TrendBasis = "re
   if (records.length === 0) return [];
   const byMonth = new Map<
     string,
-    { hmis: number; uwin: number; pcts: number; stateHmis: number; scores: (number | null)[] }
+    {
+      hmis: number; uwin: number; pcts: number; stateHmis: number;
+      scores: (number | null)[]; monthScores: (number | null)[]; spreadScores: (number | null)[];
+    }
   >();
   for (const r of records) {
     for (const month of recordMonths(r, basis)) {
-      const bucket = byMonth.get(month) ?? { hmis: 0, uwin: 0, pcts: 0, stateHmis: 0, scores: [] };
+      const bucket = byMonth.get(month) ?? { hmis: 0, uwin: 0, pcts: 0, stateHmis: 0, scores: [], monthScores: [], spreadScores: [] };
       if (r.portal === "HMIS_STATE") bucket.stateHmis += 1;
       else if (r.portal === "UWIN_STATE" || r.portal === "UWIN") bucket.uwin += 1;
       else if (r.portal === "PCTS") bucket.pcts += 1;
       else bucket.hmis += 1;
-      bucket.scores.push(
-        basis === "period" && r.monthScores && month in r.monthScores ? r.monthScores[month] : r.overall,
-      );
+      const ownMonthScore = basis === "period" && r.monthScores !== null && month in r.monthScores;
+      bucket.scores.push(ownMonthScore ? r.monthScores![month] : r.overall);
+      if (basis === "period") {
+        if (ownMonthScore) bucket.monthScores.push(r.monthScores![month]);
+        else if (r.periodMonths.length === 1) bucket.monthScores.push(r.overall);
+        else bucket.spreadScores.push(r.overall);
+      }
       byMonth.set(month, bucket);
     }
   }
@@ -589,6 +608,10 @@ export function groupByMonth(records: DashboardRecord[], basis: TrendBasis = "re
       stateHmis: bucket?.stateHmis ?? 0,
       total: (bucket?.hmis ?? 0) + (bucket?.uwin ?? 0) + (bucket?.pcts ?? 0) + (bucket?.stateHmis ?? 0),
       avgOverall: bucket ? mean(bucket.scores) : null,
+      avgMonthScore: bucket ? mean(bucket.monthScores) : null,
+      monthScoreReviews: bucket ? bucket.monthScores.filter((v) => v !== null).length : 0,
+      avgSpread: bucket ? mean(bucket.spreadScores) : null,
+      spreadReviews: bucket ? bucket.spreadScores.filter((v) => v !== null).length : 0,
     });
     cursor = nextMonthKey(cursor);
     guard += 1;
