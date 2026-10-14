@@ -12,6 +12,7 @@ import {
   type ResolvedBreakdown,
 } from "../../lib/snapshotBreakdown";
 import { scoreColorClass } from "../../lib/dqa/scoreUtils";
+import { monthYearLabel } from "../../lib/dqa/parseUtils";
 
 const COMPONENT_SHORT: Record<BreakdownComponent, string> = {
   availability: "Avail.",
@@ -142,8 +143,8 @@ export function ReviewBreakdownPanel({ snapshot, contextLines }: { snapshot: Sna
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-[11px] text-slate-500">
           {grid.source === "saved"
-            ? "Score grid for the complete upload with the standard scoring settings; on-screen filters were not applied. Single-period scores cannot run the period-to-period checks."
-            : "Saved before score grids were recorded: only the cell this review's score represents is filled."}
+            ? `Whole upload, filters not applied. Single-${periodWord} scores skip ${periodWord}-to-${periodWord} checks.`
+            : "Saved before score grids: only this review's own cell is filled."}
         </p>
         <button
           type="button"
@@ -180,6 +181,47 @@ export function ReviewBreakdownPanel({ snapshot, contextLines }: { snapshot: Sna
           )}
         </div>
       </div>
+      {grid.rows.some((row) => (row.periods?.length ?? 0) > 0) ? (
+        <div>
+          <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+            {rowWord} by {periodWord} - overall score
+          </div>
+          <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200 bg-white">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">{rowWord}</th>
+                  {grid.periods.map((period) => (
+                    <th key={period.key} className="whitespace-nowrap px-2 py-2 text-right" title={periodDisplayLabel(period)}>
+                      {monthYearLabel(period.key)}
+                    </th>
+                  ))}
+                  <th className="px-3 py-2 text-right">All</th>
+                </tr>
+              </thead>
+              <tbody>
+                {grid.rows.map((row) => {
+                  const byKey = new Map((row.periods ?? []).map((period) => [period.key, period.cell]));
+                  return (
+                    <tr key={row.name} className="border-t border-slate-100">
+                      <td className="px-3 py-1.5 font-medium text-slate-700">{row.name}</td>
+                      {grid.periods.map((period) => {
+                        const cell = byKey.get(period.key);
+                        return (
+                          <td key={period.key} className="px-2 py-1.5 text-right tabular-nums">
+                            {cell ? <ScoreCellText value={cell.overall} strong /> : <span className="text-slate-300">-</span>}
+                          </td>
+                        );
+                      })}
+                      <td className="bg-slate-50/70 px-3 py-1.5 text-right tabular-nums"><ScoreCellText value={row.cell.overall} strong /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

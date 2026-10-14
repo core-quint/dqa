@@ -16,6 +16,12 @@ export function buildUwinBreakdown(csv: UwinParsedCSV): Promise<SnapshotBreakdow
   // The complete upload at the standard level and settings, whatever is on screen.
   const run = (months: string[]) =>
     computeUwinKpis(csv, { ...UWIN_DEFAULT_FILTERS, analysisMode, months, activeGroup: 'availability' });
+  const score = (kpis: ReturnType<typeof run>) => {
+    const cell = cellFromScore(computeOverallScore(kpis, GROUPS));
+    const rows = subsetRows(kpis, GROUPS, (unit) =>
+      isState ? unit.district?.trim() || 'Unknown district' : displayBlockLabel(unit.block));
+    return { cell, cumulative: cell, rows };
+  };
   const declared = new Map((csv.reportingPeriods ?? []).map((period) => [period.key, period]));
   return buildBreakdown({
     areaLevel: isState ? 'STATE' : 'DISTRICT',
@@ -30,14 +36,7 @@ export function buildUwinBreakdown(csv: UwinParsedCSV): Promise<SnapshotBreakdow
       from: declared.get(key)?.from ?? null,
       to: declared.get(key)?.to ?? null,
     }),
-    scoreWhole: () => {
-      const kpis = run([]);
-      return {
-        cumulative: cellFromScore(computeOverallScore(kpis, GROUPS)),
-        rows: subsetRows(kpis, GROUPS, (unit) =>
-          isState ? unit.district?.trim() || 'Unknown district' : displayBlockLabel(unit.block)),
-      };
-    },
-    scorePeriod: (key) => cellFromScore(computeOverallScore(run([key]), GROUPS)),
+    scoreWhole: () => score(run([])),
+    scorePeriod: (key) => score(run([key])),
   });
 }

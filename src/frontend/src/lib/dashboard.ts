@@ -12,7 +12,7 @@ import {
   normalizePortal,
 } from "./snapshots";
 import type { DistrictScope } from "./maps/priorityDistricts";
-import { gridMonthScores, type SnapshotBreakdown } from "./snapshotBreakdown";
+import { gridBlockRows, gridMonthScores, monthScoresFromPeriods, type SnapshotBreakdown } from "./snapshotBreakdown";
 import {
   inDistrictScope,
   isPriorityDistrict,
@@ -80,6 +80,11 @@ export interface DashboardRecord {
   monthScores: Record<string, number | null> | null;
   /** Which scoring framework the review belongs to; averages never mix them. */
   scoreFamily: ScoreFamily;
+  /**
+   * District reviews saved with a score grid: each block's own scores, so a drill
+   * into the district can show block scores (see expandGridBlocks). Null otherwise.
+   */
+  gridBlocks: GridBlockScore[] | null;
   availability: number | null;
   completeness: number | null; // always null for U-WIN (portal has no completeness KPIs)
   accuracy: number | null;
@@ -88,6 +93,21 @@ export interface DashboardRecord {
   facilityCount: number | null;
   sessionSiteCount: number | null;
   districtCount: number | null;
+}
+
+/** One block row of a district review's saved score grid. */
+export interface GridBlockScore {
+  name: string;
+  key: string;
+  overall: number | null;
+  availability: number | null;
+  completeness: number | null;
+  accuracy: number | null;
+  consistency: number | null;
+  /** Facilities in the block when the grid's unit is facilities (HMIS, PCTS); else null. */
+  facilities: number | null;
+  /** The block's own score per analysed month, from the grid's block-by-period cells. */
+  monthScores: Record<string, number | null> | null;
 }
 
 /**
@@ -124,7 +144,68 @@ export function scoreFamilyCounts(records: DashboardRecord[]): Record<ScoreFamil
 export function scoresForFamily(records: DashboardRecord[], family: ScoreFamily | null): DashboardRecord[] {
   return records.map((r) => (family !== null && r.scoreFamily === family
     ? r
-    : { ...r, overall: null, monthScores: null, availability: null, completeness: null, accuracy: null, consistency: null }));
+    : {
+        ...r,
+        overall: null,
+        monthScores: null,
+        availability: null,
+        completeness: null,
+        accuracy: null,
+        consistency: null,
+        gridBlocks: r.gridBlocks?.map((block) => ({
+          ...block, overall: null, availability: null, completeness: null, accuracy: null, consistency: null, monthScores: null,
+        })) ?? null,
+      }));
+}
+
+/**
+ * Block grain: every district review saved with a score grid becomes one record per
+ * block of its upload, scored by that block's row (and its month cells), so drilling
+ * into a district shows block scores. The review keeps its id and DQA type; only the
+ * block, the scores and the block-sized counts change. Records without grid blocks
+ * (block reviews, state reviews, reviews saved before grids) pass through unchanged.
+ */
+export function expandGridBlocks(records: DashboardRecord[]): DashboardRecord[] {
+  return records.flatMap((r) => {
+    if (!r.gridBlocks || r.gridBlocks.length === 0) return [r];
+    return r.gridBlocks.map((block) => ({
+      ...r,
+      block: block.name,
+      blockKey: block.key,
+      overall: block.overall,
+      availability: block.availability,
+      completeness: block.completeness,
+      accuracy: block.accuracy,
+      consistency: block.consistency,
+      monthScores: block.monthScores,
+      blockCount: 1,
+      facilityCount: block.facilities,
+      sessionSiteCount: null,
+      districtCount: null,
+      gridBlocks: null,
+    }));
+  });
+}
+
+function gridBlockScores(
+  grid: SnapshotBreakdown | null | undefined,
+  months: string[],
+  hasCompleteness: boolean,
+): GridBlockScore[] | null {
+  const rows = gridBlockRows(grid);
+  if (rows.length === 0) return null;
+  const unitsAreFacilities = grid?.unitLabel === "Facilities";
+  return rows.map((row) => ({
+    name: titleCaseGeo(row.name),
+    key: geoKey(row.name),
+    overall: row.cell.overall,
+    availability: row.cell.availability,
+    completeness: hasCompleteness ? row.cell.completeness : null,
+    accuracy: row.cell.accuracy,
+    consistency: row.cell.consistency,
+    facilities: unitsAreFacilities ? row.cell.units : null,
+    monthScores: monthScoresFromPeriods(row.periods, months),
+  }));
 }
 
 export function toDashboardRecord(s: SnapshotRecord, grid?: SnapshotBreakdown | null): DashboardRecord | null {
@@ -170,6 +251,7 @@ export function toDashboardRecord(s: SnapshotRecord, grid?: SnapshotBreakdown | 
     reportingMonth: s.reportingMonth?.trim() || "",
     overall: typeof s.overallScore === "number" && Number.isFinite(s.overallScore) ? s.overallScore : null,
     monthScores: gridMonthScores(s, grid, periodMonths),
+    gridBlocks: isStateDqa || dqaLevel === "BLOCK" ? null : gridBlockScores(grid, periodMonths, portal !== "UWIN"),
     scoreFamily: scoreFamilyOf(portal) as ScoreFamily,
     availability: s.kpiData?.availabilityScore ?? null,
     completeness: portal === "UWIN" || portal === "UWIN_STATE" ? null : (s.kpiData?.completenessScore ?? null),

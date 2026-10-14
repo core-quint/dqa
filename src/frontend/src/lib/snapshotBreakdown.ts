@@ -10,11 +10,13 @@
 //                            of a weekly U-WIN upload
 //   * row  x cumulative    - each block (state portals: each district) over the
 //                            whole upload
+//   * row  x each period   - each block (or district) for each month / week
 //
-// Rows are subsets of the cumulative run (computeSubsetScore), so they cost no
-// extra engine runs; each period is one run with only that period selected, the
-// same as saving a one-period review, so checks that compare a period with the
-// next are N/A there.
+// Rows are subsets of a run (computeSubsetScore), so they cost no extra engine
+// runs; each period is one run with only that period selected, the same as saving
+// a one-period review, so checks that compare a period with the next are N/A
+// there. Grids saved before row periods existed (2026-10-14) have rows without
+// `periods`.
 //
 // The grid is stored apart from the snapshot (snapshotBreakdowns/{id}) and read on
 // demand: the snapshot list is fetched whole by Trends and the Dashboard.
@@ -56,9 +58,18 @@ export interface BreakdownPeriod {
   cell: BreakdownCell;
 }
 
+export interface BreakdownRowPeriod {
+  /** Same key as the matching entry of SnapshotBreakdown.periods. */
+  key: string;
+  cell: BreakdownCell;
+}
+
 export interface BreakdownRow {
   name: string;
+  /** The block (or district) over the whole upload. */
   cell: BreakdownCell;
+  /** The block (or district) for each period; absent on grids saved before it existed. */
+  periods?: BreakdownRowPeriod[];
 }
 
 export interface SnapshotBreakdown {
@@ -145,8 +156,8 @@ export interface BreakdownPlan {
   periodInfo: (key: string) => { label: string; from: string | null; to: string | null };
   /** The complete upload with standard settings: area cumulative plus one row per block / district. */
   scoreWhole: () => { cumulative: BreakdownCell; rows: BreakdownRow[] };
-  /** The complete upload restricted to one period. */
-  scorePeriod: (key: string) => BreakdownCell;
+  /** The complete upload restricted to one period: the area plus one row per block / district. */
+  scorePeriod: (key: string) => { cell: BreakdownCell; rows: BreakdownRow[] };
 }
 
 /** Hands the browser a frame between engine runs, so a large upload never freezes the page. */
@@ -155,9 +166,12 @@ const yieldToBrowser = () => new Promise<void>((resolve) => setTimeout(resolve, 
 export async function buildBreakdown(plan: BreakdownPlan): Promise<SnapshotBreakdown> {
   const whole = plan.scoreWhole();
   const periods: BreakdownPeriod[] = [];
+  const rowPeriods = new Map<string, BreakdownRowPeriod[]>(whole.rows.map((row) => [row.name, []]));
   for (const key of [...plan.periodKeys].sort()) {
     await yieldToBrowser();
-    periods.push({ key, ...plan.periodInfo(key), cell: plan.scorePeriod(key) });
+    const scored = plan.scorePeriod(key);
+    periods.push({ key, ...plan.periodInfo(key), cell: scored.cell });
+    for (const row of scored.rows) rowPeriods.get(row.name)?.push({ key, cell: row.cell });
   }
   return {
     version: BREAKDOWN_VERSION,
@@ -169,7 +183,9 @@ export async function buildBreakdown(plan: BreakdownPlan): Promise<SnapshotBreak
     periodKind: plan.periodKind,
     cumulative: whole.cumulative,
     periods,
-    rows: whole.rows.slice().sort((a, b) => a.name.localeCompare(b.name)),
+    rows: whole.rows
+      .map((row) => ({ ...row, periods: rowPeriods.get(row.name) ?? [] }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
 
@@ -248,9 +264,22 @@ export function gridMonthScores(
   months: string[],
 ): Record<string, number | null> | null {
   if (!grid || grid.periods.length === 0 || !headlineCoversWholeArea(snapshot)) return null;
+  return monthScoresFromPeriods(grid.periods, months);
+}
+
+/**
+ * One overall score per calendar month from a list of period cells (an area's or
+ * one block's): weeks in the same month averaged, a week spanning two months
+ * counted in both, months outside `months` ignored. Null when nothing falls inside.
+ */
+export function monthScoresFromPeriods(
+  periods: { key: string; cell: BreakdownCell }[] | undefined,
+  months: string[],
+): Record<string, number | null> | null {
+  if (!periods || periods.length === 0) return null;
   const wanted = new Set(months);
   const values = new Map<string, number[]>();
-  for (const period of grid.periods) {
+  for (const period of periods) {
     for (const month of periodMonths(period.key)) {
       if (!wanted.has(month)) continue;
       const list = values.get(month) ?? [];
@@ -331,6 +360,10 @@ export function breakdownWorkbookHtml(snapshot: SnapshotRecord, breakdown: Resol
     ...breakdown.periods.map((period) => ({ label: periodDisplayLabel(period), cell: period.cell })),
   ];
   const byRow = breakdown.rows.map((row) => ({ label: row.name, cell: row.cell }));
+  const periodLabels = new Map(breakdown.periods.map((period) => [period.key, periodDisplayLabel(period)]));
+  const byRowPeriod = breakdown.rows.flatMap((row) =>
+    (row.periods ?? []).map((period) => ({ label: `${row.name} - ${periodLabels.get(period.key) ?? period.key}`, cell: period.cell })),
+  );
   const intro = [
     `Score grid · ${snapshot.state}${breakdown.areaLevel === 'DISTRICT' ? ` · ${snapshot.district}` : ''}`,
     ...contextLines,
@@ -344,5 +377,9 @@ export function breakdownWorkbookHtml(snapshot: SnapshotRecord, breakdown: Resol
     + tableHtml(periodTitle, overTime, columns, breakdown.unitLabel)
     + `<br/><table><tr><td ${TEXT_CELL}><b>${esc(`${rowTitle} - cumulative`)}</b></td></tr></table>`
     + (byRow.length > 0 ? tableHtml(rowTitle, byRow, columns, breakdown.unitLabel) : `<table><tr><td ${TEXT_CELL}>Not recorded</td></tr></table>`)
+    + (byRowPeriod.length > 0
+      ? `<br/><table><tr><td ${TEXT_CELL}><b>${esc(`${rowTitle} by ${periodTitle.toLowerCase()}`)}</b></td></tr></table>`
+        + tableHtml(`${rowTitle} - ${periodTitle}`, byRowPeriod, columns, breakdown.unitLabel)
+      : '')
     + `</body></html>`;
 }

@@ -8,6 +8,14 @@ import { buildBreakdown, cellFromComponents, type SnapshotBreakdown } from '../s
 export function buildPctsBreakdown(data: PctsParsed): Promise<SnapshotBreakdown> {
   // The complete upload with the standard settings, whatever is on screen.
   const run = (months: string[]) => computePctsKpis(data, { ...DEFAULT_PCTS_FILTERS, months });
+  const score = (computed: ReturnType<typeof run>) => {
+    const cell = cellFromComponents(computed.overallScore, computed.componentScores, computed.denominator);
+    const rows = Object.values(computed.blockSummaries).map((summary) => ({
+      name: summary.block,
+      cell: cellFromComponents(summary.overallScore, summary.componentScores, summary.denominator),
+    }));
+    return { cell, cumulative: cell, rows };
+  };
   return buildBreakdown({
     areaLevel: 'DISTRICT',
     areaName: data.districtName,
@@ -17,19 +25,7 @@ export function buildPctsBreakdown(data: PctsParsed): Promise<SnapshotBreakdown>
     periodKeys: Object.keys(data.months),
     methodVersion: SCORING_METHOD_VERSION,
     periodInfo: (key) => ({ label: monthLongLabel(key), from: null, to: null }),
-    scoreWhole: () => {
-      const computed = run([]);
-      return {
-        cumulative: cellFromComponents(computed.overallScore, computed.componentScores, computed.denominator),
-        rows: Object.values(computed.blockSummaries).map((summary) => ({
-          name: summary.block,
-          cell: cellFromComponents(summary.overallScore, summary.componentScores, summary.denominator),
-        })),
-      };
-    },
-    scorePeriod: (key) => {
-      const computed = run([key]);
-      return cellFromComponents(computed.overallScore, computed.componentScores, computed.denominator);
-    },
+    scoreWhole: () => score(run([])),
+    scorePeriod: (key) => score(run([key])),
   });
 }

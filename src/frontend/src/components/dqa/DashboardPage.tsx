@@ -35,6 +35,8 @@ import {
   EMPTY_DASHBOARD_FILTERS,
   groupByCategory,
   groupByDuration,
+  expandGridBlocks,
+  geoKey,
   groupByGeo,
   groupByMonth,
   LINELIST_HEADERS,
@@ -1488,21 +1490,31 @@ export function DashboardPage({ auth }: Props) {
     fetchSnapshots();
   }, [fetchSnapshots]);
 
-  // Saved score grids only change the data-period axis (real month scores), so they
-  // are fetched the first time that axis is shown.
+  // Saved score grids feed the data-period axis (real month scores) and the block
+  // drill-down (block scores of district reviews), so they are fetched only when one
+  // of those is on screen: every grid for the period axis, one district's for a drill.
   const [grids, setGrids] = useState<Map<string, SnapshotBreakdown>>(() => new Map());
   useEffect(() => {
-    if (filters.basis !== "period" || !snapshots) return;
+    if (!snapshots) return;
+    const drillDistrict = filters.district;
+    if (filters.basis !== "period" && !drillDistrict && !filters.block) return;
+    const wanted = filters.basis === "period"
+      ? snapshots
+      : snapshots.filter((s) =>
+        (!filters.state || geoKey(s.state) === filters.state) &&
+        (!drillDistrict || geoKey(s.district) === drillDistrict));
     let cancelled = false;
-    loadBreakdowns(snapshots)
+    loadBreakdowns(wanted)
       .then((loaded) => {
-        if (!cancelled && loaded.size > 0) setGrids(loaded);
+        if (cancelled) return;
+        // Keep the same Map when nothing new arrived, so records are not rebuilt.
+        setGrids((current) => ([...loaded.keys()].every((id) => current.has(id)) ? current : new Map([...current, ...loaded])));
       })
       .catch((err) => console.error("Score grids failed to load:", err));
     return () => {
       cancelled = true;
     };
-  }, [filters.basis, snapshots]);
+  }, [filters.basis, filters.block, filters.district, filters.state, snapshots]);
 
   useEffect(() => {
     setFilters((current) => {
@@ -1529,7 +1541,10 @@ export function DashboardPage({ auth }: Props) {
     [grids, hasHmisAccess, hasPctsAccess, snapshots],
   );
 
-  const filtered = useMemo(() => applyDashboardFilters(records, filters), [records, filters]);
+  // A block filter also keeps district reviews whose score grid covers that block,
+  // each scored by that block's row.
+  const filterBase = useMemo(() => (filters.block ? expandGridBlocks(records) : records), [records, filters.block]);
+  const filtered = useMemo(() => applyDashboardFilters(filterBase, filters), [filterBase, filters]);
   // Score averages come from ONE portal's saved scores at a time. A source filter
   // decides it; otherwise the reader picks, defaulting to the source with the most
   // scored reviews in view.
@@ -1594,6 +1609,7 @@ export function DashboardPage({ auth }: Props) {
       if (filters.state && r.stateKey !== filters.state) continue;
       if (filters.district && r.districtKey !== filters.district) continue;
       if (r.blockKey && r.block) map.set(r.blockKey, r.block);
+      for (const block of r.gridBlocks ?? []) map.set(block.key, block.name);
     }
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [scopedRecords, filters.state, filters.district]);
@@ -1614,7 +1630,17 @@ export function DashboardPage({ auth }: Props) {
     : filters.state || uniqueStates <= 1
       ? "district"
       : "state";
-  const geo = useMemo(() => groupByGeo(scored, geoLevel, filters.districtScope), [scored, geoLevel, filters.districtScope]);
+  const geo = useMemo(
+    () => groupByGeo(geoLevel === "block" ? expandGridBlocks(scored) : scored, geoLevel, filters.districtScope),
+    [scored, geoLevel, filters.districtScope],
+  );
+  // District reviews in this drill whose score grid places them on their blocks.
+  const gridDistrictReviews = useMemo(
+    () => geoLevel === "block"
+      ? applyDashboardFilters(records, { ...filters, block: "" }).filter((r) => (r.gridBlocks?.length ?? 0) > 0).length
+      : 0,
+    [filters, geoLevel, records],
+  );
 
   const designations = useMemo(
     () => groupByCategory(scored, (r) => r.designation),
@@ -2490,6 +2516,11 @@ export function DashboardPage({ auth }: Props) {
                           : "Click to filter this block"
                     }
                   />
+                  {geoLevel === "block" && gridDistrictReviews > 0 ? (
+                    <div className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-[11px] font-medium text-sky-800">
+                      {fmtCount(gridDistrictReviews)} district review{gridDistrictReviews !== 1 ? "s" : ""} saved with a score grid {gridDistrictReviews !== 1 ? "are" : "is"} shown in each of {gridDistrictReviews !== 1 ? "their" : "its"} blocks, scored by that block's row.
+                    </div>
+                  ) : null}
                   {geoLevel !== "state" && geo.unattributed > 0 ? (
                     <div className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-[11px] font-medium text-slate-500">
                       {fmtCount(geo.unattributed)} higher-level review{geo.unattributed !== 1 ? "s are" : " is"} not tied to a single {geoLevel} and {geo.unattributed !== 1 ? "are" : "is"} retained in totals but not shown as {geoLevel} bars.

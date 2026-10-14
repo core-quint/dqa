@@ -30,5 +30,23 @@ export const breakdownSchema = z.object({
     to: isoDay.nullable(),
     cell: gridCell,
   })).max(60),
-  rows: z.array(z.object({ name: z.string().max(200), cell: gridCell })).max(2000),
+  rows: z.array(z.object({
+    name: z.string().max(200),
+    cell: gridCell,
+    // Per-period cells of this row; absent on grids saved before 2026-10-14.
+    periods: z.array(z.object({ key: z.string().min(1).max(40), cell: gridCell })).max(60).optional(),
+  })).max(2000),
 });
+
+export type SnapshotBreakdownInput = z.infer<typeof breakdownSchema>;
+
+// Firestore caps a document at 1 MiB. A grid over this budget first drops its
+// per-period row cells (the least used part), then is not stored at all.
+const GRID_BYTE_BUDGET = 900_000;
+
+/** The grid as it can be stored, or null when even its compact form is too large. */
+export function fitBreakdownToDocument(grid: SnapshotBreakdownInput): SnapshotBreakdownInput | null {
+  if (JSON.stringify(grid).length <= GRID_BYTE_BUDGET) return grid;
+  const compact = { ...grid, rows: grid.rows.map(({ periods: _periods, ...row }) => row) };
+  return JSON.stringify(compact).length <= GRID_BYTE_BUDGET ? compact : null;
+}

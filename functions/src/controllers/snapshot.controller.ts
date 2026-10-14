@@ -5,7 +5,7 @@ import type { CollectionReference, Query } from "firebase-admin/firestore";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { authorizePctsWrite } from "../lib/pctsAuthorization";
 import { canAccessPortal, normalizePortal } from "../lib/portalAuthorization";
-import { breakdownSchema } from "../lib/snapshotBreakdownSchema";
+import { breakdownSchema, fitBreakdownToDocument } from "../lib/snapshotBreakdownSchema";
 
 // Scoring method v2 (2026-09-22): a component that could not be scored is sent
 // as null (N/A), never as a made-up 0 or 100.
@@ -84,8 +84,12 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
   let breakdown: z.infer<typeof breakdownSchema> | null = null;
   if (parsed.data.breakdown !== undefined && parsed.data.breakdown !== null) {
     const grid = breakdownSchema.safeParse(parsed.data.breakdown);
-    if (grid.success) breakdown = grid.data;
-    else console.warn("Snapshot score grid rejected:", grid.error.issues[0]);
+    if (grid.success) {
+      breakdown = fitBreakdownToDocument(grid.data);
+      if (!breakdown) console.warn("Snapshot score grid too large to store; saved without it.");
+    } else {
+      console.warn("Snapshot score grid rejected:", grid.error.issues[0]);
+    }
   }
 
   const normalizedPortal = normalizePortal(portal);
