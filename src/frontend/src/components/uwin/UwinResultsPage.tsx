@@ -27,6 +27,7 @@ import { GlassPanel } from "../branding/GlassPanel";
 import type { AuthState } from "../dqa/LoginPage";
 import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
 import { UwinStateReportDialog } from "./UwinStateReportDialog";
+import { declaredWindow, windowLabel } from "../../lib/uwin/uploadPeriod";
 
 interface Props {
   csv: UwinParsedCSV;
@@ -179,6 +180,9 @@ export function UwinResultsPage({
   // The months this upload covers, derived exactly as the save path records them
   // so a same-period match is an equality test, not a guess.
   const savedMeta = buildSnapshotSaveMeta(auth, filters, csv.allMonths, { analysisMode: true });
+  // The exact From-To dates the uploader declared for the periods being reviewed;
+  // the analysis itself runs on month / week keys.
+  const dataWindow = declaredWindow(csv.reportingPeriods ?? [], filters.months);
   const savedLevel = isStateUwin ? "STATE" : savedMeta.dqaLevel;
   const savedBlock = isStateUwin ? null : savedMeta.block ?? null;
   // A state upload narrowed to some districts or blocks is a partial state review.
@@ -245,6 +249,9 @@ export function UwinResultsPage({
           block: savedBlock,
           periodStart: snapshotMeta.periodStart,
           periodEnd: snapshotMeta.periodEnd,
+          dataFrom: dataWindow?.from ?? null,
+          dataTo: dataWindow?.to ?? null,
+          uploadDuration: dataWindow?.duration ?? null,
           // What was analysed, then the upload totals for context.
           blockCount: kpis.globalBlockCount,
           facilityCount: new Set(
@@ -307,6 +314,7 @@ export function UwinResultsPage({
     { label: "State", value: csv.stateName || "-" },
     { label: isStateUwin ? "Districts" : "District", value: isStateUwin ? String(csv.globalDistrictCount) : (csv.distName || "-") },
     { label: "Duration", value: durationStr },
+    ...(dataWindow ? [{ label: "Reporting dates", value: windowLabel(dataWindow.from, dataWindow.to) }] : []),
     { label: "Blocks", value: String(csv.globalBlockCount) },
     {
       label: unitPlural,

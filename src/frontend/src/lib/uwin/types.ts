@@ -17,6 +17,7 @@ import type {
   KpiCard,
   SummaryRow,
 } from '../dqa/types';
+import type { UwinUploadDuration } from './uploadPeriod';
 
 // Re-export shared types for convenience
 export type {
@@ -43,14 +44,13 @@ export interface UwinReportingPeriod {
   from: string;
   /** Inclusive end of the period the uploader declared, YYYY-MM-DD. */
   to: string;
-  /** Bucket key the period maps to: "YYYY-MM" for a whole month, else "from..to". */
-  key: string;
   /**
-   * Whether this period actually drives the analysis columns. False when the file
-   * carried its own Month column covering a whole month or more, which is left in
-   * charge so a multi-month export keeps one column per month.
+   * Bucket key the period maps to: for a monthly file the "YYYY-MM" month holding
+   * most of its days, for a weekly one the "from..to" day range.
    */
-  applied: boolean;
+  key: string;
+  /** Weekly or Monthly, as declared before upload. */
+  duration: UwinUploadDuration;
 }
 
 // ---- UWIN CSV shape (extends HMIS ParsedCSV with beneficiary columns) ----

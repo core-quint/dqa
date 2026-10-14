@@ -2,6 +2,7 @@ import type { FilterState } from "./dqa/types";
 import type { AuthState } from "../components/dqa/LoginPage";
 import { periodDurationLabel, periodMonthBounds, periodMonths } from "./dqa/parseUtils";
 import { SCORING_METHOD_VERSION } from "./dqa/scoring";
+import { windowLabel } from "./uwin/uploadPeriod";
 
 export type SnapshotPortal = "HMIS" | "UWIN" | "UWIN_STATE" | "HMIS_STATE" | "PCTS";
 export type SnapshotDqaLevel = "STATE" | "DISTRICT" | "BLOCK";
@@ -41,6 +42,10 @@ export interface SnapshotKpiData {
   block?: string | null;
   periodStart?: string | null;
   periodEnd?: string | null;
+  /** Exact first / last day of data the uploader declared, "YYYY-MM-DD" (U-WIN, from 2026-10). */
+  dataFrom?: string | null;
+  dataTo?: string | null;
+  uploadDuration?: "WEEKLY" | "MONTHLY" | null;
   blockCount?: number | null;
   facilityCount?: number | null;
   sessionSiteCount?: number | null;
@@ -242,6 +247,16 @@ export function getDataPeriod(
 /** "Apr 2025 – Jun 2025", or "Apr 2025" for a single month. */
 export function periodRangeLabel(start: string, end: string): string {
   return start === end ? monthFullLabel(start) : `${monthFullLabel(start)} – ${monthFullLabel(end)}`;
+}
+
+const ISO_DAY_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+/** The declared From-To dates, e.g. "20 Apr - 20 May 2026"; null for reviews that did not record them. */
+export function dataDatesLabel(snapshot: Pick<SnapshotRecord, "kpiData">): string | null {
+  const from = snapshot.kpiData?.dataFrom?.trim() ?? "";
+  const to = snapshot.kpiData?.dataTo?.trim() ?? "";
+  if (!ISO_DAY_RE.test(from) || !ISO_DAY_RE.test(to) || from > to) return null;
+  return windowLabel(from, to);
 }
 
 /** "Apr 2025 – Jun 2025", or "Apr 2025" for a single month, or null when unrecorded. */

@@ -39,9 +39,9 @@ const PORTAL_CARDS = [
     key: "U-WIN",
     title: "U-WIN Review",
     description:
-      "Merge up to twelve session-site exports, confirm missing month metadata, and review immunization quality indicators in one pass.",
+      "Merge up to four weekly or twelve monthly session-site exports, confirm each file's reporting period, and review immunization quality indicators in one pass.",
     accent: "linear-gradient(135deg, rgba(245,158,11,0.95), rgba(16,185,129,0.92))",
-    bulletA: "Multi-file monthly merge",
+    bulletA: "Multi-file weekly or monthly merge",
     bulletB: "U-WIN-specific session and beneficiary logic",
   },
   {

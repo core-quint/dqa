@@ -18,7 +18,8 @@ import {
   periodKey,
   makePeriodKey,
   monthEndDay,
-  isMonthKey,
+  monthLongLabel,
+  periodMonths,
   asNumOrNull,
   arraySearchFirst,
   indicatorShortFromHeader,
@@ -31,6 +32,13 @@ import {
 } from '../dqa/parseUtils';
 import type { FacilityRecord } from '../dqa/types';
 import type { UwinParsedCSV, UwinReportingPeriod } from './types';
+import {
+  checkUwinPeriod,
+  checkUwinUpload,
+  uwinPeriodKey,
+  windowLabel,
+  type UwinUploadDuration,
+} from './uploadPeriod';
 
 // ============================================================
 // UWIN two-row header detection + merging
@@ -156,21 +164,28 @@ const MONTH_CANDIDATES = ['month', 'reporting month', 'month name'];
 // ============================================================
 // Reporting period -> Month column
 //
-// Every U-WIN upload now declares a from/to reporting period, and that period is
-// what the analysis buckets on. How it meets the file's own Month column:
+// Every U-WIN upload declares Weekly or Monthly plus a from/to window per file (rules
+// in ./uploadPeriod.ts), and that declared period is what the analysis buckets on:
+// a week as its own day range, a month as the calendar month holding most of its
+// days. It replaces the file's own Month column whenever there is one:
 //
-//   * no Month column              -> the declared period becomes the Month column.
-//   * Month column, sub-month period -> the declared period overwrites it. A weekly
-//     export still stamps "Sep-2026" on every row, which is too coarse to bucket a
-//     week on, so the declared dates are the more truthful source.
-//   * Month column, whole month or longer -> the file's own months win, so a
-//     multi-month export keeps one analysis column per month.
+//   * no Month column -> the declared period becomes the Month column.
+//   * Month column    -> the declared period overwrites it. A weekly export stamps
+//     one month on every row, and a 20 Apr - 20 May export may carry both April and
+//     May rows that together make up May's data.
+//
+// Guard: a Month column naming two or more months, any of them outside the declared
+// window, means a multi-month export. Overwriting it would add several months into
+// one, so it is rejected. A single month label is never rejected, since odd labels
+// ("Apr-01") misread as another year are common and harmless once overwritten.
 //
 // Injection placement: after LGD ULB Name if present, otherwise after Facility.
 // Row 0 (header) gets 'Month'; a second header row (two-row headers) gets ''.
 // ============================================================
 
 export interface UwinUploadPeriod {
+  /** Weekly or Monthly, as chosen before the files were picked. */
+  duration: UwinUploadDuration;
   /** Inclusive start of the declared reporting period, YYYY-MM-DD. */
   from: string;
   /** Inclusive end of the declared reporting period, YYYY-MM-DD. */
@@ -179,18 +194,25 @@ export interface UwinUploadPeriod {
 
 /** Bucket key for a declared period; throws with a readable message when unusable. */
 export function uploadPeriodKey(period: UwinUploadPeriod, fileName: string): string {
-  const key = makePeriodKey(period.from, period.to);
+  const problem = checkUwinPeriod(period.duration, period.from, period.to);
+  const key = problem ? null : uwinPeriodKey(period.duration, period.from, period.to);
   if (!key) {
-    throw new Error(
-      `Invalid reporting period for "${fileName}". Pick a From date and a To date, with From on or before To.`
-    );
+    throw new Error(`Invalid reporting period for "${fileName}". ${problem ?? 'Enter valid dates.'}`);
   }
   return key;
 }
 
-/** True when the declared period covers only part of a single calendar month. */
-function isSubMonthPeriod(period: UwinUploadPeriod, key: string): boolean {
-  return !isMonthKey(key) && period.from.slice(0, 7) === period.to.slice(0, 7);
+/** Months named in the Month column that the declared window does not touch. */
+function monthsOutsideWindow(rawRows: string[][], dataStartIdx: number, idxMonth: number, period: UwinUploadPeriod): string[] {
+  const named = new Set<string>();
+  for (let ri = dataStartIdx; ri < rawRows.length; ri++) {
+    const key = periodKey(rawRows[ri][idxMonth] ?? '');
+    if (key) periodMonths(key).forEach((month) => named.add(month));
+  }
+  if (named.size < 2) return [];
+  const windowKey = makePeriodKey(period.from, period.to);
+  const inWindow = new Set(windowKey ? periodMonths(windowKey) : []);
+  return [...named].filter((month) => !inWindow.has(month)).sort();
 }
 
 function injectPeriodColumn(rawRows: string[][], periodValue: string, dataStartIdx: number, header: string[]): string[][] {
@@ -217,26 +239,42 @@ function overwritePeriodColumn(rawRows: string[][], periodValue: string, dataSta
 }
 
 /**
- * Stamps the declared reporting period onto the raw rows. Returns the rows to parse
- * plus whether the declared period actually drives the analysis columns (false when
- * the file's own Month column was left in charge).
+ * Stamps the declared reporting period onto the raw rows and returns the rows to
+ * parse. Throws when the file's Month column shows it is a multi-month export.
  */
 export function applyReportingPeriod(
   rawRows: string[][],
   period: UwinUploadPeriod,
   key: string,
-): { rows: string[][]; applied: boolean } {
-  if (rawRows.length === 0) return { rows: rawRows, applied: false };
+  fileName: string,
+): string[][] {
+  if (rawRows.length === 0) return rawRows;
   const { header, dataStartIdx } = extractHeader(rawRows);
   const idxMonth = findMonthColIndex(header);
 
-  if (idxMonth === null) {
-    return { rows: injectPeriodColumn(rawRows, key, dataStartIdx, header), applied: true };
+  if (idxMonth === null) return injectPeriodColumn(rawRows, key, dataStartIdx, header);
+
+  const outside = monthsOutsideWindow(rawRows, dataStartIdx, idxMonth, period);
+  if (outside.length > 0) {
+    throw new Error(
+      `"${fileName}" has rows for ${outside.map(monthLongLabel).join(', ')}, outside its declared period ` +
+      `${windowLabel(period.from, period.to)}. Upload one ${period.duration === 'WEEKLY' ? 'week' : 'month'} per file.`
+    );
   }
-  if (isSubMonthPeriod(period, key)) {
-    return { rows: overwritePeriodColumn(rawRows, key, dataStartIdx, idxMonth), applied: true };
+  return overwritePeriodColumn(rawRows, key, dataStartIdx, idxMonth);
+}
+
+/** Throws the first broken upload rule (file count, window length, overlap, repeated month). */
+function assertUploadRules(fileNames: string[], filePeriods: UwinUploadPeriod[]): void {
+  const duration = filePeriods[0]?.duration;
+  if (!duration || filePeriods.some((period) => period.duration !== duration)) {
+    throw new Error('All files in one upload must be either weekly or monthly.');
   }
-  return { rows: rawRows, applied: false };
+  const problems = checkUwinUpload(
+    duration,
+    fileNames.map((fileName, index) => ({ fileName, from: filePeriods[index]?.from ?? '', to: filePeriods[index]?.to ?? '' })),
+  );
+  if (problems.length > 0) throw new Error(problems[0]);
 }
 
 // ============================================================
@@ -333,11 +371,12 @@ export function parseUwinCSVFile(file: File, period: UwinUploadPeriod): Promise<
       skipEmptyLines: true,
       complete: (results) => {
         try {
+          assertUploadRules([file.name], [period]);
           const key = uploadPeriodKey(period, file.name);
-          const { rows, applied } = applyReportingPeriod(results.data as string[][], period, key);
+          const rows = applyReportingPeriod(results.data as string[][], period, key, file.name);
           resolve(
             processUwinRawRows(rows, file.name, [
-              { fileName: file.name, from: period.from, to: period.to, key, applied },
+              { fileName: file.name, from: period.from, to: period.to, key, duration: period.duration },
             ])
           );
         } catch (e) {
@@ -357,6 +396,7 @@ export function parseUwinCSVFile(file: File, period: UwinUploadPeriod): Promise<
 export async function parseUwinMultipleCSVFiles(files: File[], filePeriods: UwinUploadPeriod[]): Promise<UwinParsedCSV> {
   if (files.length === 0) throw new Error('No files provided.');
   if (files.length === 1) return parseUwinCSVFile(files[0], filePeriods[0]);
+  assertUploadRules(files.map((f) => f.name), filePeriods);
 
   const parseRaw = (f: File): Promise<string[][]> =>
     new Promise((res, rej) => {
@@ -379,8 +419,8 @@ export async function parseUwinMultipleCSVFiles(files: File[], filePeriods: Uwin
       if (!period) throw new Error(`Please confirm the reporting period for "${files[fi].name}".`);
       const key = uploadPeriodKey(period, files[fi].name);
       const parsedRaw = await parseRaw(files[fi]);
-      const { rows: raw, applied } = applyReportingPeriod(parsedRaw, period, key);
-      reportingPeriods.push({ fileName: files[fi].name, from: period.from, to: period.to, key, applied });
+      const raw = applyReportingPeriod(parsedRaw, period, key, files[fi].name);
+      reportingPeriods.push({ fileName: files[fi].name, from: period.from, to: period.to, key, duration: period.duration });
       const { header: fileHeader, dataStartIdx } = extractHeader(raw);
       if (!canonicalHeader) {
         canonicalHeader = fileHeader;

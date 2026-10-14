@@ -10,6 +10,7 @@ import { canAccessPortal, normalizePortal } from "../lib/portalAuthorization";
 // as null (N/A), never as a made-up 0 or 100.
 const componentScore = z.number().min(0).max(100).nullable();
 const scopeList = z.array(z.string().trim().min(1).max(200)).max(1000);
+const isoDay = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/);
 
 const snapshotScopeSchema = z.object({
   blocks: scopeList.default([]),
@@ -42,6 +43,11 @@ const snapshotSchema = z.object({
   block: z.string().trim().min(1).optional().nullable(),
   periodStart: z.string().trim().min(1).optional().nullable(),
   periodEnd: z.string().trim().min(1).optional().nullable(),
+  // Exact first / last day of data the uploader declared (U-WIN), kept beside the
+  // month-grain periodStart/periodEnd that trends and the dashboard run on.
+  dataFrom: isoDay.optional().nullable(),
+  dataTo: isoDay.optional().nullable(),
+  uploadDuration: z.enum(["WEEKLY", "MONTHLY"]).optional().nullable(),
   blockCount: z.number().optional().nullable(),
   facilityCount: z.number().optional().nullable(),
   sessionSiteCount: z.number().optional().nullable(),
@@ -64,7 +70,7 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
   const {
     state, district, duration, overallScore,
     availabilityScore, completenessScore, accuracyScore, consistencyScore,
-    portal, dqaLevel, block, periodStart, periodEnd,
+    portal, dqaLevel, block, periodStart, periodEnd, dataFrom, dataTo, uploadDuration,
     blockCount, facilityCount, sessionSiteCount, districtCount, analysisGranularity, designation,
     purpose, purposeDetail,
     methodVersion, scoredComponents, scope,
@@ -114,6 +120,9 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
         block: block ?? null,
         periodStart: periodStart ?? null,
         periodEnd: periodEnd ?? null,
+        dataFrom: dataFrom ?? null,
+        dataTo: dataTo ?? null,
+        uploadDuration: uploadDuration ?? null,
         blockCount: blockCount ?? null,
         facilityCount: facilityCount ?? null,
         sessionSiteCount: sessionSiteCount ?? null,

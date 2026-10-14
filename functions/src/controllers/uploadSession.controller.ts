@@ -25,6 +25,10 @@ const uploadSessionSchema = z.object({
   district: z.string().trim().optional().nullable(),
   periodStart: z.string().trim().optional().nullable(),
   periodEnd: z.string().trim().optional().nullable(),
+  // Exact declared first / last day of data and Weekly / Monthly (U-WIN uploads).
+  dataFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  dataTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  uploadDuration: z.enum(["WEEKLY", "MONTHLY"]).optional().nullable(),
   blockCount: z.number().optional().nullable(),
   facilityCount: z.number().optional().nullable(),
   sessionSiteCount: z.number().optional().nullable(),
@@ -41,7 +45,7 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
 
   const {
     portal, designation, purpose, purposeSubOption, purposeOtherText, gpsLat, gpsLng, gpsAddress,
-    state, district, periodStart, periodEnd, blockCount, facilityCount, sessionSiteCount, districtCount,
+    state, district, periodStart, periodEnd, dataFrom, dataTo, uploadDuration, blockCount, facilityCount, sessionSiteCount, districtCount,
     analysisGranularity,
   } = parsed.data;
 
@@ -73,6 +77,9 @@ export const createUploadSession = async (req: AuthRequest, res: Response) => {
       district: district?.trim() || null,
       periodStart: periodStart?.trim() || null,
       periodEnd: periodEnd?.trim() || null,
+      dataFrom: dataFrom ?? null,
+      dataTo: dataTo ?? null,
+      uploadDuration: uploadDuration ?? null,
       blockCount: blockCount ?? null,
       facilityCount: facilityCount ?? null,
       sessionSiteCount: sessionSiteCount ?? null,

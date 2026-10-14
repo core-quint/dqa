@@ -4,6 +4,7 @@
 // ============================================================
 import { apiFetch } from '../../api';
 import { periodMonthBounds } from './parseUtils';
+import { declaredWindow } from '../uwin/uploadPeriod';
 import type { AuthState } from '../../components/dqa/LoginPage';
 
 type Level = AuthState['level'];
@@ -89,6 +90,10 @@ export interface UploadDatasetContext {
   district: string | null;
   periodStart: string | null;
   periodEnd: string | null;
+  /** Exact declared first / last day of data and Weekly / Monthly (U-WIN only). */
+  dataFrom?: string | null;
+  dataTo?: string | null;
+  uploadDuration?: 'WEEKLY' | 'MONTHLY' | null;
   blockCount: number | null;
   facilityCount: number | null;
   sessionSiteCount: number | null;
@@ -104,15 +109,20 @@ export function buildUploadDatasetContext(parsed: {
   globalFacilityCount: number;
   globalSessionSiteCount?: number;
   globalDistrictCount?: number;
+  reportingPeriods?: { from: string; to: string; key: string; duration: 'WEEKLY' | 'MONTHLY' }[];
 }): UploadDatasetContext {
   // Period keys can be sub-month day ranges (a weekly U-WIN upload); the audit log
   // records the calendar months they fall in so it stays comparable across portals.
   const bounds = periodMonthBounds(Object.keys(parsed.allMonths));
+  const declared = declaredWindow(parsed.reportingPeriods ?? []);
   return {
     state: parsed.stateName || null,
     district: parsed.distName || null,
     periodStart: bounds?.start ?? null,
     periodEnd: bounds?.end ?? null,
+    dataFrom: declared?.from ?? null,
+    dataTo: declared?.to ?? null,
+    uploadDuration: declared?.duration ?? null,
     blockCount: parsed.globalBlockCount ?? null,
     facilityCount: parsed.globalFacilityCount ?? null,
     sessionSiteCount: parsed.globalSessionSiteCount ?? null,

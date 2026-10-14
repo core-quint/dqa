@@ -5,7 +5,14 @@ import type { ComputedKpis } from "../dqa/types";
 import { computeOverallScore, scoreGrade } from "../dqa/scoreUtils";
 import { severityLevel } from "../dqa/scoring";
 import { isMonthKey } from "../dqa/parseUtils";
+import { declaredWindow, windowLabel } from "./uploadPeriod";
 import { generateBlockMapDataUrl, buildLegendItems } from "../maps/blockMapUtils";
+
+/** The declared From-To dates behind the selected periods, as one table row (none for older uploads). */
+function reportingDatesRow(csv: UwinParsedCSV, kpis: UwinComputedKpis): [string, string][] {
+  const declared = declaredWindow(csv.reportingPeriods ?? [], kpis.selMonths);
+  return declared ? [["Reporting Dates", windowLabel(declared.from, declared.to)]] : [];
+}
 
 /** "Months" for whole-month uploads, "Periods" once a weekly file is in the mix. */
 function periodNoun(kpis: UwinComputedKpis): string {
@@ -450,6 +457,7 @@ function buildSummary(
     ["State",                         csv.stateName || "—"],
     [csv.portal === "UWIN_STATE" ? "Districts" : "District", csv.portal === "UWIN_STATE" ? String(csv.globalDistrictCount) : (csv.distName || "—")],
     ["Analysis Period",                period],
+    ...reportingDatesRow(csv, kpis),
     [`${periodNoun(kpis)} Analyzed`,   String(kpis.selMonths.length)],
     [`Total ${unit.plural} (CSV)`,      String(
       kpis.analysisMode === "sessionsite"
