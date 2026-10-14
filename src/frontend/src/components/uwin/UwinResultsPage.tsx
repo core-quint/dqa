@@ -3,7 +3,7 @@ import { RefreshCw, Award, Save, TrendingUp, FileDown } from "lucide-react";
 import { downloadUwinDqaReport } from "../../lib/uwin/pdfReport";
 import type { FilterState, ActiveGroup, ComputedKpis } from "../../lib/dqa/types";
 import type { UwinParsedCSV, UwinComputedKpis } from "../../lib/uwin/types";
-import { computeUwinKpis } from "../../lib/uwin/computeKpis";
+import { computeUwinKpis, standardAnalysisMode } from "../../lib/uwin/computeKpis";
 import { isMonthKey, periodDurationLabel } from "../../lib/dqa/parseUtils";
 import { UWIN_DEFAULT_FILTERS } from "../../lib/dqa/constants";
 import { FilterBar } from "../dqa/FilterBar";
@@ -136,12 +136,16 @@ export function UwinResultsPage({
 }: Props) {
   const isStateUwin = csv.portal === "UWIN_STATE";
   const snapshotPortal = isStateUwin ? "UWIN_STATE" : "UWIN";
+  // Results open at the level snapshots are saved at (Sub Center-wise when the file
+  // has a Sub Center column); the user can still switch levels to explore.
+  const saveMode = standardAnalysisMode(csv);
   const [filters, setFilters] = useState<FilterState>({
     ...UWIN_DEFAULT_FILTERS,
+    analysisMode: saveMode,
   });
   const [kpis, setKpis] = useState<UwinComputedKpis | null>(() =>
     activeGroup
-      ? computeUwinKpis(csv, { ...UWIN_DEFAULT_FILTERS, activeGroup })
+      ? computeUwinKpis(csv, { ...UWIN_DEFAULT_FILTERS, analysisMode: saveMode, activeGroup })
       : null,
   );
   const [showOverall, setShowOverall] = useState(false);
@@ -178,27 +182,30 @@ export function UwinResultsPage({
   }, [csv.stateName, csv.distName, isStateUwin, snapshotPortal]);
 
   // The months this upload covers, derived exactly as the save path records them
-  // so a same-period match is an equality test, not a guess.
-  const savedMeta = buildSnapshotSaveMeta(auth, filters, csv.allMonths, { analysisMode: true });
+  // so a same-period match is an equality test, not a guess. A snapshot keeps every
+  // filter on screen except the level, which is always the standard one.
+  const savedMeta = buildSnapshotSaveMeta(auth, { ...filters, analysisMode: saveMode }, csv.allMonths, { analysisMode: true });
+  // The level on screen, used only to pick like-for-like past reviews for the score strip.
+  const viewMeta = buildSnapshotSaveMeta(auth, filters, csv.allMonths, { analysisMode: true });
   // The exact From-To dates the uploader declared for the periods being reviewed;
   // the analysis itself runs on month / week keys.
   const dataWindow = declaredWindow(csv.reportingPeriods ?? [], filters.months);
   const savedLevel = isStateUwin ? "STATE" : savedMeta.dqaLevel;
   const savedBlock = isStateUwin ? null : savedMeta.block ?? null;
   // A state upload narrowed to some districts or blocks is a partial state review.
-  const savedScope = isStateUwin
-    ? {
-        ...savedMeta.scope,
-        partial: savedMeta.scope.partial || savedMeta.scope.blocks.length > 0 || savedMeta.scope.districts.length > 0,
-      }
-    : savedMeta.scope;
+  const stateScope = (scope: typeof savedMeta.scope) =>
+    isStateUwin
+      ? { ...scope, partial: scope.partial || scope.blocks.length > 0 || scope.districts.length > 0 }
+      : scope;
+  const savedScope = stateScope(savedMeta.scope);
   const currentPeriod =
     savedMeta.periodStart && savedMeta.periodEnd
       ? { start: savedMeta.periodStart, end: savedMeta.periodEnd }
       : null;
   const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
-    kpiData: { dqaLevel: savedLevel, block: savedBlock, scope: savedScope },
+    kpiData: { dqaLevel: savedLevel, block: savedBlock, scope: stateScope(viewMeta.scope) },
   });
+  const saveModeLabel = saveMode === "subcenter" ? "Sub Center-wise" : "Facility-wise";
 
   useEffect(() => {
     if (!activeGroup) {
@@ -218,9 +225,17 @@ export function UwinResultsPage({
   );
 
   const handleSave = async () => {
-    if (!kpis) return;
-    const score = computeOverallScore(kpis as unknown as ComputedKpis, SCORED_GROUPS);
-    if (score.overall === null) return;
+    if (!kpis || !activeGroup) return;
+    // The snapshot is always scored at the standard level, whatever level is on screen.
+    const saveKpis =
+      kpis.analysisMode === saveMode
+        ? kpis
+        : computeUwinKpis(csv, { ...filters, analysisMode: saveMode, activeGroup });
+    const score = computeOverallScore(saveKpis as unknown as ComputedKpis, SCORED_GROUPS);
+    if (score.overall === null) {
+      alert(`Nothing in the current selection can be scored ${saveModeLabel}, so no snapshot was saved.`);
+      return;
+    }
     try {
       setSaving(true);
       const { overall, components } = score;
@@ -253,13 +268,14 @@ export function UwinResultsPage({
           dataTo: dataWindow?.to ?? null,
           uploadDuration: dataWindow?.duration ?? null,
           // What was analysed, then the upload totals for context.
-          blockCount: kpis.globalBlockCount,
+          blockCount: saveKpis.globalBlockCount,
           facilityCount: new Set(
-            Object.values(kpis.filteredFacilities).map((unit) => `${unit.district ?? ""}||${unit.block}||${unit.facility}`),
+            Object.values(saveKpis.filteredFacilities).map((unit) => `${unit.district ?? ""}||${unit.block}||${unit.facility}`),
           ).size,
+          // Same filters on screen, so the session-site count stays what that view analysed.
           sessionSiteCount: kpis.analysisMode === "sessionsite" ? kpis.globalDen : null,
           districtCount: isStateUwin
-            ? new Set(Object.values(kpis.filteredFacilities).map((unit) => unit.district).filter(Boolean)).size
+            ? new Set(Object.values(saveKpis.filteredFacilities).map((unit) => unit.district).filter(Boolean)).size
             : null,
           uploadBlockCount: csv.globalBlockCount,
           uploadFacilityCount: csv.globalFacilityCount,
@@ -396,11 +412,16 @@ export function UwinResultsPage({
                   reviewInfo={reviewInfo}
                 />
               ) : null}
+              {kpis && filters.analysisMode !== saveMode && !snapshotSaved ? (
+                <span className="text-[11px] font-medium text-slate-500">
+                  Snapshot saves the {saveModeLabel} score
+                </span>
+              ) : null}
               {kpis ? (
                 <button
                   onClick={handleSave}
                   disabled={saving || snapshotSaved || !canSave}
-                  title={canSave ? undefined : "Nothing in the current selection can be scored"}
+                  title={canSave ? `Saves the ${saveModeLabel} score for the current filters` : "Nothing in the current selection can be scored"}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Save className="h-3.5 w-3.5" />

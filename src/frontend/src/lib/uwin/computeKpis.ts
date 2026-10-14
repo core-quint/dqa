@@ -108,6 +108,15 @@ function chartCountsByGeography(
   };
 }
 
+/**
+ * The analysis level U-WIN opens at and always saves snapshots at: Sub Center-wise,
+ * so every saved U-WIN score is measured on the same unit whatever level is on
+ * screen. A file without a Sub Center column falls back to Facility-wise.
+ */
+export function standardAnalysisMode(csv: Pick<UwinParsedCSV, 'idxSubCenter'>): 'subcenter' | 'facility' {
+  return csv.idxSubCenter !== null ? 'subcenter' : 'facility';
+}
+
 // Roll the parser's finest grain back up to the selected analysis level.
 function aggregateToLevel(
   facilityData: Record<string, FacilityRecord>,

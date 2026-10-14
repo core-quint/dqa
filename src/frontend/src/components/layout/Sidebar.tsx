@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { useAppContext } from "../../context/AppContext";
 import { computeKpis } from "../../lib/dqa/computeKpis";
-import { computeUwinKpis } from "../../lib/uwin/computeKpis";
+import { computeUwinKpis, standardAnalysisMode } from "../../lib/uwin/computeKpis";
 import { DEFAULT_FILTERS, UWIN_DEFAULT_FILTERS } from "../../lib/dqa/constants";
 import { computePctsKpis } from "../../lib/pcts/computeKpis";
 import { DEFAULT_PCTS_FILTERS } from "../../lib/pcts/types";
@@ -115,6 +115,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
     if ((portal === "U-WIN" || portal === "U-WIN STATE") && viewUwinData) {
       const result = computeUwinKpis(viewUwinData, {
         ...UWIN_DEFAULT_FILTERS,
+        analysisMode: standardAnalysisMode(viewUwinData),
         activeGroup: "availability",
       });
       return {
