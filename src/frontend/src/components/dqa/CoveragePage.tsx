@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "../../api";
 import { loadBreakdowns } from "../../lib/breakdownStore";
-import { gridBlockRows, type BreakdownCell, type SnapshotBreakdown } from "../../lib/snapshotBreakdown";
+import { gridBlockRows, gridWindowScore, windowMean, type BreakdownCell, type SnapshotBreakdown } from "../../lib/snapshotBreakdown";
 import type { AuthState } from "./LoginPage";
 import { GlassPanel } from "../branding/GlassPanel";
 import {
@@ -23,8 +23,10 @@ import {
   type SnapshotRecord,
   getSnapshotBlock,
   getSnapshotDqaLevel,
+  getDataPeriod,
   getSnapshotPeriod,
   monthEndDate,
+  monthsBetween,
   normalizePortal,
 } from "../../lib/snapshots";
 import {
@@ -550,8 +552,13 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     [displayGrain, visibleFeatures],
   );
 
+  // A picked duration scores each review on just those months, from its saved grid.
+  const windowStart = fromDate || toDate ? (fromDate ? fromDate.slice(0, 7) : "0000-01") : "";
+  const windowEnd = fromDate || toDate ? (toDate ? toDate.slice(0, 7) : "9999-12") : "";
+  const hasWindow = windowStart !== "";
+
   useEffect(() => {
-    if (!blocksFromGrids) return;
+    if (!blocksFromGrids && !hasWindow) return;
     let cancelled = false;
     setLoadingGrids(true);
     loadBreakdowns(filteredSnapshots)
@@ -567,7 +574,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [blocksFromGrids, filteredSnapshots]);
+  }, [blocksFromGrids, filteredSnapshots, hasWindow]);
 
   // Block view only: reviews with no block rows to place (saved before score grids),
   // and grid blocks with no matching shape in the block boundary file.
@@ -597,12 +604,17 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     if (blocksFromGrids) {
       // Each district review contributes every block row of its saved grid.
       for (const snapshot of filteredSnapshots) {
+        const period = getDataPeriod(snapshot);
+        const reviewMonths = period ? monthsBetween(period.start, period.end) : [];
         for (const row of gridBlockRows(grids.get(snapshot.id))) {
           const match = matchBlockFeature(featureLookup, snapshot.state, snapshot.district, row.name);
           if (!match) continue;
           const current = buckets.get(match.id) ?? { count: 0, sum: 0, valueCount: 0, districtNames: [] as string[] };
           current.count += 1;
-          const metricValue = gridCellIndicatorValue(row.cell, indicator);
+          const windowed = hasWindow && indicator !== "count"
+            ? windowMean(row.periods, reviewMonths, windowStart, windowEnd, (cell) => gridCellIndicatorValue(cell, indicator))
+            : null;
+          const metricValue = windowed ?? gridCellIndicatorValue(row.cell, indicator);
           if (metricValue !== null) {
             current.sum += metricValue;
             current.valueCount += 1;
@@ -617,7 +629,10 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       if (!match) continue;
       const current = buckets.get(match.id) ?? { count: 0, sum: 0, valueCount: 0, districtNames: [] as string[] };
       current.count += 1;
-      const metricValue = getIndicatorValue(snapshot, indicator);
+      const windowed = hasWindow && indicator !== "count" && indicator !== "districtCoverage"
+        ? gridWindowScore(snapshot, grids.get(snapshot.id), windowStart, windowEnd, (cell) => gridCellIndicatorValue(cell, indicator))
+        : null;
+      const metricValue = windowed ?? getIndicatorValue(snapshot, indicator);
       if (metricValue !== null) {
         current.sum += metricValue;
         current.valueCount += 1;
@@ -654,7 +669,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       });
     }
     return metrics;
-  }, [blocksFromGrids, displayGrain, featureLookup, filteredSnapshots, grids, indicator, isDistrictCoverage, rosterByState, scopedFeatures]);
+  }, [blocksFromGrids, displayGrain, featureLookup, filteredSnapshots, grids, hasWindow, indicator, isDistrictCoverage, rosterByState, scopedFeatures, windowEnd, windowStart]);
 
   const valueExtent = useMemo(() => {
     const values = [...metricsByFeature.values()]
@@ -1144,6 +1159,9 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 : ""}
               {districtScope === "PRIORITY"
                 ? ` The whole map still draws, but only the ${PRIORITY_DISTRICT_TOTAL} Gavi priority districts carry data and form the denominators — regions outside the programme are shown pale for context.`
+                : ""}
+              {hasWindow && indicator !== "count" && indicator !== "districtCoverage"
+                ? " With a duration picked, reviews saved with month scores show their score for the picked months only; older reviews keep their whole-period score."
                 : ""}
               {blocksFromGrids
                 ? loadingGrids

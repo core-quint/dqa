@@ -29,7 +29,7 @@ import type { OverallScoreResult } from './dqa/scoring';
 import { computeSubsetScore } from './dqa/scoreUtils';
 import { monthLongLabel, periodMonths } from './dqa/parseUtils';
 import type { KpiCard } from './dqa/types';
-import { getDataPeriod, getSnapshotBlock, getSnapshotDqaLevel, normalizePortal, type SnapshotKpiData, type SnapshotRecord } from './snapshots';
+import { getDataPeriod, getSnapshotBlock, getSnapshotDqaLevel, monthsBetween, normalizePortal, type SnapshotKpiData, type SnapshotRecord } from './snapshots';
 import { windowLabel } from './uwin/uploadPeriod';
 
 export const BREAKDOWN_VERSION = 1;
@@ -296,6 +296,58 @@ export function monthScoresFromPeriods(
     scores[month] = list.length > 0 ? list.reduce((sum, value) => sum + value, 0) / list.length : null;
   }
   return scores;
+}
+
+/**
+ * Mean of the month scores inside a "YYYY-MM" window, from a list of period cells
+ * (an area's or one block's). Null when the window takes none or all of the
+ * review's months - a whole-period window is the review's own cumulative score,
+ * which is not the mean of its months - or when no cell in it has a value.
+ */
+export function windowMean(
+  periods: { key: string; cell: BreakdownCell }[] | undefined,
+  reviewMonths: string[],
+  windowStart: string,
+  windowEnd: string,
+  pick: (cell: BreakdownCell) => number | null,
+): number | null {
+  const inWindow = reviewMonths.filter((month) => month >= windowStart && month <= windowEnd);
+  if (inWindow.length === 0 || inWindow.length === reviewMonths.length) return null;
+  const scores = monthScoresFromPeriods(periods, inWindow, pick);
+  const values = scores ? Object.values(scores).filter((value): value is number => value !== null) : [];
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
+
+/**
+ * A review's score for only the months of a "YYYY-MM" window, from its saved grid:
+ * the area's month cells for a whole-area review, the block's own month cells for
+ * a block review. Null when the grid cannot answer (no grid, a filtered headline,
+ * a window taking none or all of its months); the caller then keeps the review's
+ * own score.
+ */
+export function gridWindowScore(
+  snapshot: SnapshotRecord,
+  grid: SnapshotBreakdown | null | undefined,
+  windowStart: string,
+  windowEnd: string,
+  pick: (cell: BreakdownCell) => number | null,
+): number | null {
+  const period = getDataPeriod(snapshot);
+  if (!grid || !period) return null;
+  const reviewMonths = monthsBetween(period.start, period.end);
+  let periods: { key: string; cell: BreakdownCell }[] | undefined;
+  const block = getSnapshotBlock(snapshot);
+  const scope = snapshot.kpiData?.scope;
+  const portal = normalizePortal(snapshot.portal);
+  const isState = portal === 'HMIS_STATE' || portal === 'UWIN_STATE' || snapshot.kpiData?.dqaLevel === 'STATE';
+  if (!isState && getSnapshotDqaLevel(snapshot) === 'BLOCK' && block) {
+    const unfiltered = !scope || (scope.ownership.length === 0 && scope.ruralUrban.length === 0 && scope.facilityTypes.length === 0);
+    const key = block.trim().toLowerCase();
+    periods = unfiltered ? grid.rows.find((row) => row.name.trim().toLowerCase() === key)?.periods : undefined;
+  } else if (headlineCoversWholeArea(snapshot)) {
+    periods = grid.periods;
+  }
+  return windowMean(periods, reviewMonths, windowStart, windowEnd, pick);
 }
 
 /**
