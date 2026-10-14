@@ -262,9 +262,10 @@ export function gridMonthScores(
   snapshot: SnapshotRecord,
   grid: SnapshotBreakdown | null | undefined,
   months: string[],
+  pick: (cell: BreakdownCell) => number | null = (cell) => cell.overall,
 ): Record<string, number | null> | null {
   if (!grid || grid.periods.length === 0 || !headlineCoversWholeArea(snapshot)) return null;
-  return monthScoresFromPeriods(grid.periods, months);
+  return monthScoresFromPeriods(grid.periods, months, pick);
 }
 
 /**
@@ -275,6 +276,7 @@ export function gridMonthScores(
 export function monthScoresFromPeriods(
   periods: { key: string; cell: BreakdownCell }[] | undefined,
   months: string[],
+  pick: (cell: BreakdownCell) => number | null = (cell) => cell.overall,
 ): Record<string, number | null> | null {
   if (!periods || periods.length === 0) return null;
   const wanted = new Set(months);
@@ -283,7 +285,8 @@ export function monthScoresFromPeriods(
     for (const month of periodMonths(period.key)) {
       if (!wanted.has(month)) continue;
       const list = values.get(month) ?? [];
-      if (period.cell.overall !== null) list.push(period.cell.overall);
+      const value = pick(period.cell);
+      if (value !== null) list.push(value);
       values.set(month, list);
     }
   }

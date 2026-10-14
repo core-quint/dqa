@@ -30,6 +30,8 @@ import {
 import { apiFetch } from "../../api";
 import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
 import { ReviewBreakdownPanel } from "./ReviewBreakdownPanel";
+import { loadBreakdowns } from "../../lib/breakdownStore";
+import { gridMonthScores, type SnapshotBreakdown } from "../../lib/snapshotBreakdown";
 import type { SnapshotDqaLevel, SnapshotRecord, TrendBasis } from "../../lib/snapshots";
 import {
   dataDatesLabel,
@@ -230,6 +232,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
   const [loadError, setLoadError] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [openGridId, setOpenGridId] = useState<string | null>(null);
+  const [grids, setGrids] = useState<Map<string, SnapshotBreakdown>>(() => new Map());
   const [metric, setMetric] = useState<Metric>("overall");
   const [basis, setBasis] = useState<TrendBasis>("review");
   const [filters, setFilters] = useState<TrendFilters>({ ...EMPTY_FILTERS, portal: safeInitialPortal });
@@ -335,9 +338,44 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
     return true;
   }), [scoped, filters.dateFrom, filters.dateTo, basis]);
 
+  // On the data-period axis a review saved with a score grid contributes its own
+  // score for each month, so its grid is fetched the first time that axis is shown.
+  useEffect(() => {
+    if (basis !== "period") return;
+    let cancelled = false;
+    loadBreakdowns(scoped)
+      .then((loaded) => {
+        if (cancelled) return;
+        // Keep the same Map when nothing new arrived, so nothing re-renders.
+        setGrids((current) => ([...loaded.keys()].every((id) => current.has(id)) ? current : new Map([...current, ...loaded])));
+      })
+      .catch((err) => console.error("Score grids failed to load:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [basis, scoped]);
+
   const missingPeriod = useMemo(() => scoped.filter((snapshot) => !getDataPeriod(snapshot)).length, [scoped]);
   const bucketed = useMemo(() => filtered.map((snapshot) => ({ snapshot, months: snapshotTrendMonths(snapshot, basis) })), [filtered, basis]);
   const placeable = useMemo(() => bucketed.filter((entry) => entry.months.length), [bucketed]);
+  // A review's value for one month and metric. `own` = a score for that month alone:
+  // a score-grid month cell (data-period axis), or the review covered just that
+  // month. Otherwise it is an older multi-month review's single score.
+  const monthValue = useMemo(() => {
+    const cache = new Map<string, Record<string, number | null> | null>();
+    return (entry: { snapshot: SnapshotRecord; months: string[] }, month: string, component: Metric) => {
+      if (basis === "period") {
+        const cacheKey = `${entry.snapshot.id}|${component}`;
+        if (!cache.has(cacheKey)) {
+          cache.set(cacheKey, gridMonthScores(entry.snapshot, grids.get(entry.snapshot.id), entry.months, (cell) =>
+            component === "completeness" && ["UWIN", "UWIN_STATE"].includes(normalizePortal(entry.snapshot.portal)) ? null : cell[component]));
+        }
+        const own = cache.get(cacheKey);
+        if (own && month in own) return { value: own[month], own: true };
+      }
+      return { value: metricValue(entry.snapshot, component), own: entry.months.length === 1 };
+    };
+  }, [basis, grids]);
   const tableRows = useMemo(() => [...filtered].sort((a, b) => snapshotOrderValue(b, basis) - snapshotOrderValue(a, basis) || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [filtered, basis]);
 
   const months = useMemo(() => {
@@ -347,11 +385,38 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
   const seriesPortals = filters.portal === "ALL" ? PORTALS.filter((portal) => placeable.some((entry) => normalizePortal(entry.snapshot.portal) === portal)) : [filters.portal] as Exclude<TrendPortal, "ALL">[];
   const chartData = useMemo(() => ({
     labels: months.map(monthLabel),
-    datasets: seriesPortals.map((portal) => {
+    datasets: seriesPortals.flatMap((portal) => {
       const meta = PORTAL_META[portal];
-      return {
+      const entries = placeable.filter((entry) => normalizePortal(entry.snapshot.portal) === portal);
+      const series = (own: boolean) => months.map((month) => mean(entries
+        .filter((entry) => entry.months.includes(month))
+        .map((entry) => monthValue(entry, month, metric))
+        .filter((point) => point.own === own && point.value !== null)
+        .map((point) => point.value as number)));
+      // Data-period axis: older multi-month reviews get their own dashed line, so
+      // their one score spread over every month never flattens the month scores.
+      const spread = basis === "period" ? series(false) : [];
+      const spreadSet = spread.some((value) => value !== null)
+        ? [{
+          label: `${meta.label} · older multi-month`,
+          data: spread,
+          borderColor: `${meta.color}99`,
+          backgroundColor: "transparent",
+          pointBackgroundColor: "#ffffff",
+          pointBorderColor: `${meta.color}99`,
+          pointBorderWidth: 1.5,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+          borderWidth: 1.5,
+          borderDash: [5, 4],
+          tension: 0.3,
+          spanGaps: false,
+          fill: false,
+        }]
+        : [];
+      return [{
         label: meta.label,
-        data: months.map((month) => mean(placeable.filter((entry) => normalizePortal(entry.snapshot.portal) === portal && entry.months.includes(month)).map((entry) => metricValue(entry.snapshot, metric)).filter((value): value is number => value !== null))),
+        data: basis === "period" ? series(true) : months.map((month) => mean(entries.filter((entry) => entry.months.includes(month)).map((entry) => metricValue(entry.snapshot, metric)).filter((value): value is number => value !== null))),
         borderColor: meta.color,
         backgroundColor: `${meta.color}18`,
         pointBackgroundColor: meta.color,
@@ -363,9 +428,9 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
         tension: 0.3,
         spanGaps: false,
         fill: seriesPortals.length === 1,
-      };
+      }, ...spreadSet];
     }),
-  }), [placeable, metric, months, seriesPortals]);
+  }), [placeable, metric, months, seriesPortals, basis, monthValue]);
 
   const chartOptions: ChartOptions<"line"> = {
     responsive: true,
@@ -376,16 +441,16 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
       x: { grid: { display: false }, ticks: { color: "#64748b", maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
     },
     plugins: {
-      legend: { display: seriesPortals.length > 1, position: "bottom", labels: { usePointStyle: true, boxWidth: 8, padding: 18, color: "#475569", font: { weight: 600 } } },
+      legend: { display: chartData.datasets.length > 1, position: "bottom", labels: { usePointStyle: true, boxWidth: 8, padding: 18, color: "#475569", font: { weight: 600 } } },
       tooltip: { callbacks: { label: (context) => `${context.dataset.label}: ${context.parsed.y?.toFixed(1) ?? "N/A"}` } },
     },
   };
 
   const periodComparison = useMemo(() => {
-    const availableMonths = [...months].reverse().filter((month) => placeable.some((entry) => entry.months.includes(month) && metricValue(entry.snapshot, metric) !== null));
+    const availableMonths = [...months].reverse().filter((month) => placeable.some((entry) => entry.months.includes(month) && monthValue(entry, month, metric).value !== null));
     const latestMonth = availableMonths[0] ?? null;
     const previousMonth = availableMonths[1] ?? null;
-    const values = (month: string | null, component: Metric) => month ? placeable.filter((entry) => entry.months.includes(month)).map((entry) => metricValue(entry.snapshot, component)).filter((value): value is number => value !== null) : [];
+    const values = (month: string | null, component: Metric) => month ? placeable.filter((entry) => entry.months.includes(month)).map((entry) => monthValue(entry, month, component).value).filter((value): value is number => value !== null) : [];
     const current = mean(values(latestMonth, metric));
     const previous = mean(values(previousMonth, metric));
     const componentRows = METRICS.slice(1).map((component) => ({
@@ -394,7 +459,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
       previous: mean(values(previousMonth, component.value)),
     }));
     return { latestMonth, previousMonth, current, previous, delta: current !== null && previous !== null ? current - previous : null, componentRows };
-  }, [placeable, metric, months]);
+  }, [placeable, metric, months, monthValue]);
 
   const regressions = useMemo(() => {
     const groups = new Map<string, SnapshotRecord[]>();
@@ -516,7 +581,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
 
           <div className="grid gap-4 lg:grid-cols-3">
             <GlassPanel className="p-5 lg:col-span-2">
-              <div className="mb-3 flex flex-wrap items-start justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Monthly movement</div><div className="mt-1 text-lg font-bold text-slate-950">Average {METRICS.find((item) => item.value === metric)?.label.toLowerCase()} score by {basis === "period" ? "data month" : "review month"}</div><p className="mt-1 text-[11px] text-slate-500">{basis === "period" ? "X-axis is the month the data belongs to." : "X-axis is the month the review was saved."} Separate source lines prevent unlike programmes from being blended into one trend.</p></div><span className={`rounded-full px-3 py-1 text-[11px] font-bold ${currentGrade.chip}`}>{currentGrade.label}</span></div>
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Monthly movement</div><div className="mt-1 text-lg font-bold text-slate-950">Average {METRICS.find((item) => item.value === metric)?.label.toLowerCase()} score by {basis === "period" ? "data month" : "review month"}</div><p className="mt-1 text-[11px] text-slate-500">{basis === "period" ? "X-axis is the month the data belongs to. Solid: scores for that month alone. Dashed: older multi-month reviews, one score across all their months." : "X-axis is the month the review was saved."} Separate source lines prevent unlike programmes from being blended into one trend.</p></div><span className={`rounded-full px-3 py-1 text-[11px] font-bold ${currentGrade.chip}`}>{currentGrade.label}</span></div>
               <div className="h-[330px]">{scores.length ? <Line data={chartData} options={chartOptions} /> : <div className="flex h-full items-center justify-center rounded-2xl bg-slate-50 px-6 text-center text-sm font-semibold text-slate-500">{metric === "completeness" && filters.portal === "UWIN" ? "Completeness is not part of the U-WIN DQA framework and is shown as unavailable—not zero." : basis === "period" && missingPeriod > 0 ? "No review in this scope has a recorded data period. Switch the trend axis back to review date, or save a fresh review." : "No scored values are available for this metric and scope."}</div>}</div>
             </GlassPanel>
 
