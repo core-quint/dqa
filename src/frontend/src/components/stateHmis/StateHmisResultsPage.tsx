@@ -42,6 +42,7 @@ import { GlassPanel } from "../branding/GlassPanel";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { StateDistrictMap } from "./StateDistrictMap";
 import { StateHmisFilterPanel } from "./StateHmisFilterPanel";
+import { buildStateHmisBreakdown } from "../../lib/stateHmis/breakdown";
 
 interface Props {
   data: StateHmisParsed;
@@ -213,6 +214,12 @@ export function StateHmisResultsPage({
     try {
       setSaving(true);
       const period = computed.selectedMonths;
+      // The score grid covers the complete upload whatever is on screen; a failure
+      // here must never stop the review itself from saving.
+      const breakdown = await buildStateHmisBreakdown(data).catch((err) => {
+        console.error("HMIS State score grid failed:", err);
+        return null;
+      });
       const savedSnapshot = await apiFetch("/api/snapshots", {
         method: "POST",
         body: JSON.stringify({
@@ -238,6 +245,7 @@ export function StateHmisResultsPage({
           districtCount: new Set(computed.selectedUnits.map((id) => data.unitData[id]?.district)).size,
           blockCount: data.reportLevel === "block" ? computed.selectedUnits.length : null,
           analysisGranularity: data.reportLevel.toUpperCase(),
+          breakdown,
         }),
       });
       setSavedReviews((current) => [savedSnapshot, ...current]);

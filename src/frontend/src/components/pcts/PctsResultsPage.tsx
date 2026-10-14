@@ -43,6 +43,7 @@ import { IndicatorSummaryPanel } from "../dqa/IndicatorSummaryPanel";
 import { KpiBlockMap } from "../dqa/KpiBlockMap";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { PctsFilterPanel } from "./PctsFilterPanel";
+import { buildPctsBreakdown } from "../../lib/pcts/breakdown";
 
 interface Props {
   data: PctsParsed;
@@ -199,6 +200,12 @@ export function PctsResultsPage({
     if (!canSave) return;
     setSaving(true);
     try {
+      // The score grid covers the complete upload whatever is on screen; a failure
+      // here must never stop the review itself from saving.
+      const breakdown = await buildPctsBreakdown(data).catch((err) => {
+        console.error("PCTS score grid failed:", err);
+        return null;
+      });
       const saved: any = await apiFetch("/api/snapshots", {
         method: "POST",
         body: JSON.stringify({
@@ -226,6 +233,7 @@ export function PctsResultsPage({
           facilityCount: computed.denominator,
           uploadBlockCount: data.globalBlockCount,
           uploadFacilityCount: data.globalFacilityCount,
+          breakdown,
         }),
       });
       setSavedReviews((current) => [saved as SnapshotRecord, ...current]);

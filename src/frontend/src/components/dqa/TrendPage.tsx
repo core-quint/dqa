@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -20,6 +20,7 @@ import {
   Download,
   History,
   Info,
+  LayoutGrid,
   MapPin,
   RefreshCw,
   Trash2,
@@ -28,6 +29,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "../../api";
 import { canUseHmis, canUsePcts } from "../../lib/pcts/access";
+import { ReviewBreakdownPanel } from "./ReviewBreakdownPanel";
 import type { SnapshotDqaLevel, SnapshotRecord, TrendBasis } from "../../lib/snapshots";
 import {
   dataDatesLabel,
@@ -167,6 +169,15 @@ function levelLabel(snapshot: SnapshotRecord) {
   return level.charAt(0) + level.slice(1).toLowerCase();
 }
 
+/** Header lines of a downloaded score grid. */
+function gridContextLines(snapshot: SnapshotRecord): string[] {
+  return [
+    `${PORTAL_META[normalizePortal(snapshot.portal)].label} · ${levelLabel(snapshot)} · ${reviewUnit(snapshot)}, ${titleGeo(snapshot.state)}`,
+    `Saved ${formatDate(snapshot.createdAt)} by ${snapshot.createdBy?.email ?? "-"}`,
+    `Main score (filters on screen at save): ${Number.isFinite(snapshot.overallScore) ? snapshot.overallScore.toFixed(1) : "-"}`,
+  ];
+}
+
 function reviewUnit(snapshot: SnapshotRecord) {
   const level = getSnapshotDqaLevel(snapshot);
   const block = getSnapshotBlock(snapshot);
@@ -218,6 +229,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [openGridId, setOpenGridId] = useState<string | null>(null);
   const [metric, setMetric] = useState<Metric>("overall");
   const [basis, setBasis] = useState<TrendBasis>("review");
   const [filters, setFilters] = useState<TrendFilters>({ ...EMPTY_FILTERS, portal: safeInitialPortal });
@@ -523,7 +535,7 @@ export function TrendPage({ auth, onBack, backLabel = "Back", initialPortal = "A
 
           <GlassPanel className="overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Audit trail</div><div className="mt-1 text-lg font-bold text-slate-950">Saved review history</div></div><div className="text-xs font-semibold text-slate-500">{nf.format(filtered.length)} of {nf.format(accessible.length)} accessible records</div></div>
-            <div className="max-h-[560px] overflow-auto"><table className="w-full min-w-[1320px] text-sm"><thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500"><th className="px-4 py-3">Review date</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Level</th><th className="px-4 py-3">Geography</th><th className="px-4 py-3">Data period</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Reviewed by</th>{METRICS.map((item) => <th key={item.value} className={`px-3 py-3 text-right ${metric === item.value ? "bg-slate-100 text-slate-900" : ""}`}>{item.label}</th>)}<th className="px-4 py-3">Saved by</th><th className="px-4 py-3 text-center">Action</th></tr></thead><tbody>{tableRows.map((snapshot) => <tr key={snapshot.id} className="border-t border-slate-100 bg-white/50 transition hover:bg-white"><td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-700">{formatDate(snapshot.createdAt)}{snapshot.kpiData?.scope?.partial ? <div className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-amber-600" title="Covers part of the named geography (some blocks/districts, or an ownership / rural-urban / facility-type filter)">Partial scope</div> : null}</td><td className="px-4 py-3">{portalBadge(snapshot)}</td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-600">{levelLabel(snapshot)}</td><td className="px-4 py-3"><div className="font-semibold text-slate-800">{reviewUnit(snapshot)}</div><div className="text-[10px] text-slate-400">{titleGeo(snapshot.state)}</div></td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-700">{dataPeriodLabel(snapshot) ?? <span className="font-medium text-slate-400">Not recorded</span>}{dataDatesLabel(snapshot) ? <div className="mt-0.5 text-[10px] font-medium text-slate-400" title="Reporting dates as declared at upload">{dataDatesLabel(snapshot)}</div> : null}</td><td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{dataDurationLabel(snapshot)}</td><td className="px-4 py-3 text-xs font-medium text-slate-600">{snapshot.kpiData?.designation ?? "—"}</td>{METRICS.map((item) => { const value = metricValue(snapshot, item.value); return <td key={item.value} className={`px-3 py-3 text-right font-bold tabular-nums ${metric === item.value ? "bg-slate-50 text-slate-950" : "text-slate-600"}`}>{value === null ? "N/A" : value.toFixed(1)}</td>; })}<td className="max-w-[180px] truncate px-4 py-3 text-xs text-slate-500" title={snapshot.createdBy?.email ?? ""}>{snapshot.createdBy?.email ?? "—"}</td><td className="px-4 py-3 text-center">{snapshot.canDelete ? <button type="button" onClick={() => handleDelete(snapshot.id)} disabled={deletingId === snapshot.id} className="rounded-xl p-2 text-red-500 transition hover:bg-red-50 hover:text-red-700 disabled:opacity-50" title="Delete snapshot"><Trash2 className="h-4 w-4" /></button> : <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">Read only</span>}</td></tr>)}</tbody></table></div>
+            <div className="max-h-[560px] overflow-auto"><table className="w-full min-w-[1320px] text-sm"><thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500"><th className="px-4 py-3">Review date</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Level</th><th className="px-4 py-3">Geography</th><th className="px-4 py-3">Data period</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Reviewed by</th>{METRICS.map((item) => <th key={item.value} className={`px-3 py-3 text-right ${metric === item.value ? "bg-slate-100 text-slate-900" : ""}`}>{item.label}</th>)}<th className="px-4 py-3">Saved by</th><th className="px-4 py-3 text-center">Action</th></tr></thead><tbody>{tableRows.map((snapshot) => <Fragment key={snapshot.id}><tr className="border-t border-slate-100 bg-white/50 transition hover:bg-white"><td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-700">{formatDate(snapshot.createdAt)}{snapshot.kpiData?.scope?.partial ? <div className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-amber-600" title="Covers part of the named geography (some blocks/districts, or an ownership / rural-urban / facility-type filter)">Partial scope</div> : null}</td><td className="px-4 py-3">{portalBadge(snapshot)}</td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-600">{levelLabel(snapshot)}</td><td className="px-4 py-3"><div className="font-semibold text-slate-800">{reviewUnit(snapshot)}</div><div className="text-[10px] text-slate-400">{titleGeo(snapshot.state)}</div></td><td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-700">{dataPeriodLabel(snapshot) ?? <span className="font-medium text-slate-400">Not recorded</span>}{dataDatesLabel(snapshot) ? <div className="mt-0.5 text-[10px] font-medium text-slate-400" title="Reporting dates as declared at upload">{dataDatesLabel(snapshot)}</div> : null}</td><td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{dataDurationLabel(snapshot)}</td><td className="px-4 py-3 text-xs font-medium text-slate-600">{snapshot.kpiData?.designation ?? "—"}</td>{METRICS.map((item) => { const value = metricValue(snapshot, item.value); return <td key={item.value} className={`px-3 py-3 text-right font-bold tabular-nums ${metric === item.value ? "bg-slate-50 text-slate-950" : "text-slate-600"}`}>{value === null ? "N/A" : value.toFixed(1)}</td>; })}<td className="max-w-[180px] truncate px-4 py-3 text-xs text-slate-500" title={snapshot.createdBy?.email ?? ""}>{snapshot.createdBy?.email ?? "—"}</td><td className="px-4 py-3 text-center"><div className="flex items-center justify-center gap-1"><button type="button" onClick={() => setOpenGridId((current) => (current === snapshot.id ? null : snapshot.id))} aria-expanded={openGridId === snapshot.id} className={`rounded-xl p-2 transition ${openGridId === snapshot.id ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`} title="Score grid: by month and by block"><LayoutGrid className="h-4 w-4" /></button>{snapshot.canDelete ? <button type="button" onClick={() => handleDelete(snapshot.id)} disabled={deletingId === snapshot.id} className="rounded-xl p-2 text-red-500 transition hover:bg-red-50 hover:text-red-700 disabled:opacity-50" title="Delete snapshot"><Trash2 className="h-4 w-4" /></button> : <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">Read only</span>}</div></td></tr>{openGridId === snapshot.id ? <tr className="border-t border-slate-100"><td colSpan={9 + METRICS.length} className="p-0"><ReviewBreakdownPanel snapshot={snapshot} contextLines={gridContextLines(snapshot)} /></td></tr> : null}</Fragment>)}</tbody></table></div>
           </GlassPanel>
         </> : null}
 

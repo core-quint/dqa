@@ -5,6 +5,7 @@ import type { CollectionReference, Query } from "firebase-admin/firestore";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { authorizePctsWrite } from "../lib/pctsAuthorization";
 import { canAccessPortal, normalizePortal } from "../lib/portalAuthorization";
+import { breakdownSchema } from "../lib/snapshotBreakdownSchema";
 
 // Scoring method v2 (2026-09-22): a component that could not be scored is sent
 // as null (N/A), never as a made-up 0 or 100.
@@ -58,6 +59,9 @@ const snapshotSchema = z.object({
   // unset, so these must accept empty strings (normalized to null on write).
   purpose: z.string().trim().optional().nullable(),
   purposeDetail: z.string().trim().optional().nullable(),
+  // Score grid for the complete upload; validated on its own below so a bad grid
+  // can never block saving the review itself.
+  breakdown: z.unknown().optional().nullable(),
 });
 
 export const createSnapshot = async (req: AuthRequest, res: Response) => {
@@ -76,6 +80,13 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
     methodVersion, scoredComponents, scope,
     uploadBlockCount, uploadFacilityCount, uploadSessionSiteCount,
   } = parsed.data;
+
+  let breakdown: z.infer<typeof breakdownSchema> | null = null;
+  if (parsed.data.breakdown !== undefined && parsed.data.breakdown !== null) {
+    const grid = breakdownSchema.safeParse(parsed.data.breakdown);
+    if (grid.success) breakdown = grid.data;
+    else console.warn("Snapshot score grid rejected:", grid.error.issues[0]);
+  }
 
   const normalizedPortal = normalizePortal(portal);
 
@@ -98,7 +109,8 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
 
   try {
     const docRef = db.collection("snapshots").doc();
-    await docRef.set({
+    const batch = db.batch();
+    batch.set(docRef, {
       state,
       district,
       reportingMonth: duration,
@@ -131,6 +143,7 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
         designation: designation ?? null,
         purpose: purpose?.trim() || null,
         purposeDetail: purposeDetail?.trim() || null,
+        hasBreakdown: breakdown !== null,
       },
       portal: normalizedPortal,
       userId: req.user!.id,
@@ -147,6 +160,18 @@ export const createSnapshot = async (req: AuthRequest, res: Response) => {
       },
       createdAt: FieldValue.serverTimestamp(),
     });
+    if (breakdown) {
+      batch.set(db.collection("snapshotBreakdowns").doc(docRef.id), {
+        ...breakdown,
+        snapshotId: docRef.id,
+        portal: normalizedPortal,
+        state,
+        district,
+        userId: req.user!.id,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
+    await batch.commit();
 
     const doc = await docRef.get();
     const data = doc.data()!;
@@ -221,6 +246,87 @@ export const getSnapshots = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/** Whether this user may read a snapshot: the same rules as the snapshot list. */
+function canReadSnapshot(user: AuthRequest["user"], data: FirebaseFirestore.DocumentData): boolean {
+  if (!canAccessPortal(user, data.portal)) return false;
+  if (user?.role === "ADMIN" || user?.level === "NATIONAL") return true;
+  if (user?.level === "STATE" && user.geoState) {
+    return normalizeGeo(data.state) === normalizeGeo(user.geoState);
+  }
+  if ((user?.level === "DISTRICT" || user?.level === "BLOCK") && user.geoState && user.geoDistrict) {
+    return normalizeGeo(data.state) === normalizeGeo(user.geoState)
+      && normalizeGeo(data.district) === normalizeGeo(user.geoDistrict);
+  }
+  return data.userId === user?.id;
+}
+
+/** The score grid of one saved review; `breakdown: null` when it was saved without one. */
+export const getSnapshotBreakdown = async (req: AuthRequest, res: Response) => {
+  const id = req.params.id as string;
+  try {
+    const snapshot = await db.collection("snapshots").doc(id).get();
+    if (!snapshot.exists || !canReadSnapshot(req.user, snapshot.data()!)) {
+      res.status(404).json({ message: "Snapshot not found" });
+      return;
+    }
+    const grid = await db.collection("snapshotBreakdowns").doc(id).get();
+    if (!grid.exists) {
+      res.json({ breakdown: null });
+      return;
+    }
+    const {
+      snapshotId: _snapshotId, portal: _portal, state: _state, district: _district,
+      userId: _userId, createdAt: _createdAt, ...breakdown
+    } = grid.data()!;
+    res.json({ breakdown });
+  } catch (error) {
+    console.error("Fetch snapshot breakdown error:", error);
+    res.status(500).json({ message: "Failed to fetch the score grid" });
+  }
+};
+
+const MAX_BULK_BREAKDOWNS = 300;
+
+/**
+ * Score grids of many saved reviews at once (`?ids=a,b,c`, at most 300), for the
+ * Dashboard and the Coverage map. Reviews the user may not read, and reviews saved
+ * without a grid, are simply absent from the result.
+ */
+export const getSnapshotBreakdowns = async (req: AuthRequest, res: Response) => {
+  const raw = typeof req.query.ids === "string" ? req.query.ids : "";
+  const ids = [...new Set(raw.split(",").map((id) => id.trim()).filter((id) => /^[A-Za-z0-9_-]{1,64}$/.test(id)))];
+  if (ids.length > MAX_BULK_BREAKDOWNS) {
+    res.status(400).json({ message: `Ask for at most ${MAX_BULK_BREAKDOWNS} score grids at a time.` });
+    return;
+  }
+  if (ids.length === 0) {
+    res.json({ breakdowns: {} });
+    return;
+  }
+  try {
+    const snapshots = await db.getAll(...ids.map((id) => db.collection("snapshots").doc(id)));
+    const readable = snapshots
+      .filter((doc) => doc.exists && canReadSnapshot(req.user, doc.data()!))
+      .map((doc) => doc.id);
+    const grids = readable.length > 0
+      ? await db.getAll(...readable.map((id) => db.collection("snapshotBreakdowns").doc(id)))
+      : [];
+    const breakdowns: Record<string, unknown> = {};
+    for (const grid of grids) {
+      if (!grid.exists) continue;
+      const {
+        snapshotId: _snapshotId, portal: _portal, state: _state, district: _district,
+        userId: _userId, createdAt: _createdAt, ...breakdown
+      } = grid.data()!;
+      breakdowns[grid.id] = breakdown;
+    }
+    res.json({ breakdowns });
+  } catch (error) {
+    console.error("Fetch snapshot breakdowns error:", error);
+    res.status(500).json({ message: "Failed to fetch score grids" });
+  }
+};
+
 export const deleteSnapshot = async (req: AuthRequest, res: Response) => {
   const id = req.params.id as string;
 
@@ -238,7 +344,10 @@ export const deleteSnapshot = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    await docRef.delete();
+    const batch = db.batch();
+    batch.delete(docRef);
+    batch.delete(db.collection("snapshotBreakdowns").doc(id));
+    await batch.commit();
     res.json({ message: "Deleted" });
   } catch (error) {
     console.error("Delete snapshot error:", error);

@@ -19,6 +19,8 @@ import {
   Users,
 } from "lucide-react";
 import { apiFetch } from "../../api";
+import { loadBreakdowns } from "../../lib/breakdownStore";
+import type { SnapshotBreakdown } from "../../lib/snapshotBreakdown";
 import { GlassPanel } from "../branding/GlassPanel";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import type { AuthState } from "./LoginPage";
@@ -1486,6 +1488,22 @@ export function DashboardPage({ auth }: Props) {
     fetchSnapshots();
   }, [fetchSnapshots]);
 
+  // Saved score grids only change the data-period axis (real month scores), so they
+  // are fetched the first time that axis is shown.
+  const [grids, setGrids] = useState<Map<string, SnapshotBreakdown>>(() => new Map());
+  useEffect(() => {
+    if (filters.basis !== "period" || !snapshots) return;
+    let cancelled = false;
+    loadBreakdowns(snapshots)
+      .then((loaded) => {
+        if (!cancelled && loaded.size > 0) setGrids(loaded);
+      })
+      .catch((err) => console.error("Score grids failed to load:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [filters.basis, snapshots]);
+
   useEffect(() => {
     setFilters((current) => {
       if (!hasHmisAccess && current.portal === "HMIS") {
@@ -1501,14 +1519,14 @@ export function DashboardPage({ auth }: Props) {
   const records = useMemo(
     () =>
       (snapshots ?? [])
-        .map(toDashboardRecord)
+        .map((snapshot) => toDashboardRecord(snapshot, grids.get(snapshot.id)))
         .filter(
           (record): record is DashboardRecord =>
             record !== null &&
             (hasHmisAccess || record.portal !== "HMIS") &&
             (hasPctsAccess || record.portal !== "PCTS"),
         ),
-    [hasHmisAccess, hasPctsAccess, snapshots],
+    [grids, hasHmisAccess, hasPctsAccess, snapshots],
   );
 
   const filtered = useMemo(() => applyDashboardFilters(records, filters), [records, filters]);
@@ -1531,6 +1549,7 @@ export function DashboardPage({ auth }: Props) {
   const [durationDrill, setDurationDrill] = useState<string | null>(null);
   const stats = useMemo(() => computeDashboardStats(scored, filters.districtScope), [scored, filters.districtScope]);
   const months = useMemo(() => groupByMonth(scored, filters.basis), [scored, filters.basis]);
+  const gridMonthReviews = useMemo(() => scored.filter((r) => r.monthScores !== null).length, [scored]);
   const durations = useMemo(() => groupByDuration(scored), [scored]);
   const isPeriodBasis = filters.basis === "period";
   const axisNoun = isPeriodBasis ? "data month" : "review month";
@@ -2328,6 +2347,13 @@ export function DashboardPage({ auth }: Props) {
                   <div className="mb-3">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Data quality</div>
                     <div className="text-sm font-bold text-slate-900">Average overall score by {axisNoun}</div>
+                    {isPeriodBasis ? (
+                      <div className="mt-1 text-[11px] leading-4 text-slate-500">
+                        {gridMonthReviews > 0
+                          ? `${fmtCount(gridMonthReviews)} review${gridMonthReviews === 1 ? "" : "s"} saved with a score grid count their own score for each month; older reviews count one score across all their months.`
+                          : "Each review counts its one score across all the months it analysed."}
+                      </div>
+                    ) : null}
                   </div>
                   {months.length === 0 ? (
                     <div className="flex h-[200px] items-center justify-center text-sm font-medium text-slate-400">No reviews in this slice.</div>

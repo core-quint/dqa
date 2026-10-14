@@ -14,6 +14,8 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { apiFetch } from "../../api";
+import { loadBreakdowns } from "../../lib/breakdownStore";
+import { gridBlockRows, type BreakdownCell, type SnapshotBreakdown } from "../../lib/snapshotBreakdown";
 import type { AuthState } from "./LoginPage";
 import { GlassPanel } from "../branding/GlassPanel";
 import {
@@ -179,6 +181,11 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   const [hovered, setHovered] = useState<HoverState | null>(null);
   const [labelMode, setLabelMode] = useState<LabelMode>("name");
   const [zoomBounds, setZoomBounds] = useState<Bounds | null>(null);
+  // District DQA with one district picked: draw the district itself, or its blocks
+  // shaded from the score grids saved with those reviews.
+  const [districtMapView, setDistrictMapView] = useState<"district" | "blocks">("district");
+  const [grids, setGrids] = useState<Map<string, SnapshotBreakdown>>(() => new Map());
+  const [loadingGrids, setLoadingGrids] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -239,7 +246,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     if (
-      level !== "BLOCK" ||
+      (level !== "BLOCK" && !(level === "DISTRICT" && districtMapView === "blocks")) ||
       selectedState === "ALL" ||
       selectedDistrict === "ALL" ||
       blocksTopology ||
@@ -269,7 +276,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       });
 
     return () => { mounted = false; };
-  }, [blocksTopology, level, selectedDistrict, selectedState]);
+  }, [blocksTopology, districtMapView, level, selectedDistrict, selectedState]);
 
   // Reset zoom when geography scope changes
   useEffect(() => {
@@ -427,10 +434,13 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   // see states, then districts after choosing a state, and blocks only after a
   // district is chosen. The selected DQA level still controls the data being
   // aggregated into those shapes.
+  const blockViewAvailable = level === "DISTRICT" && visibleStateValue !== "ALL" && visibleDistrictValue !== "ALL";
+  /** District reviews placed on their blocks through their saved score grids. */
+  const blocksFromGrids = blockViewAvailable && districtMapView === "blocks";
   const displayGrain: SnapshotDqaLevel =
     level === "STATE" || visibleStateValue === "ALL"
       ? "STATE"
-      : level === "BLOCK" && visibleDistrictValue !== "ALL"
+      : (level === "BLOCK" || blocksFromGrids) && visibleDistrictValue !== "ALL"
         ? "BLOCK"
         : "DISTRICT";
 
@@ -540,13 +550,69 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
     [displayGrain, visibleFeatures],
   );
 
+  useEffect(() => {
+    if (!blocksFromGrids) return;
+    let cancelled = false;
+    setLoadingGrids(true);
+    loadBreakdowns(filteredSnapshots)
+      .then((loaded) => {
+        if (!cancelled) setGrids((current) => new Map([...current, ...loaded]));
+      })
+      .catch((err) => {
+        if (!cancelled) setSnapshotError(err instanceof Error ? err.message : "Failed to load block scores.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingGrids(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [blocksFromGrids, filteredSnapshots]);
+
+  // Block view only: reviews with no block rows to place (saved before score grids),
+  // and grid blocks with no matching shape in the block boundary file.
+  const gridCoverage = useMemo(() => {
+    const gridless: SnapshotRecord[] = [];
+    const unmatched = new Set<string>();
+    if (!blocksFromGrids) return { gridless, unmatched: [] as string[] };
+    for (const snapshot of filteredSnapshots) {
+      const rows = gridBlockRows(grids.get(snapshot.id));
+      if (rows.length === 0) {
+        gridless.push(snapshot);
+        continue;
+      }
+      for (const row of rows) {
+        if (!matchBlockFeature(featureLookup, snapshot.state, snapshot.district, row.name)) unmatched.add(row.name);
+      }
+    }
+    return { gridless, unmatched: [...unmatched].sort((a, b) => a.localeCompare(b)) };
+  }, [blocksFromGrids, featureLookup, filteredSnapshots, grids]);
+
   const metricsByFeature = useMemo(() => {
     const buckets = new Map<
       string,
       { count: number; sum: number; valueCount: number; districtNames: string[] }
     >();
 
-    for (const snapshot of filteredSnapshots) {
+    if (blocksFromGrids) {
+      // Each district review contributes every block row of its saved grid.
+      for (const snapshot of filteredSnapshots) {
+        for (const row of gridBlockRows(grids.get(snapshot.id))) {
+          const match = matchBlockFeature(featureLookup, snapshot.state, snapshot.district, row.name);
+          if (!match) continue;
+          const current = buckets.get(match.id) ?? { count: 0, sum: 0, valueCount: 0, districtNames: [] as string[] };
+          current.count += 1;
+          const metricValue = gridCellIndicatorValue(row.cell, indicator);
+          if (metricValue !== null) {
+            current.sum += metricValue;
+            current.valueCount += 1;
+          }
+          buckets.set(match.id, current);
+        }
+      }
+    }
+
+    for (const snapshot of blocksFromGrids ? [] : filteredSnapshots) {
       const match = matchFeature(featureLookup, snapshot, displayGrain);
       if (!match) continue;
       const current = buckets.get(match.id) ?? { count: 0, sum: 0, valueCount: 0, districtNames: [] as string[] };
@@ -588,7 +654,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
       });
     }
     return metrics;
-  }, [displayGrain, featureLookup, filteredSnapshots, indicator, isDistrictCoverage, rosterByState, scopedFeatures]);
+  }, [blocksFromGrids, displayGrain, featureLookup, filteredSnapshots, grids, indicator, isDistrictCoverage, rosterByState, scopedFeatures]);
 
   const valueExtent = useMemo(() => {
     const values = [...metricsByFeature.values()]
@@ -613,10 +679,10 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
   const coveragePercent = scopedFeatures.length
     ? (regionsWithData / scopedFeatures.length) * 100
     : 0;
-  const mappedSnapshotCount = [...metricsByFeature.values()].reduce(
-    (sum, metric) => sum + metric.snapshots,
-    0,
-  );
+  // In block view one review lands on many blocks, so count reviews, not placements.
+  const mappedSnapshotCount = blocksFromGrids
+    ? filteredSnapshots.length - gridCoverage.gridless.length
+    : [...metricsByFeature.values()].reduce((sum, metric) => sum + metric.snapshots, 0);
 
   // Districts reached across every state in view. The denominator counts all
   // districts in the visible states, including states with no review at all —
@@ -1079,7 +1145,39 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
               {districtScope === "PRIORITY"
                 ? ` The whole map still draws, but only the ${PRIORITY_DISTRICT_TOTAL} Gavi priority districts carry data and form the denominators — regions outside the programme are shown pale for context.`
                 : ""}
+              {blocksFromGrids
+                ? loadingGrids
+                  ? " Loading block scores..."
+                  : ` Blocks are shaded from the score grids saved with district reviews: each block's score over the whole upload, whatever filters were on screen.${
+                    gridCoverage.gridless.length > 0
+                      ? ` ${gridCoverage.gridless.length} review${gridCoverage.gridless.length === 1 ? " was" : "s were"} saved before block scores were recorded and ${gridCoverage.gridless.length === 1 ? "is" : "are"} not on this map.`
+                      : ""
+                  }${
+                    gridCoverage.unmatched.length > 0
+                      ? ` No block shape found for: ${gridCoverage.unmatched.join(", ")}.`
+                      : ""
+                  }`
+                : ""}
             </div>
+            {blockViewAvailable ? (
+              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5" role="group" aria-label="District map view">
+                {(["district", "blocks"] as const).map((view) => (
+                  <button
+                    key={view}
+                    type="button"
+                    aria-pressed={districtMapView === view}
+                    onClick={() => {
+                      setDistrictMapView(view);
+                      setHovered(null);
+                      setZoomBounds(null);
+                    }}
+                    className={`rounded-[10px] px-3 py-1.5 text-[11px] font-bold transition ${districtMapView === view ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+                  >
+                    {view === "district" ? "District" : "Blocks (score grids)"}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={() => {
@@ -1087,6 +1185,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 setLevel("DISTRICT");
                 setIndicator("count");
                 setDistrictScope("ALL");
+                setDistrictMapView("district");
                 setHovered(null);
                 setFromDate("");
                 setToDate("");
@@ -1114,7 +1213,7 @@ export function CoveragePage({ auth }: { auth: AuthState }) {
                 <div className="mt-1 text-lg font-bold text-slate-950">
                   {displayGrain === "STATE" ? "State overview" : displayGrain === "DISTRICT" ? "District overview" : "Block overview"}
                 </div>
-                <div className="mt-0.5 text-[11px] font-medium text-slate-500">{level.charAt(0) + level.slice(1).toLowerCase()} DQA reviews aggregated to the visible {displayGrain.toLowerCase()} boundaries</div>
+                <div className="mt-0.5 text-[11px] font-medium text-slate-500">{blocksFromGrids ? "District DQA score grids placed on the district's blocks" : `${level.charAt(0) + level.slice(1).toLowerCase()} DQA reviews aggregated to the visible ${displayGrain.toLowerCase()} boundaries`}</div>
                 <div className="mt-2 flex flex-wrap items-center gap-1 text-xs font-semibold">
                   <button type="button" onClick={() => { if (canChangeState) { setSelectedState("ALL"); setSelectedDistrict("ALL"); } }} disabled={!canChangeState} className="rounded-lg px-1.5 py-1 text-sky-700 transition hover:bg-sky-50 disabled:text-slate-400">India</button>
                   {visibleStateValue !== "ALL" ? <><ChevronRight className="h-3 w-3 text-slate-300" /><button type="button" onClick={() => setSelectedDistrict("ALL")} className="rounded-lg px-1.5 py-1 text-sky-700 transition hover:bg-sky-50">{visibleStateValue}</button></> : null}
@@ -1728,18 +1827,7 @@ function matchFeature(
 
   if (level === "BLOCK") {
     const blockName = getSnapshotBlock(snapshot);
-    if (!blockName) return null;
-    const exact = lookup.exact.get(`${sd}|${normalizeGeoName(blockName)}`);
-    if (exact) return exact as MapFeature<BlockShapeProps>;
-    const districtMatches = lookup.byDistrict.get(sd) ?? [];
-    const fuzzy =
-      fuzzyMatch(blockName, districtMatches, (f) =>
-        "block_name" in f.properties ? f.properties.block_name : "",
-      ) ??
-      fuzzyMatch(blockName, lookup.features, (f) =>
-        "block_name" in f.properties ? f.properties.block_name : "",
-      );
-    return (fuzzy as MapFeature<BlockShapeProps> | null) ?? null;
+    return blockName ? matchBlockFeature(lookup, snapshot.state, snapshot.district, blockName) : null;
   }
 
   const exact = lookup.exact.get(sd);
@@ -1749,6 +1837,39 @@ function matchFeature(
     fuzzyMatch(snapshot.district, stateMatches, (f) => "district_name" in f.properties ? f.properties.district_name : "") ??
     fuzzyMatch(snapshot.district, lookup.features, (f) => "district_name" in f.properties ? f.properties.district_name : "");
   return (fuzzy as MapFeature<DistrictShapeProps> | null) ?? null;
+}
+
+/** The block shape for a block name inside one district (exact, then fuzzy). */
+function matchBlockFeature(
+  lookup: ReturnType<typeof buildFeatureLookup>,
+  stateName: string,
+  districtName: string,
+  blockName: string,
+) {
+  const sd = `${normalizeGeoName(stateName)}|${normalizeGeoName(districtName)}`;
+  const exact = lookup.exact.get(`${sd}|${normalizeGeoName(blockName)}`);
+  if (exact) return exact as MapFeature<BlockShapeProps>;
+  const districtMatches = lookup.byDistrict.get(sd) ?? [];
+  const fuzzy =
+    fuzzyMatch(blockName, districtMatches, (f) =>
+      "block_name" in f.properties ? f.properties.block_name : "",
+    ) ??
+    fuzzyMatch(blockName, lookup.features, (f) =>
+      "block_name" in f.properties ? f.properties.block_name : "",
+    );
+  return (fuzzy as MapFeature<BlockShapeProps> | null) ?? null;
+}
+
+/** A score-grid cell's value for the chosen indicator (a block row counts as one review). */
+function gridCellIndicatorValue(cell: BreakdownCell, indicator: CoverageIndicator): number | null {
+  switch (indicator) {
+    case "count":
+      return 1;
+    case "districtCoverage":
+      return null;
+    default:
+      return cell[indicator];
+  }
 }
 
 function getIndicatorValue(snapshot: SnapshotRecord, indicator: CoverageIndicator) {

@@ -19,6 +19,7 @@ import { OverallScore } from "./OverallScore";
 import { OverallSummaryTable } from "./OverallSummaryTable";
 import { apiFetch } from "../../api";
 import { computeOverallScore } from "../../lib/dqa/scoreUtils";
+import { buildHmisBreakdown } from "../../lib/dqa/breakdown";
 import { componentCoverageNote, SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import { ScoreStrip, type ScoreStripRow } from "./ScoreStrip";
 import {
@@ -219,6 +220,12 @@ export function ResultsPage({
       setSaving(true);
       const { overall, components } = score;
       const snapshotMeta = savedMeta;
+      // The score grid covers the complete upload whatever is on screen; a failure
+      // here must never stop the review itself from saving.
+      const breakdown = await buildHmisBreakdown(csv).catch((err) => {
+        console.error("HMIS score grid failed:", err);
+        return null;
+      });
       const savedSnapshot = await apiFetch("/api/snapshots", {
         method: "POST",
         body: JSON.stringify({
@@ -247,6 +254,7 @@ export function ResultsPage({
           facilityCount: kpis.globalDen,
           uploadBlockCount: csv.globalBlockCount,
           uploadFacilityCount: csv.globalFacilityCount,
+          breakdown,
         }),
       });
       setSavedReviews((current) => [savedSnapshot, ...current]);

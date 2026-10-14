@@ -28,6 +28,7 @@ import type { AuthState } from "../dqa/LoginPage";
 import type { PreUploadInfo } from "../../lib/dqa/preUploadOptions";
 import { UwinStateReportDialog } from "./UwinStateReportDialog";
 import { declaredWindow, windowLabel } from "../../lib/uwin/uploadPeriod";
+import { buildUwinBreakdown } from "../../lib/uwin/breakdown";
 
 interface Props {
   csv: UwinParsedCSV;
@@ -240,6 +241,12 @@ export function UwinResultsPage({
       setSaving(true);
       const { overall, components } = score;
       const snapshotMeta = savedMeta;
+      // The score grid covers the complete upload whatever is on screen; a failure
+      // here must never stop the review itself from saving.
+      const breakdown = await buildUwinBreakdown(csv).catch((err) => {
+        console.error("U-WIN score grid failed:", err);
+        return null;
+      });
       const savedSnapshot = await apiFetch("/api/snapshots", {
         method: "POST",
         body: JSON.stringify({
@@ -280,6 +287,7 @@ export function UwinResultsPage({
           uploadBlockCount: csv.globalBlockCount,
           uploadFacilityCount: csv.globalFacilityCount,
           uploadSessionSiteCount: csv.globalSessionSiteCount,
+          breakdown,
         }),
       });
       setSavedReviews((current) => [savedSnapshot, ...current]);

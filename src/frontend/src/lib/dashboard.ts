@@ -12,6 +12,7 @@ import {
   normalizePortal,
 } from "./snapshots";
 import type { DistrictScope } from "./maps/priorityDistricts";
+import { gridMonthScores, type SnapshotBreakdown } from "./snapshotBreakdown";
 import {
   inDistrictScope,
   isPriorityDistrict,
@@ -71,6 +72,12 @@ export interface DashboardRecord {
   reportingMonth: string;
   /** The saved overall score; null only when a score was never recorded. */
   overall: number | null;
+  /**
+   * Overall score per analysed month from the review's saved score grid, used on the
+   * data-period axis instead of spreading `overall` over every month. Null for
+   * reviews saved without a grid, or whose headline covers only part of the area.
+   */
+  monthScores: Record<string, number | null> | null;
   /** Which scoring framework the review belongs to; averages never mix them. */
   scoreFamily: ScoreFamily;
   availability: number | null;
@@ -117,10 +124,10 @@ export function scoreFamilyCounts(records: DashboardRecord[]): Record<ScoreFamil
 export function scoresForFamily(records: DashboardRecord[], family: ScoreFamily | null): DashboardRecord[] {
   return records.map((r) => (family !== null && r.scoreFamily === family
     ? r
-    : { ...r, overall: null, availability: null, completeness: null, accuracy: null, consistency: null }));
+    : { ...r, overall: null, monthScores: null, availability: null, completeness: null, accuracy: null, consistency: null }));
 }
 
-export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
+export function toDashboardRecord(s: SnapshotRecord, grid?: SnapshotBreakdown | null): DashboardRecord | null {
   if (!s.createdAt) return null;
   const created = new Date(s.createdAt);
   if (Number.isNaN(created.getTime())) return null;
@@ -162,6 +169,7 @@ export function toDashboardRecord(s: SnapshotRecord): DashboardRecord | null {
         .join(" / ") || null,
     reportingMonth: s.reportingMonth?.trim() || "",
     overall: typeof s.overallScore === "number" && Number.isFinite(s.overallScore) ? s.overallScore : null,
+    monthScores: gridMonthScores(s, grid, periodMonths),
     scoreFamily: scoreFamilyOf(portal) as ScoreFamily,
     availability: s.kpiData?.availabilityScore ?? null,
     completeness: portal === "UWIN" || portal === "UWIN_STATE" ? null : (s.kpiData?.completenessScore ?? null),
@@ -456,9 +464,10 @@ function nextMonthKey(key: string): string {
 }
 
 /**
- * On the "period" axis a review that analysed Apr–Jun counts in all three months,
- * because its score describes that whole window. Reviews with no recorded period
- * contribute to no month at all and simply drop out of the time charts.
+ * On the "period" axis a review that analysed Apr–Jun counts in all three months.
+ * A review saved with a score grid contributes its own score for each month; an
+ * older one spreads its single score over the whole window. Reviews with no
+ * recorded period contribute to no month at all and drop out of the time charts.
  */
 export function groupByMonth(records: DashboardRecord[], basis: TrendBasis = "review"): MonthBucket[] {
   if (records.length === 0) return [];
@@ -473,7 +482,9 @@ export function groupByMonth(records: DashboardRecord[], basis: TrendBasis = "re
       else if (r.portal === "UWIN_STATE" || r.portal === "UWIN") bucket.uwin += 1;
       else if (r.portal === "PCTS") bucket.pcts += 1;
       else bucket.hmis += 1;
-      bucket.scores.push(r.overall);
+      bucket.scores.push(
+        basis === "period" && r.monthScores && month in r.monthScores ? r.monthScores[month] : r.overall,
+      );
       byMonth.set(month, bucket);
     }
   }

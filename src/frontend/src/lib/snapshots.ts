@@ -46,6 +46,8 @@ export interface SnapshotKpiData {
   dataFrom?: string | null;
   dataTo?: string | null;
   uploadDuration?: "WEEKLY" | "MONTHLY" | null;
+  /** True when a score grid for the complete upload was saved (snapshotBreakdowns/{id}). */
+  hasBreakdown?: boolean;
   blockCount?: number | null;
   facilityCount?: number | null;
   sessionSiteCount?: number | null;
