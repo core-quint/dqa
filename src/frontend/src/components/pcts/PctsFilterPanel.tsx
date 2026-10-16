@@ -238,7 +238,7 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
             <option value="extreme">Rise above 100% or from 0 / fall of 75% or more (Extreme)</option>
           </select>
           <p className="mt-2 text-[11px] leading-4 text-slate-500">
-            Consecutive calendar months only; months where both values are under 10 are not compared.
+            Consecutive calendar months only. When both months are under 10, a rise needs twice the % (Extreme: over 200%) and falls are not flagged.
           </p>
         </Dropdown>
 

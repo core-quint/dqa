@@ -583,7 +583,7 @@ function computeUwinKpisForSettings(
     rows: t8WebRows,
   };
 
-  // t3: Outliers — calendar-adjacent periods only, volume floor, rises from 0.
+  // t3: Outliers — calendar-adjacent periods only, small-count bands, rises from 0.
   const incBucketsSel = new Set(filters.outliersInc);
   const dropBucketsSel = new Set(filters.outliersDrop);
 

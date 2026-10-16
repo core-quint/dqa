@@ -1,7 +1,7 @@
 // ============================================================
 // HMIS-State KPI engine — scoring method v2 (agreed 2026-09-22)
 //
-// Shared rules: lib/dqa/checkRules.ts (outlier bands, volume floor, dropout
+// Shared rules: lib/dqa/checkRules.ts (outlier bands, small-count bands, dropout
 // thresholds, matched-month totals) and lib/dqa/scoring.ts (scores).
 // State specifics: the units are districts (or blocks), so co-administered
 // doses keep a % tolerance — district totals aggregate many facilities.
@@ -314,7 +314,7 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     const flag = held > planned;
     return { flag, detail: `Planned ${planned}; held ${held}`, values: { Planned: planned, Held: held } };
   }));
-  cards.push(makeCard("outliers", "Month-on-Month Outliers", "Selected indicators cross the chosen increase/decrease threshold (months under 10 on both sides are not compared).", "accuracy", selectedDistricts, selectedMonths, (d, m) => {
+  cards.push(makeCard("outliers", "Month-on-Month Outliers", "Selected indicators cross the chosen increase/decrease threshold. When both months are under 10, a rise needs twice the % (Extreme: over 200%) and falls are not flagged.", "accuracy", selectedDistricts, selectedMonths, (d, m) => {
     const previousMonth = previousMonthOf(m);
     if (!previousMonth) return null;
     const outliers: string[] = [];

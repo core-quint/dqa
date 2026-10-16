@@ -3,25 +3,33 @@
 // HMIS-State), so a threshold means the same thing everywhere.
 //
 // Agreed 2026-09-22 (scoring method v2):
-//   - Outliers compare only calendar-adjacent months, skip a comparison when
-//     both months are below OUTLIER_MIN_VOLUME, and treat a rise from 0 to at
-//     least that volume as an extreme increase (a % change from 0 is undefined,
-//     which used to hide these completely).
+//   - Outliers compare only calendar-adjacent months and treat a rise from 0 to
+//     at least OUTLIER_MIN_VOLUME as an extreme increase (a % change from 0 is
+//     undefined, which used to hide these completely).
 //   - Bands are half-open, so no value can fall between two of them:
 //       increase  Low 25 to <50 · Moderate 50–100 · Extreme >100 (or from 0)
 //       decrease  Low −25 to >−50 · Moderate −50 to >−75 · Extreme −75 to −100
+//   - Small counts (agreed 2026-10-16): when both months are below
+//     OUTLIER_MIN_VOLUME, increases need twice the % (Low 50 to <100 ·
+//     Moderate 100–200 · Extreme >200), decreases and rises from 0 are not
+//     flagged. These pairs used to be skipped entirely.
 //   - Dropout ranges: Low 5 to <10 · Moderate 10 to <20 · High ≥20.
 //   - Period totals are summed only over months where BOTH compared values
 //     were reported; a blank is missing data, never a zero.
 // ============================================================
 
-/** Comparisons where both months are below this count are too small to judge. */
+/** Comparisons where both months are below this count use the small-count bands. */
 export const OUTLIER_MIN_VOLUME = 10;
+
+/** Small-count pairs need this many times the usual increase %. */
+const SMALL_COUNT_INCREASE_FACTOR = 2;
 
 export interface ChangeResult {
   /** % change; null only for a rise from zero, where it is undefined. */
   pct: number | null;
   fromZero: boolean;
+  /** Both values below OUTLIER_MIN_VOLUME: doubled increase bands, no decrease bands. */
+  small: boolean;
 }
 
 /** Guards the band edges against float noise (e.g. 49.99999999 for a true 50). */
@@ -32,10 +40,10 @@ function clean(value: number): number {
 /** Month-on-month change, or null when the pair cannot be judged. */
 export function monthOnMonthChange(previous: number | null | undefined, current: number | null | undefined): ChangeResult | null {
   if (previous === null || previous === undefined || current === null || current === undefined) return null;
-  if (Math.max(previous, current) < OUTLIER_MIN_VOLUME) return null;
-  if (previous === 0) return { pct: null, fromZero: true };
   if (previous < 0) return null;
-  return { pct: clean(((current - previous) / previous) * 100), fromZero: false };
+  const small = Math.max(previous, current) < OUTLIER_MIN_VOLUME;
+  if (previous === 0) return small ? null : { pct: null, fromZero: true, small: false };
+  return { pct: clean(((current - previous) / previous) * 100), fromZero: false, small };
 }
 
 export type OutlierBand = 'INC_LOW' | 'INC_MOD' | 'INC_EXT' | 'DROP_LOW' | 'DROP_MOD' | 'DROP_EXT';
@@ -44,9 +52,11 @@ export function outlierBand(change: ChangeResult): OutlierBand | null {
   if (change.fromZero) return 'INC_EXT';
   const pct = change.pct;
   if (pct === null) return null;
-  if (pct > 100) return 'INC_EXT';
-  if (pct >= 50) return 'INC_MOD';
-  if (pct >= 25) return 'INC_LOW';
+  const factor = change.small ? SMALL_COUNT_INCREASE_FACTOR : 1;
+  if (pct > 100 * factor) return 'INC_EXT';
+  if (pct >= 50 * factor) return 'INC_MOD';
+  if (pct >= 25 * factor) return 'INC_LOW';
+  if (change.small) return null;
   if (pct <= -75) return 'DROP_EXT';
   if (pct <= -50) return 'DROP_MOD';
   if (pct <= -25) return 'DROP_LOW';

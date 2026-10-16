@@ -562,6 +562,9 @@ export function FilterPanel({
                 }
               />
             ))}
+            <p className="mt-2 text-[11px] leading-4 text-slate-500">
+              When both months are under 10, a rise needs twice the % (Extreme: over 200%) and falls are not flagged.
+            </p>
           </Dropdown>
         ) : null}
 

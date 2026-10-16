@@ -1,7 +1,7 @@
 // ============================================================
 // PCTS KPI engine — scoring method v2 (agreed 2026-09-22)
 //
-// Shared rules live in lib/dqa/checkRules.ts (outlier bands, volume floor,
+// Shared rules live in lib/dqa/checkRules.ts (outlier bands, small-count bands,
 // dropout thresholds, matched-month totals) and lib/dqa/scoring.ts (component
 // and overall scores). PCTS specifics:
 //   - Month-on-month checks compare calendar-adjacent months only.
@@ -547,7 +547,7 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
   cards.push(makeCard(
     "month_outliers",
     "Month-on-Month Outliers",
-    "Selected indicators cross the chosen increase/decrease threshold (months under 10 on both sides are not compared).",
+    "Selected indicators cross the chosen increase/decrease threshold. When both months are under 10, a rise needs twice the % (Extreme: over 200%) and falls are not flagged.",
     "accuracy",
     selectedFacilityKeys,
     selectedMonths,

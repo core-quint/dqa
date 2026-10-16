@@ -381,7 +381,7 @@ function computeKpisForSettings(
   }
   finalizeKpiStat(t6Stat, t6Eligible);
 
-  // t3: Outliers — calendar-adjacent months only, volume floor, rises from 0.
+  // t3: Outliers — calendar-adjacent months only, small-count bands, rises from 0.
   const incBucketsSel = new Set(filters.outliersInc);
   const dropBucketsSel = new Set(filters.outliersDrop);
 

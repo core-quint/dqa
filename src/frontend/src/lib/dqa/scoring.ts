@@ -17,8 +17,11 @@
 //     scope, everything is N/A ("No data").
 // ============================================================
 
-/** Bump when a change makes new scores incomparable with saved ones. */
-export const SCORING_METHOD_VERSION = 2;
+/**
+ * Bump when a change makes new scores incomparable with saved ones.
+ * 3 (2026-10-16): small-count outlier bands (checkRules.ts).
+ */
+export const SCORING_METHOD_VERSION = 3;
 
 export const COMPONENT_LABELS: Record<string, string> = {
   availability: 'Availability',
