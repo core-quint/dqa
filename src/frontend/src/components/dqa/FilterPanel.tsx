@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Filter, Plus, X } from "lucide-react";
 import type { FilterState, ParsedCSV } from "../../lib/dqa/types";
 import type { UwinParsedCSV } from "../../lib/uwin/types";
-import { BASE_VAX, ADD_VAX, PAIR_DEFAULTS } from "../../lib/dqa/constants";
+import { BASE_VAX, ADD_VAX, DROPOUT_PAIR_OPTIONS } from "../../lib/dqa/constants";
 import { isMonthKey, monthLongLabel } from "../../lib/dqa/parseUtils";
 
 interface Props {
@@ -568,7 +568,7 @@ export function FilterPanel({
           </Dropdown>
         ) : null}
 
-        {isAcc ? (
+        {isAcc && allMonths.length > 1 ? (
           <Dropdown label="Dropouts" fullWidth={isRail}>
             <SectionLabel>Dropout % ranges</SectionLabel>
             {[
@@ -590,7 +590,7 @@ export function FilterPanel({
             ))}
 
             <SectionLabel>Pairs</SectionLabel>
-            {PAIR_DEFAULTS.map((pair) => (
+            {DROPOUT_PAIR_OPTIONS.map((pair) => (
               <CheckItem
                 key={pair}
                 label={pair}

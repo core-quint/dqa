@@ -76,12 +76,14 @@ export interface StateHmisFilters {
   blocks: string[];
   months: string[];
   keyIndicators: string[];
+  /** OPV1 / OPV3 the reviewer added to the outlier check (the standard check leaves them out). */
+  outlierExtraIndicators?: string[];
   outlierSeverity: "low" | "moderate" | "extreme";
   /** Minimum cumulative dropout over the selected period (5 / 10 / 20%). */
   dropoutThreshold: 5 | 10 | 20;
-  /** District/block totals aggregate many facilities, so co-admin allows a % spread. */
-  coadminTolerance: 5 | 10 | 20;
   additionalPairs: { from: string; to: string }[];
+  /** Dropout pairs the reviewer added; shown on screen only, never scored. */
+  dropoutPairs?: { from: string; to: string }[];
 }
 
 export interface StateHmisHit {
@@ -161,8 +163,9 @@ export const DEFAULT_STATE_HMIS_FILTERS: StateHmisFilters = {
   blocks: [],
   months: [],
   keyIndicators: [...STATE_HMIS_KEY_INDICATORS],
+  outlierExtraIndicators: [],
   outlierSeverity: "extreme",
   dropoutThreshold: 20,
-  coadminTolerance: 10,
   additionalPairs: [],
+  dropoutPairs: [],
 };

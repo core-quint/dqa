@@ -13,7 +13,12 @@
 //     OUTLIER_MIN_VOLUME, increases need twice the % (Low 50 to <100 ·
 //     Moderate 100–200 · Extreme >200), decreases and rises from 0 are not
 //     flagged. These pairs used to be skipped entirely.
+//   - OPV1 and OPV3 are left out of the standard outlier check (agreed
+//     2026-10-16). A reviewer can add them back on screen; scores and saved
+//     reviews always use the standard check.
 //   - Dropout ranges: Low 5 to <10 · Moderate 10 to <20 · High ≥20.
+//   - Later dose > earlier dose (agreed 2026-10-16): flagged only when the
+//     later dose is higher by more than 25%, or 50% when both are under 10.
 //   - Period totals are summed only over months where BOTH compared values
 //     were reported; a blank is missing data, never a zero.
 // ============================================================
@@ -81,6 +86,41 @@ export function passesChangeSeverity(change: ChangeResult, severity: ChangeSever
 export function formatChange(change: ChangeResult): string {
   if (change.fromZero) return 'from 0';
   const pct = change.pct ?? 0;
+  return `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`;
+}
+
+// ---- Outlier indicators ----
+
+/** Ids the standard outlier check leaves out, compared case-insensitively (PCTS uses "opv1"). */
+const STANDARD_OUTLIER_EXCLUDED_IDS = new Set(['opv1', 'opv3']);
+
+export function isStandardOutlierIndicator(id: string): boolean {
+  return !STANDARD_OUTLIER_EXCLUDED_IDS.has(id.trim().toLowerCase());
+}
+
+// ---- Later dose > earlier dose ----
+
+/** When both counts are below this, the later dose may be higher by up to 50%. */
+export const DOSE_ORDER_SMALL_COUNT = 10;
+
+/**
+ * Penta3 > Penta1, MR2 > MR1, the dose-sequence checks and custom pairs: true
+ * when the later dose exceeds the earlier one by more than 25% (50% when both
+ * are below DOSE_ORDER_SMALL_COUNT). From an earlier dose of 0 the % is
+ * undefined, so only a later count of 10 or more is flagged. Null when either
+ * value is missing.
+ */
+export function laterDoseExceeds(earlier: number | null | undefined, later: number | null | undefined): boolean | null {
+  if (earlier === null || earlier === undefined || later === null || later === undefined) return null;
+  if (earlier <= 0) return later >= DOSE_ORDER_SMALL_COUNT;
+  const allowedPct = Math.max(earlier, later) < DOSE_ORDER_SMALL_COUNT ? 50 : 25;
+  return (later - earlier) * 100 > allowedPct * earlier;
+}
+
+/** "+33.3%" (or "from 0") for a later dose compared with the earlier one. */
+export function doseExcessLabel(earlier: number, later: number): string {
+  if (earlier <= 0) return 'from 0';
+  const pct = ((later - earlier) / earlier) * 100;
   return `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`;
 }
 

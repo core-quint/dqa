@@ -200,9 +200,9 @@ export function downloadHighlightedXLS(
           if (red.has(vx)) styleMap[ri][ciByVx[vx]] = DARK_PINK;
         }
       }
-    } else if (kpiKey === 't5_p3gtp1' || kpiKey === 't5_opv3gtopv1') {
-      const shortA = kpiKey === 't5_p3gtp1' ? 'Penta3' : 'OPV3';
-      const shortB = kpiKey === 't5_p3gtp1' ? 'Penta1' : 'OPV1';
+    } else if (kpiKey === 't5_p3gtp1' || kpiKey === 't5_mr2gtmr1') {
+      const shortA = kpiKey === 't5_p3gtp1' ? 'Penta3' : 'MR2';
+      const shortB = kpiKey === 't5_p3gtp1' ? 'Penta1' : 'MR1';
       markInconsistencyPair(styleMap, ri, r, idxByShort, shortB, shortA, PINK);
     } else if (kpiKey.startsWith('t5_') && inconsPairMap[kpiKey]) {
       const pm = inconsPairMap[kpiKey];

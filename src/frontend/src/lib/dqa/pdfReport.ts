@@ -96,9 +96,9 @@ const GROUP_LABEL: Record<string, string> = {
   consistency:  "Consistency",
 };
 const GROUP_DESC: Record<string, string> = {
-  availability: "Measures whether facilities submitted data for each reporting period and whether all indicators were filled.",
+  availability: "Measures whether facilities submitted M9 immunisation data each month, and flags all-zero, copied-forward or session-less reports.",
   completeness: "Measures whether all required indicator cells within a submitted report are filled (non-blank).",
-  accuracy:     "Identifies facilities with statistical outliers, consecutive identical values, or abnormal dropout rates.",
+  accuracy:     "Identifies facilities with statistical outliers or abnormal dropout rates.",
   consistency:  "Checks internal logical relationships between indicators and administrative co-administration ratios.",
 };
 

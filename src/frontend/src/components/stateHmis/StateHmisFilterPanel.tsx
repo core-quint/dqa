@@ -13,6 +13,7 @@ import {
   type StateHmisFilters,
   type StateHmisParsed,
 } from "../../lib/stateHmis/types";
+import { isStandardOutlierIndicator } from "../../lib/dqa/checkRules";
 
 interface Props {
   data: StateHmisParsed;
@@ -40,10 +41,14 @@ export function StateHmisFilterPanel({
   const [pairs, setPairs] = useState<DraftPair[]>(
     initFilters.additionalPairs.length ? [...initFilters.additionalPairs] : [{ from: "", to: "" }],
   );
+  const [dropoutPairs, setDropoutPairs] = useState<DraftPair[]>(
+    initFilters.dropoutPairs?.length ? [...initFilters.dropoutPairs] : [{ from: "", to: "" }],
+  );
 
   useEffect(() => {
     setF({ ...initFilters });
     setPairs(initFilters.additionalPairs.length ? [...initFilters.additionalPairs] : [{ from: "", to: "" }]);
+    setDropoutPairs(initFilters.dropoutPairs?.length ? [...initFilters.dropoutPairs] : [{ from: "", to: "" }]);
   }, [initFilters]);
 
   const allDistricts = data.districts;
@@ -53,6 +58,7 @@ export function StateHmisFilterPanel({
   const allMonths = Object.keys(data.months).sort();
   const singleMonth = allMonths.length === 1;
   const allKeyIndicators = [...STATE_HMIS_KEY_INDICATORS];
+  const optionalOutlierIndicators = allKeyIndicators.filter((short) => !isStandardOutlierIndicator(short));
 
   const toggleSet = (arr: string[], value: string, on: boolean): string[] =>
     on ? [...new Set([...arr, value])] : arr.filter((item) => item !== value);
@@ -68,6 +74,7 @@ export function StateHmisFilterPanel({
     onApply({
       ...f,
       additionalPairs: pairs.filter((pair) => pair.from && pair.to && pair.from !== pair.to),
+      dropoutPairs: dropoutPairs.filter((pair) => pair.from && pair.to && pair.from !== pair.to),
     });
   };
 
@@ -211,11 +218,26 @@ export function StateHmisFilterPanel({
             <option value="moderate">Change of 50% or more either way (Moderate and above)</option>
             <option value="extreme">Rise above 100% or from 0 / fall of 75% or more (Extreme)</option>
           </select>
+          <SectionLabel>Also include</SectionLabel>
+          {optionalOutlierIndicators.map((value) => (
+            <CheckItem
+              key={value}
+              label={value}
+              checked={(f.outlierExtraIndicators ?? []).includes(value)}
+              onChange={(on) =>
+                setF((prev) => ({
+                  ...prev,
+                  outlierExtraIndicators: toggleSet(prev.outlierExtraIndicators ?? [], value, on),
+                }))
+              }
+            />
+          ))}
           <p className="mt-2 text-[11px] leading-4 text-slate-500">
             Consecutive calendar months only. When both months are under 10, a rise needs twice the % (Extreme: over 200%) and falls are not flagged.
           </p>
         </Dropdown>
 
+        {!singleMonth ? (
         <Dropdown label="Dropouts" fullWidth={isRail}>
           <SectionLabel>Dropout % threshold</SectionLabel>
           <select
@@ -232,25 +254,76 @@ export function StateHmisFilterPanel({
             <option value="10">&gt;=10% over the period (Moderate)</option>
             <option value="20">&gt;=20% over the period (High)</option>
           </select>
+
+          <SectionLabel>Custom dropout pairs</SectionLabel>
+          <div className="mt-2 space-y-2">
+            {dropoutPairs.map((pair, index) => (
+              <div
+                key={`state-dropout-pair-${index}`}
+                className="grid gap-2 rounded-[22px] border border-slate-200/80 bg-slate-50/80 p-3 sm:grid-cols-[1fr_1fr_auto]"
+              >
+                <select
+                  value={pair.from}
+                  onChange={(event) =>
+                    setDropoutPairs((prev) =>
+                      prev.map((item, i) => (i === index ? { ...item, from: event.target.value } : item)),
+                    )
+                  }
+                  className={selectClassName}
+                >
+                  <option value="">Earlier indicator</option>
+                  {indicatorShorts.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={pair.to}
+                  onChange={(event) =>
+                    setDropoutPairs((prev) =>
+                      prev.map((item, i) => (i === index ? { ...item, to: event.target.value } : item)),
+                    )
+                  }
+                  className={selectClassName}
+                >
+                  <option value="">Later indicator</option>
+                  {indicatorShorts.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  aria-label="Remove custom dropout pair"
+                  onClick={() =>
+                    setDropoutPairs((prev) =>
+                      prev.length <= 1 ? [{ from: "", to: "" }] : prev.filter((_, i) => i !== index),
+                    )
+                  }
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-950 hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+
+            <button
+              type="button"
+              onClick={() => setDropoutPairs((prev) => [...prev, { from: "", to: "" }])}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600 transition hover:bg-slate-950 hover:text-white"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add dropout pair
+            </button>
+          </div>
         </Dropdown>
+        ) : null}
 
         <Dropdown label="Inconsistencies" fullWidth={isRail}>
-          <SectionLabel>Co-admin tolerance</SectionLabel>
-          <select
-            value={String(f.coadminTolerance)}
-            onChange={(event) =>
-              setF((prev) => ({
-                ...prev,
-                coadminTolerance: Number(event.target.value) as StateHmisFilters["coadminTolerance"],
-              }))
-            }
-            className={selectClassName}
-          >
-            <option value="5">5%</option>
-            <option value="10">10%</option>
-            <option value="20">20%</option>
-          </select>
-
           <SectionLabel>Custom pairs (Indicator-1 -&gt; Indicator-2)</SectionLabel>
           <div className="mt-2 space-y-2">
             {pairs.map((pair, index) => (

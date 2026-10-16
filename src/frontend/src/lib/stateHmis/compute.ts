@@ -3,8 +3,8 @@
 //
 // Shared rules: lib/dqa/checkRules.ts (outlier bands, small-count bands, dropout
 // thresholds, matched-month totals) and lib/dqa/scoring.ts (scores).
-// State specifics: the units are districts (or blocks), so co-administered
-// doses keep a % tolerance — district totals aggregate many facilities.
+// State specifics: the units are districts (or blocks). Co-administered doses
+// use the shared rule in lib/dqa/coadmin.ts, the same as every portal.
 // ============================================================
 
 import {
@@ -19,12 +19,16 @@ import {
 import { scoreComponents, type OverallScoreResult, type ScoringCard } from "../dqa/scoring";
 import {
   dropoutPct,
+  doseExcessLabel,
   formatChange,
+  laterDoseExceeds,
   matchedTotals,
+  isStandardOutlierIndicator,
   monthOnMonthChange,
   passesChangeSeverity,
 } from "../dqa/checkRules";
 import { periodsAreConsecutive } from "../dqa/parseUtils";
+import { coadminDetail, coadminViolation } from "../dqa/coadmin";
 
 type Evaluator = (district: string, month: string) => StateHmisHit | null;
 
@@ -127,16 +131,56 @@ function makePeriodCard(
   };
 }
 
+// ---- later dose > earlier dose ----
+
+/** Later dose > earlier dose checks, the same two in every portal. */
+const DOSE_ORDER_CHECKS: { id: string; name: string; from: string; to: string }[] = [
+  { id: "penta3_gt_penta1", name: "Inconsistencies — Penta3>Penta1", from: "Penta1", to: "Penta3" },
+  { id: "mr2_gt_mr1", name: "Inconsistencies — MR2>MR1", from: "MR1", to: "MR2" },
+];
+
+/** The reviewer's extra later-dose pairs: valid, unique and not a standard check. */
+function customConsistencyPairs(filters: StateHmisFilters): { from: string; to: string }[] {
+  const seen = new Set(DOSE_ORDER_CHECKS.map((check) => `${check.from}->${check.to}`));
+  const pairs: { from: string; to: string }[] = [];
+  for (const pair of filters.additionalPairs) {
+    const key = `${pair.from}->${pair.to}`;
+    if (!pair.from || !pair.to || pair.from === pair.to || seen.has(key)) continue;
+    seen.add(key);
+    pairs.push(pair);
+  }
+  return pairs;
+}
+
+// ---- dropout pairs ----
+
+/** Standard dropout pairs, the same in every portal; only these are scored. */
+const DEFAULT_DROPOUT_PAIRS: [string, string][] = [["Penta1", "Penta3"], ["MR1", "MR2"], ["Penta3", "MR1"]];
+
+/** The reviewer's extra dropout pairs: valid, unique and not already a standard pair. */
+function customDropoutPairs(filters: StateHmisFilters): [string, string][] {
+  const seen = new Set(DEFAULT_DROPOUT_PAIRS.map(([from, to]) => `${from}->${to}`));
+  const pairs: [string, string][] = [];
+  for (const pair of filters.dropoutPairs ?? []) {
+    const key = `${pair.from}->${pair.to}`;
+    if (!pair.from || !pair.to || pair.from === pair.to || seen.has(key)) continue;
+    seen.add(key);
+    pairs.push([pair.from, pair.to]);
+  }
+  return pairs;
+}
+
 // ---- standard scoring profile ----
 
 function standardStateFilters(filters: StateHmisFilters): StateHmisFilters {
   return {
     ...filters,
     keyIndicators: [...DEFAULT_STATE_HMIS_FILTERS.keyIndicators],
+    outlierExtraIndicators: [],
     outlierSeverity: DEFAULT_STATE_HMIS_FILTERS.outlierSeverity,
     dropoutThreshold: DEFAULT_STATE_HMIS_FILTERS.dropoutThreshold,
-    coadminTolerance: DEFAULT_STATE_HMIS_FILTERS.coadminTolerance,
     additionalPairs: [],
+    dropoutPairs: [],
   };
 }
 
@@ -144,12 +188,10 @@ function methodSignature(filters: StateHmisFilters): string {
   return JSON.stringify([
     [...new Set(filters.keyIndicators)].sort(),
     filters.outlierSeverity,
+    [...new Set(filters.outlierExtraIndicators ?? [])].sort(),
     filters.dropoutThreshold,
-    filters.coadminTolerance,
-    filters.additionalPairs
-      .filter((pair) => pair.from && pair.to && pair.from !== pair.to)
-      .map((pair) => `${pair.from}->${pair.to}`)
-      .sort(),
+    customConsistencyPairs(filters).map((pair) => `${pair.from}->${pair.to}`).sort(),
+    customDropoutPairs(filters).map(([from, to]) => `${from}->${to}`).sort(),
   ]);
 }
 
@@ -236,6 +278,11 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
   const m9Codes = data.orderedItemCodes.filter((code) => /^M9\b/i.test(data.items[code]?.category ?? ""));
   const keyShorts = filters.keyIndicators.filter((short) => codeByShort(data, short));
   const keyCodes = keyShorts.map((short) => codeByShort(data, short)!).filter(Boolean);
+  // The standard outlier check leaves out OPV1/OPV3; the reviewer may add them back.
+  const outlierShorts = [...new Set([
+    ...keyShorts.filter(isStandardOutlierIndicator),
+    ...(filters.outlierExtraIndicators ?? []).filter((short) => codeByShort(data, short)),
+  ])];
   const cards: StateHmisCard[] = [];
   const record = (district: string, month: string) => data.unitData[district]?.months[month];
   const value = (district: string, month: string, short: string) => valueByShort(data, district, month, short);
@@ -279,14 +326,6 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     return { flag, detail: flag ? `Profile exactly matches ${previousMonth}` : `Profile differs from ${previousMonth}` };
   }));
 
-  cards.push(makeCard("zero_sessions_vax", "Zero Sessions with Vaccination Data", "Sessions held is zero while one or more key vaccinations are reported.", "availability", selectedDistricts, selectedMonths, (d, m) => {
-    if (!record(d, m)) return notEvaluable(`${unitLabel} report is missing`);
-    const held = value(d, m, "Sessions Held");
-    if (held === null) return notEvaluable("Sessions held not reported");
-    const positive = keyShorts.filter((short) => (value(d, m, short) ?? 0) > 0);
-    const flag = held === 0 && positive.length > 0;
-    return { flag, detail: flag ? `Zero sessions; positive: ${positive.join(", ")}` : "No contradiction" };
-  }));
 
   cards.push(makeCard("missing_unit", `Missing ${unitLabel} Report`, `The ${unitLabel.toLowerCase()} is absent from a monthly workbook.`, "completeness", selectedDistricts, selectedMonths, (d, m) => {
     const flag = !record(d, m); return { flag, detail: flag ? `${unitLabel} is absent from this file` : `${unitLabel} report present` };
@@ -308,7 +347,7 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     return { flag: missing.length > 0, detail: missing.length ? `${missing.length} M9 item(s) absent from schema` : "M9 schema complete" };
   }));
 
-  cards.push(makeCard("held_gt_planned", "Sessions Held > Sessions Planned", "Held exceeds planned (including sessions held with none planned).", "accuracy", selectedDistricts, selectedMonths, (d, m) => {
+  cards.push(makeCard("held_gt_planned", "Sessions Held > Sessions Planned", "Held exceeds planned (including sessions held with none planned).", "consistency", selectedDistricts, selectedMonths, (d, m) => {
     const planned = value(d, m, "Sessions Planned"); const held = value(d, m, "Sessions Held");
     if (planned === null || held === null) return notEvaluable(`Planned ${planned ?? "blank"}; held ${held ?? "blank"}`);
     const flag = held > planned;
@@ -319,7 +358,7 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     if (!previousMonth) return null;
     const outliers: string[] = [];
     let comparable = 0;
-    for (const short of keyShorts) {
+    for (const short of outlierShorts) {
       const change = monthOnMonthChange(value(d, previousMonth, short), value(d, m, short));
       if (!change) continue;
       comparable += 1;
@@ -345,7 +384,11 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
 
   // Dropouts — cumulative over the selected period (months where both doses
   // were reported); a single month's pair is not the same cohort of children.
-  const dropoutPairs: [string, string][] = [["Penta1", "Penta3"], ["MR1", "MR2"], ["BCG", "MR1"], ["Penta3", "MR1"]];
+  // A single month's pair is not the same cohort of children, so a single-month
+  // analysis has no dropout cards.
+  const dropoutPairs: [string, string][] = selectedMonths.length < 2
+    ? []
+    : [...DEFAULT_DROPOUT_PAIRS, ...customDropoutPairs(filters)];
   for (const [from, to] of dropoutPairs) {
     cards.push(makePeriodCard(`drop_${from}_${to}`, `${from} → ${to} Dropout`, `Cumulative dropout over the selected period is at least ${filters.dropoutThreshold}%.`, "accuracy", selectedDistricts, (d) => {
       const months: Record<string, StateHmisHit> = {};
@@ -393,7 +436,7 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
           const a = value(d, m, before); const b = value(d, m, after);
           if (a === null || b === null) continue;
           comparable = true;
-          if (b > a) reversals.push(`${after} ${b} > ${before} ${a}`);
+          if (laterDoseExceeds(a, b)) reversals.push(`${after} ${b} > ${before} ${a} (${doseExcessLabel(a as number, b as number)})`);
         }
         if (!comparable) continue;
         evaluableMonths += 1;
@@ -406,7 +449,7 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
         const totals = matchedTotals(selectedMonths.map((m) => [value(d, m, before), value(d, m, after)] as [number | null, number | null]));
         if (totals.months === 0) continue;
         comparableLinks += 1;
-        if (totals.b > totals.a) reversals.push(`${after} ${totals.b} > ${before} ${totals.a}`);
+        if (laterDoseExceeds(totals.a, totals.b)) reversals.push(`${after} ${totals.b} > ${before} ${totals.a} (${doseExcessLabel(totals.a, totals.b)})`);
       }
       return {
         period: comparableLinks === 0
@@ -418,20 +461,12 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
       };
     });
 
-  const sequenceCards: { id: string; name: string; doses: string[] }[] = [
-    { id: "penta_sequence", name: "Penta Dose Sequence", doses: ["Penta1", "Penta2", "Penta3"] },
-    { id: "opv_sequence", name: "OPV Dose Sequence", doses: ["OPV1", "OPV2", "OPV3"] },
-    { id: "rvv_sequence", name: "RVV Dose Sequence", doses: ["RVV1", "RVV2", "RVV3"] },
-  ];
-  for (const spec of sequenceCards) {
-    const links: Array<[string, string]> = spec.doses.slice(1).map((dose, index) => [spec.doses[index], dose]);
-    cards.push(doseOrderCard(spec.id, spec.name, "A later dose exceeds the preceding dose over the selected period.", links));
+  // Later dose > earlier dose: Penta3 > Penta1 and MR2 > MR1, as in every portal.
+  for (const check of DOSE_ORDER_CHECKS) {
+    cards.push(doseOrderCard(check.id, check.name, "Later dose exceeds the earlier dose by more than 25% (50% when both are under 10) over the selected period.", [[check.from, check.to]]));
   }
-  for (const [id, from, to] of [["penta3_gt_penta1", "Penta1", "Penta3"], ["opv3_gt_opv1", "OPV1", "OPV3"]] as const) {
-    cards.push(doseOrderCard(id, `${to} > ${from}`, "Later dose exceeds the first dose over the selected period.", [[from, to]]));
-  }
-  filters.additionalPairs.forEach((pair, index) => {
-    cards.push(doseOrderCard(`custom_${index}`, `${pair.to} > ${pair.from}`, "User-defined sequence comparison over the selected period.", [[pair.from, pair.to]]));
+  customConsistencyPairs(filters).forEach((pair, index) => {
+    cards.push(doseOrderCard(`custom_${index}`, `${pair.to} > ${pair.from}`, "User-defined later-dose pair, flagged when the later dose exceeds the earlier one by more than 25% (50% when both are under 10) over the selected period.", [[pair.from, pair.to]]));
   });
 
   const coadminGroups: [string, string, string[]][] = [
@@ -442,12 +477,11 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     ["co5", "Co-administered Antigens — 16–24 months", ["MR2", "DPT 1st Booster"]],
   ];
   for (const [id, name, shorts] of coadminGroups) {
-    cards.push(makeCard(id, name, `Relative spread exceeds ${filters.coadminTolerance}%.`, "consistency", selectedDistricts, selectedMonths, (d, m) => {
+    cards.push(makeCard(id, name, "A dose differs from the visit's reference count by more than 25% (50% when the reference is under 10).", "consistency", selectedDistricts, selectedMonths, (d, m) => {
       const values = shorts.map((short) => [short, value(d, m, short)] as const).filter((entry) => entry[1] !== null);
       if (values.length < 2) return notEvaluable("Fewer than two comparable values");
-      const nums = values.map((entry) => entry[1] as number); const max = Math.max(...nums); const min = Math.min(...nums);
-      const gap = max > 0 ? ((max - min) / max) * 100 : 0; const flag = gap > filters.coadminTolerance;
-      return { flag, detail: `${gap.toFixed(1)}% relative spread`, values: Object.fromEntries(values) };
+      const valsByShort: Record<string, number | null> = Object.fromEntries(values);
+      return { flag: coadminViolation(valsByShort), detail: coadminDetail(valsByShort), values: Object.fromEntries(values) };
     }));
   }
   cards.push(makeCard("aefi_deaths", "AEFI Deaths > Serious AEFI", "Reported AEFI deaths cannot exceed serious AEFI cases.", "consistency", selectedDistricts, selectedMonths, (d, m) => {

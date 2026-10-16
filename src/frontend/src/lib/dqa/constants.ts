@@ -2,7 +2,15 @@
 // DQA Constants
 // ============================================================
 
+import { isStandardOutlierIndicator } from './checkRules';
+
+/** Vaccines given at immunisation sessions (no birth doses), for the zero-sessions check. */
+export const SESSION_VAX = ['Penta1', 'Penta3', 'MR1', 'MR2'];
+
 export const BASE_VAX = ['BCG', 'Penta1', 'Penta3', 'OPV1', 'OPV3', 'MR1', 'MR2'];
+
+/** The standard outlier vaccines: the base list without OPV1 and OPV3 (see checkRules.ts). */
+export const OUTLIER_VAX = BASE_VAX.filter(isStandardOutlierIndicator);
 
 export const ADD_VAX = [
   'RVV1', 'RVV2', 'RVV3',
@@ -11,10 +19,11 @@ export const ADD_VAX = [
   'HepB0', 'DPT 1st Booster',
 ];
 
-export const PAIR_DEFAULTS = ['Penta1→Penta3', 'MR1→MR2', 'BCG→MR1', 'Penta3→MR1'];
+/** Standard dropout pairs, the same in every portal; only these are scored. */
+export const PAIR_DEFAULTS = ['Penta1→Penta3', 'MR1→MR2', 'Penta3→MR1'];
 
-// UWIN-specific dropout defaults: Penta1→Penta3, MR1→MR2, Penta3→MR1
-export const UWIN_PAIR_DEFAULTS = ['Penta1→Penta3', 'MR1→MR2', 'Penta3→MR1'];
+/** Pairs offered as ticks in the HMIS / U-WIN dropout filter (extra ticks are not scored). */
+export const DROPOUT_PAIR_OPTIONS = [...PAIR_DEFAULTS, 'BCG→MR1'];
 
 export const OUT_INC_ALL = ['INC_LOW', 'INC_MOD', 'INC_EXT'];
 export const OUT_DROP_ALL = ['DROP_LOW', 'DROP_MOD', 'DROP_EXT'];
@@ -56,12 +65,12 @@ export const UWIN_DEFAULT_FILTERS = {
   months: [] as string[],
   ownership: [] as string[],
   ru: [] as string[],
-  outliersVax: [...BASE_VAX],
+  outliersVax: [...OUTLIER_VAX],
   addVax: [] as string[],
   outliersInc: ['INC_EXT'],
   outliersDrop: ['DROP_EXT'],
   dropRanges: ['R20P'],
-  dropPairs: [...UWIN_PAIR_DEFAULTS],
+  dropPairs: [...PAIR_DEFAULTS],
   dropFrom: [] as string[],
   dropTo: [] as string[],
   inconsFrom: [] as string[],
@@ -75,7 +84,7 @@ export const DEFAULT_FILTERS = {
   months: [] as string[],
   ownership: [] as string[],
   ru: [] as string[],
-  outliersVax: [...BASE_VAX],
+  outliersVax: [...OUTLIER_VAX],
   addVax: [] as string[],
   outliersInc: ['INC_EXT'],
   outliersDrop: ['DROP_EXT'],

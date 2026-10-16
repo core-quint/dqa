@@ -56,7 +56,7 @@ export interface FilterState {
   months: string[]; // YYYY-MM keys
   ownership: string[]; // "Public" | "Private"
   ru: string[]; // "Rural" | "Urban"
-  outliersVax: string[]; // base vaccines for outliers/completeness
+  outliersVax: string[]; // vaccines for outliers (standard: OUTLIER_VAX, no OPV1/OPV3)
   addVax: string[]; // additional vaccines
   outliersInc: string[]; // INC_LOW | INC_MOD | INC_EXT
   outliersDrop: string[]; // DROP_LOW | DROP_MOD | DROP_EXT
@@ -212,6 +212,12 @@ export interface ComputedKpis {
   t1Stat: KpiStat;
   t0Stat: KpiStat;
   t7Stat: KpiStat;
+  /** facKey -> YYYY-MM -> flagged, for the highlighted export. */
+  t1HitMap: Record<string, Record<string, boolean>>;
+  t0HitMap: Record<string, Record<string, boolean>>;
+  t7HitMap: Record<string, Record<string, boolean>>;
+  t10Rows: TableRows;
+  t10Stat: KpiStat;
 
   // Completeness
   t2Web: T2Web;

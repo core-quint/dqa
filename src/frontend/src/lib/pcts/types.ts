@@ -158,6 +158,8 @@ export interface PctsFilters {
   facilityKeys?: string[];
   /** Indicators added to keyIndicators; missing or empty means no additional indicators. */
   additionalIndicators?: string[];
+  /** OPV1 / OPV3 the reviewer added to the outlier check (the standard check leaves them out). */
+  outlierExtraIndicators?: string[];
   dropoutPairs?: PctsPair[];
 }
 
@@ -307,4 +309,5 @@ export const DEFAULT_PCTS_FILTERS: PctsFilters = {
   dropoutThreshold: 20,
   additionalPairs: [],
   issuesOnly: false,
+  outlierExtraIndicators: [],
 };

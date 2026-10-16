@@ -20,8 +20,22 @@
 /**
  * Bump when a change makes new scores incomparable with saved ones.
  * 3 (2026-10-16): small-count outlier bands (checkRules.ts).
+ * 4 (2026-10-16): OPV1 and OPV3 left out of the outlier check; dropout pairs
+ *   Penta1→Penta3, MR1→MR2, Penta3→MR1 in every portal; no dropout for a
+ *   single-month / single-week analysis; HMIS and HMIS-State score
+ *   Sessions Held > Sessions Planned under Consistency, not Accuracy; the
+ *   OPV3 > OPV1 consistency check is now MR2 > MR1 (HMIS, U-WIN, HMIS-State);
+ *   the OPV Dose Sequence check is removed (PCTS, HMIS-State); co-administration
+ *   allows ±25% around the visit's reference count (±50% under 10) in every
+ *   portal (lib/dqa/coadmin.ts); a later dose above an earlier one (Penta3 >
+ *   Penta1, MR2 > MR1, sequences) is flagged only beyond 25% (50% when both
+ *   are under 10). PCTS and HMIS-State use the same two later-dose checks as
+ *   HMIS / U-WIN (Penta3 > Penta1, MR2 > MR1) instead of dose sequences;
+ *   "Zero Sessions with Vaccination Data" moved from HMIS-State to HMIS
+ *   (session vaccines only); HMIS t1 / t0 read M9 items only, t7 is a repeated
+ *   M9 profile and t2 skips facilities t1 flagged.
  */
-export const SCORING_METHOD_VERSION = 3;
+export const SCORING_METHOD_VERSION = 4;
 
 export const COMPONENT_LABELS: Record<string, string> = {
   availability: 'Availability',

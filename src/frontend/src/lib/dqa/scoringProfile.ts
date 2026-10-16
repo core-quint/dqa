@@ -10,7 +10,7 @@
 // ============================================================
 
 import type { FilterState } from './types';
-import { BASE_VAX } from './constants';
+import { OUTLIER_VAX } from './constants';
 
 type MethodDefaults = Pick<
   FilterState,
@@ -50,7 +50,7 @@ function pairKeys(from: string[] = [], to: string[] = []): string[] {
 
 /** Everything about the method settings that can change a KPI result, as one string. */
 export function methodSignature(filters: FilterState): string {
-  const baseVax = filters.outliersVax.length > 0 ? filters.outliersVax : BASE_VAX;
+  const baseVax = filters.outliersVax.length > 0 ? filters.outliersVax : OUTLIER_VAX;
   return JSON.stringify([
     setKey([...baseVax, ...(filters.addVax ?? [])]),
     setKey(filters.outliersInc),

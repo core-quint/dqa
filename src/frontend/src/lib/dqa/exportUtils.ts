@@ -3,9 +3,10 @@
 // ============================================================
 
 import type { ParsedCSV, ComputedKpis, FacilityRecord } from './types';
-import { monthKey as monthKeyFn, asNumOrNull } from './parseUtils';
-import { CO_SPECS } from './constants';
+import { monthKey as monthKeyFn, asNumOrNull, hmisAvailabilityColumns } from './parseUtils';
+import { CO_SPECS, SESSION_VAX } from './constants';
 import { coadminRedCells } from './coadmin';
+import { laterDoseExceeds } from './checkRules';
 
 const TABLE_STYLE = `
 <style>
@@ -102,7 +103,7 @@ export function downloadRenderedTableXLS(source: HTMLElement | null, filename: s
 const HIGHLIGHT_LEGEND: Record<string, string> = {
   '#dcfce7': 'Missing / not reported (N)',
   '#ffc0cb': 'Flagged value',
-  '#ff8fb1': 'Value differing from co-administered vaccines',
+  '#ff8fb1': 'Value outside the co-administration range',
 };
 
 /** Small colour key placed above the exported table so fills stay self-explanatory. */
@@ -255,7 +256,7 @@ export function markInconsistencyPair(
   if (fromCi === undefined || toCi === undefined) return;
   const from = asNumOrNull(row[fromCi]);
   const to = asNumOrNull(row[toCi]);
-  if (from === null || to === null || to <= from) return;
+  if (!laterDoseExceeds(from, to)) return;
   if (!styleMap[ri]) styleMap[ri] = {};
   styleMap[ri][fromCi] = color;
   styleMap[ri][toCi] = color;
@@ -288,6 +289,7 @@ export function downloadHighlightedXLS(
   // Mapping/identifier columns: everything up to and including Month (all
   // indicator columns sit after it). These get the same fill as the flagged
   // cells so the export can be filtered by colour on State/District/Block/etc.
+  const availCols = hmisAvailabilityColumns(header, idxMonth);
   const mappingCols: number[] = [];
   for (let ci = 0; ci <= idxMonth && ci < header.length; ci++) mappingCols.push(ci);
 
@@ -309,38 +311,13 @@ export function downloadHighlightedXLS(
 
     if (!inSet || !monthOk) continue;
 
-    const highlightRow = (color: string) => {
-      styleMap[ri] = {};
-      for (let ci = 0; ci < header.length; ci++) {
-        styleMap[ri][ci] = color;
+    if (kpiKey === 't1' || kpiKey === 't0' || kpiKey === 't7') {
+      // Same months the engine flagged; only the M9 cells it read are marked.
+      const hitMap = kpiKey === 't1' ? kpis.t1HitMap : kpiKey === 't0' ? kpis.t0HitMap : kpis.t7HitMap;
+      if (mKey && hitMap[rowKey]?.[mKey]) {
+        if (!styleMap[ri]) styleMap[ri] = {};
+        for (const ci of availCols) styleMap[ri][ci] = PINK;
       }
-    };
-
-    if (kpiKey === 't1') {
-      // Check all blank
-      let allBlank = true;
-      for (let ci = idxMonth + 1; ci < header.length; ci++) {
-        if ((r[ci] ?? '').trim() !== '') { allBlank = false; break; }
-      }
-      if (allBlank) highlightRow(PINK);
-    } else if (kpiKey === 't0') {
-      let allZero = true; let hasAny = false;
-      for (let ci = idxMonth + 1; ci < header.length; ci++) {
-        const v = (r[ci] ?? '').trim();
-        if (v === '') { allZero = false; break; }
-        hasAny = true;
-        if (isNaN(Number(v)) || Number(v) !== 0) { allZero = false; break; }
-      }
-      if (hasAny && allZero) highlightRow(PINK);
-    } else if (kpiKey === 't7') {
-      let firstVal: string | null = null; let ok = true; let hasAny = false;
-      for (let ci = idxMonth + 1; ci < header.length; ci++) {
-        const v = (r[ci] ?? '').trim();
-        if (v === '' || isNaN(Number(v)) || Number(v) === 0) { ok = false; break; }
-        if (firstVal === null) { firstVal = v; hasAny = true; }
-        else if (v !== firstVal) { ok = false; break; }
-      }
-      if (hasAny && ok) highlightRow(PINK);
     } else if (kpiKey === 't2') {
       // Highlight blank vaccine columns
       for (const [vx, ci] of Object.entries(idxByShort)) {
@@ -350,6 +327,18 @@ export function downloadHighlightedXLS(
             if (!styleMap[ri]) styleMap[ri] = {};
             styleMap[ri][ci] = PINK;
           }
+        }
+      }
+    } else if (kpiKey === 't10') {
+      // 0 sessions held while a session vaccine is reported: mark both.
+      if (idxSessHeld !== null && asNumOrNull(r[idxSessHeld] ?? '') === 0) {
+        const positiveCis = SESSION_VAX
+          .map((vx) => idxByShort[vx])
+          .filter((ci): ci is number => ci !== undefined && (asNumOrNull(r[ci] ?? '') ?? 0) > 0);
+        if (positiveCis.length > 0) {
+          if (!styleMap[ri]) styleMap[ri] = {};
+          styleMap[ri][idxSessHeld] = PINK;
+          for (const ci of positiveCis) styleMap[ri][ci] = PINK;
         }
       }
     } else if (kpiKey === 't6') {
@@ -410,9 +399,9 @@ export function downloadHighlightedXLS(
           if (red.has(vx)) styleMap[ri][ciByVx[vx]] = DARK_PINK;
         }
       }
-    } else if (kpiKey === 't5_p3gtp1' || kpiKey === 't5_opv3gtopv1') {
-      const shortA = kpiKey === 't5_p3gtp1' ? 'Penta3' : 'OPV3';
-      const shortB = kpiKey === 't5_p3gtp1' ? 'Penta1' : 'OPV1';
+    } else if (kpiKey === 't5_p3gtp1' || kpiKey === 't5_mr2gtmr1') {
+      const shortA = kpiKey === 't5_p3gtp1' ? 'Penta3' : 'MR2';
+      const shortB = kpiKey === 't5_p3gtp1' ? 'Penta1' : 'MR1';
       markInconsistencyPair(styleMap, ri, r, idxByShort, shortB, shortA, PINK);
     } else if (kpiKey.startsWith('t5_') && inconsPairMap[kpiKey]) {
       const pm = inconsPairMap[kpiKey];

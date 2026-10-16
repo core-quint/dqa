@@ -30,17 +30,20 @@ import {
   monthShortLabel,
   periodsAreConsecutive,
 } from '../dqa/parseUtils';
-import { coadminHasDifference, coadminMatchedTotals } from '../dqa/coadmin';
+import { coadminViolation, coadminMatchedTotals } from '../dqa/coadmin';
 import {
   monthOnMonthChange,
   outlierBand,
   dropoutPct,
   dropoutRange,
   matchedTotals,
+  laterDoseExceeds,
+  doseExcessLabel,
 } from '../dqa/checkRules';
 import { standardMethodFilters, methodSignature } from '../dqa/scoringProfile';
 import {
   BASE_VAX,
+  OUTLIER_VAX,
   UWIN_DEFAULT_FILTERS,
   GROUP_COLORS,
   DROPOUT_COLOR,
@@ -79,10 +82,6 @@ function flag(stat: KpiStat, key: string, hitMonths: number, evaluableMonths: nu
   stat.facilityKeys.add(key);
   if (evaluableMonths > 0 && hitMonths === evaluableMonths) stat.allFacilityKeys.add(key);
   else stat.anyFacilityKeys.add(key);
-}
-
-function pctLabel(from: number, to: number): string {
-  return from > 0 ? `+${(((to - from) / from) * 100).toFixed(1)}%` : '';
 }
 
 function chartCountsByGeography(
@@ -233,13 +232,14 @@ function computeUwinKpisForSettings(
 
   // ---- resolve selected vaccines ----
   // UWIN completeness uses a fixed applicability set rather than the accuracy indicator filters.
-  const accuracyVaxBase = filters.outliersVax.length > 0 ? filters.outliersVax : BASE_VAX;
+  // The standard outlier list leaves out OPV1/OPV3; a reviewer may tick them.
+  const accuracyVaxBase = filters.outliersVax.length > 0 ? filters.outliersVax : OUTLIER_VAX;
   const accuracyVaxAdd = filters.addVax ?? [];
   const allAccuracyVax = [...new Set([...accuracyVaxBase, ...accuracyVaxAdd])];
   const accuracyVaxList = allAccuracyVax.filter((v) => indicatorMap[v] !== undefined);
   const effectiveAccuracyVaxList = accuracyVaxList.length > 0
     ? accuracyVaxList
-    : BASE_VAX.filter((v) => indicatorMap[v] !== undefined);
+    : OUTLIER_VAX.filter((v) => indicatorMap[v] !== undefined);
 
   const completenessDefaults = [...BASE_VAX];
   if (indicatorMap['FIC-Total'] !== undefined) completenessDefaults.push('FIC-Total');
@@ -670,6 +670,9 @@ function computeUwinKpisForSettings(
     const t = (toList[ii] ?? '').trim();
     if (f && t && f !== t) selectedPairsSet.add(`${f}→${t}`);
   }
+  // Dropout needs at least two periods: one month's (or week's) doses are
+  // mostly different children, so a single-period analysis has no dropout.
+  if (selMonths.length < 2) selectedPairsSet.clear();
 
   const dropTables: Record<string, DropoutWeb> = {};
   const dropStats: Record<string, KpiStat> = {};
@@ -747,7 +750,8 @@ function computeUwinKpisForSettings(
   // ============================================================
 
   // Later dose > earlier dose — period totals over periods where both doses
-  // were reported (a blank is missing, never zero).
+  // were reported (a blank is missing, never zero), with the allowance in
+  // checkRules.ts laterDoseExceeds (25%, 50% when both are under 10).
   function doseOrderCheck(
     iFrom: number,
     iTo: number,
@@ -762,17 +766,17 @@ function computeUwinKpisForSettings(
         const A = fd.months[mk]?.vals[iFrom] ?? null;
         const B = fd.months[mk]?.vals[iTo] ?? null;
         pairs.push([A, B]);
-        if (A !== null && B !== null && B > A) monthHits++;
+        if (laterDoseExceeds(A, B)) monthHits++;
       }
       const totals = matchedTotals(pairs);
       if (totals.months === 0) continue;
       eligible.add(key);
-      if (totals.b > totals.a) {
+      if (laterDoseExceeds(totals.a, totals.b)) {
         flag(stat, key, monthHits, totals.months);
         rows.push([
           ...idRowCols(fd),
           Math.round(totals.b), Math.round(totals.a),
-          pctLabel(totals.a, totals.b),
+          doseExcessLabel(totals.a, totals.b),
         ]);
       }
     }
@@ -785,16 +789,16 @@ function computeUwinKpisForSettings(
   if (iP1 !== undefined && iP3 !== undefined) doseOrderCheck(iP1, iP3, i1Stat, i1Rows);
 
   const i2Stat = emptyKpiStat();
-  const i2Rows: TableRows = [[...idHeaderCols, 'OPV3 (total)', 'OPV1 (total)', '% change']];
-  const iO1 = indicatorMap['OPV1']; const iO3 = indicatorMap['OPV3'];
-  if (iO1 !== undefined && iO3 !== undefined) doseOrderCheck(iO1, iO3, i2Stat, i2Rows);
+  const i2Rows: TableRows = [[...idHeaderCols, 'MR2 (total)', 'MR1 (total)', '% change']];
+  const iM1 = indicatorMap['MR1']; const iM2 = indicatorMap['MR2'];
+  if (iM1 !== undefined && iM2 !== undefined) doseOrderCheck(iM1, iM2, i2Stat, i2Rows);
 
   // Dynamic inconsistency pairs
   const inconsTables: Record<string, TableRows> = {};
   const inconsStats: Record<string, KpiStat> = {};
   const inconsPairMap: Record<string, { from: string; to: string; label: string; pid: string }> = {};
 
-  const existingPairSet = new Set(['Penta1→Penta3', 'OPV1→OPV3']);
+  const existingPairSet = new Set(['Penta1→Penta3', 'MR1→MR2']);
   const inconsFromList = filters.inconsFrom ?? [];
   const inconsToList = filters.inconsTo ?? [];
   const maxI = Math.max(inconsFromList.length, inconsToList.length);
@@ -844,7 +848,7 @@ function computeUwinKpisForSettings(
           valsMonth.push(val);
         }
         if (valsMonth.filter((v) => v !== null).length >= 2) evaluable++;
-        if (coadminHasDifference(valsMonth)) monthViolCount++;
+        if (coadminViolation(rowVals[mk])) monthViolCount++;
       }
 
       if (evaluable > 0) eligible.add(fkey);
@@ -928,7 +932,7 @@ function computeUwinKpisForSettings(
 
   cards.push(
     { id: 'i1', name: 'Inconsistencies — Penta3>Penta1', stat: i1Stat, group: 'consistency', downloadKey: 't5_p3gtp1' },
-    { id: 'i2', name: 'Inconsistencies — OPV3>OPV1', stat: i2Stat, group: 'consistency', downloadKey: 't5_opv3gtopv1' },
+    { id: 'i2', name: 'Inconsistencies — MR2>MR1', stat: i2Stat, group: 'consistency', downloadKey: 't5_mr2gtmr1' },
   );
 
   for (const [dlKey, meta] of Object.entries(inconsPairMap)) {
@@ -972,7 +976,7 @@ function computeUwinKpisForSettings(
     t8: [...t8Stat.facilityKeys],
     t3: [...t3Stat.facilityKeys],
     t5_p3gtp1: [...i1Stat.facilityKeys],
-    t5_opv3gtopv1: [...i2Stat.facilityKeys],
+    t5_mr2gtmr1: [...i2Stat.facilityKeys],
   };
   for (const [coKey, coStat] of Object.entries(coStats)) {
     pinkFacSets[coKey] = [...coStat.facilityKeys];
@@ -1034,7 +1038,7 @@ function computeUwinKpisForSettings(
   }
 
   summaryByPid.i1 = { any: [mkRow('Penta3>Penta1', i1Stat.total)], all: [] };
-  summaryByPid.i2 = { any: [mkRow('OPV3>OPV1', i2Stat.total)], all: [] };
+  summaryByPid.i2 = { any: [mkRow('MR2>MR1', i2Stat.total)], all: [] };
 
   return {
     filteredFacilities,

@@ -7,7 +7,8 @@
 //   - Month-on-month checks compare calendar-adjacent months only.
 //   - Dropouts and later-dose > earlier-dose checks are judged on the totals of
 //     the selected period (months where both doses were reported).
-//   - Co-administered doses must match exactly at facility level.
+//   - Co-administered doses: shared rule in lib/dqa/coadmin.ts (±25% of the
+//     visit's reference count, ±50% when it is under 10).
 //   - The score always uses the standard settings; the reviewer's settings
 //     only change the drill-downs.
 // ============================================================
@@ -27,11 +28,14 @@ import {
   type PctsParsed,
 } from "./types";
 import { scoreComponents, type OverallScoreResult, type ScoringCard } from "../dqa/scoring";
-import { coadminHasDifference } from "../dqa/coadmin";
+import { coadminDetail, coadminRedCells } from "../dqa/coadmin";
 import {
   dropoutPct,
+  doseExcessLabel,
   formatChange,
+  laterDoseExceeds,
   matchedTotals,
+  isStandardOutlierIndicator,
   monthOnMonthChange,
   passesChangeSeverity,
 } from "../dqa/checkRules";
@@ -77,14 +81,16 @@ const SERVICE_INDICATORS = [
   "fullyImmunized",
 ];
 
+/** Later dose > earlier dose checks, the same two in every portal. */
+const DOSE_ORDER_CHECKS: { id: string; name: string; from: string; to: string }[] = [
+  { id: "penta3_gt_penta1", name: "Inconsistencies — Penta3>Penta1", from: "penta1", to: "penta3" },
+  { id: "mr2_gt_mr1", name: "Inconsistencies — MR2>MR1", from: "mr1", to: "mr2" },
+];
+
+/** Standard dropout pairs, the same in every portal; only these are scored. */
 const DEFAULT_DROPOUT_PAIRS: PctsPair[] = [
   { from: "penta1", to: "penta3" },
-  { from: "opv1", to: "opv3" },
-  { from: "rota1", to: "rota3" },
-  { from: "fipv1", to: "fipv3" },
-  { from: "pcv1", to: "pcv2" },
   { from: "mr1", to: "mr2" },
-  { from: "bcg", to: "mr1" },
   { from: "penta3", to: "mr1" },
 ];
 
@@ -185,6 +191,12 @@ function uniquePairs(pairs: PctsPair[]): PctsPair[] {
   });
 }
 
+/** The reviewer's extra later-dose pairs: valid, unique and not a standard check. */
+function customConsistencyPairs(filters: PctsFilters): PctsPair[] {
+  const standard = new Set(DOSE_ORDER_CHECKS.map((check) => `${check.from}->${check.to}`));
+  return uniquePairs(filters.additionalPairs).filter((pair) => !standard.has(`${pair.from}->${pair.to}`));
+}
+
 // ---- standard scoring profile ----
 
 function standardPctsFilters(filters: PctsFilters): PctsFilters {
@@ -192,6 +204,7 @@ function standardPctsFilters(filters: PctsFilters): PctsFilters {
     ...filters,
     keyIndicators: [...DEFAULT_PCTS_FILTERS.keyIndicators],
     additionalIndicators: [],
+    outlierExtraIndicators: [],
     outlierSeverity: DEFAULT_PCTS_FILTERS.outlierSeverity,
     dropoutThreshold: DEFAULT_PCTS_FILTERS.dropoutThreshold,
     additionalPairs: [],
@@ -206,8 +219,9 @@ function methodSignature(filters: PctsFilters): string {
   return JSON.stringify([
     [...new Set([...filters.keyIndicators, ...(filters.additionalIndicators ?? [])])].sort(),
     filters.outlierSeverity,
+    [...new Set(filters.outlierExtraIndicators ?? [])].sort(),
     filters.dropoutThreshold,
-    pairKeys(filters.additionalPairs),
+    pairKeys(customConsistencyPairs(filters)),
     pairKeys(filters.dropoutPairs).filter((key) => !defaultDropouts.has(key)),
   ]);
 }
@@ -331,6 +345,11 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
     ...filters.keyIndicators,
     ...(filters.additionalIndicators ?? []),
   ])].filter((id) => indicatorById.has(id));
+  // The standard outlier check leaves out OPV1/OPV3; the reviewer may add them back.
+  const outlierIndicators = [...new Set([
+    ...selectedIndicators.filter(isStandardOutlierIndicator),
+    ...(filters.outlierExtraIndicators ?? []).filter((id) => indicatorById.has(id)),
+  ])];
   const cards: PctsCard[] = [];
   const facility = (facilityKey: string): PctsFacilityRecord => data.facilities[facilityKey];
   const record = (facilityKey: string, month: string) => facility(facilityKey)?.months[month];
@@ -556,7 +575,7 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
       if (!previousMonth) return null;
       const outliers: { id: string; change: string }[] = [];
       let comparable = 0;
-      for (const id of selectedIndicators) {
+      for (const id of outlierIndicators) {
         const change = monthOnMonthChange(value(facilityKey, previousMonth, id), value(facilityKey, month, id));
         if (!change) continue;
         comparable += 1;
@@ -603,8 +622,11 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
   ));
 
   // Dropouts — cumulative over the selected period, months where both doses
-  // were reported. A single month's pair is not the same cohort of children.
-  const dropoutPairs = uniquePairs([...DEFAULT_DROPOUT_PAIRS, ...(filters.dropoutPairs ?? [])]);
+  // were reported. A single month's pair is not the same cohort of children,
+  // so a single-month analysis has no dropout cards.
+  const dropoutPairs = selectedMonths.length < 2
+    ? []
+    : uniquePairs([...DEFAULT_DROPOUT_PAIRS, ...(filters.dropoutPairs ?? [])]);
   for (const pair of dropoutPairs) {
     cards.push(makePeriodCard(
       `drop_${pair.from}_${pair.to}`,
@@ -667,7 +689,7 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
           const after = value(facilityKey, month, afterId);
           if (before === null || after === null) continue;
           comparable = true;
-          if (after > before) reversals.push(`${label(afterId)} ${after} > ${label(beforeId)} ${before}`);
+          if (laterDoseExceeds(before, after)) reversals.push(`${label(afterId)} ${after} > ${label(beforeId)} ${before} (${doseExcessLabel(before, after)})`);
         }
         if (!comparable) continue;
         evaluableMonths += 1;
@@ -687,8 +709,8 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
         ] as [number | null, number | null]));
         if (totals.months === 0) continue;
         comparableLinks += 1;
-        if (totals.b > totals.a) {
-          reversals.push(`${label(afterId)} ${totals.b} > ${label(beforeId)} ${totals.a}`);
+        if (laterDoseExceeds(totals.a, totals.b)) {
+          reversals.push(`${label(afterId)} ${totals.b} > ${label(beforeId)} ${totals.a} (${doseExcessLabel(totals.a, totals.b)})`);
           affected.add(beforeId);
           affected.add(afterId);
         }
@@ -707,30 +729,23 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
       };
     });
 
-  const sequenceSpecs: { id: string; name: string; doses: string[] }[] = [
-    { id: "penta_sequence", name: "Penta Dose Sequence", doses: ["penta1", "penta2", "penta3"] },
-    { id: "opv_sequence", name: "OPV Dose Sequence", doses: ["opv1", "opv2", "opv3"] },
-    { id: "rota_sequence", name: "ROTA Dose Sequence", doses: ["rota1", "rota2", "rota3"] },
-    { id: "fipv_sequence", name: "FIPV Dose Sequence", doses: ["fipv1", "fipv2", "fipv3"] },
-    { id: "pcv_sequence", name: "PCV Dose Sequence", doses: ["pcv1", "pcv2"] },
-    { id: "mr_sequence", name: "MR Dose Sequence", doses: ["mr1", "mr2"] },
-  ];
-  for (const spec of sequenceSpecs) {
-    const links: Array<[string, string]> = spec.doses.slice(1).map((dose, index) => [spec.doses[index], dose]);
-    cards.push(doseOrderCard(spec.id, spec.name, "A later dose exceeds the preceding dose over the selected period.", links));
+  // Later dose > earlier dose: Penta3 > Penta1 and MR2 > MR1, as in every portal.
+  for (const check of DOSE_ORDER_CHECKS) {
+    cards.push(doseOrderCard(check.id, check.name, "Later dose exceeds the earlier dose by more than 25% (50% when both are under 10) over the selected period.", [[check.from, check.to]]));
   }
 
-  uniquePairs(filters.additionalPairs).forEach((pair, index) => {
+  customConsistencyPairs(filters).forEach((pair, index) => {
     cards.push(doseOrderCard(
       `custom_consistency_${index}_${pair.from}_${pair.to}`,
       `${label(pair.to)} > ${label(pair.from)}`,
-      "User-defined later-dose comparison over the selected period.",
+      "User-defined later-dose pair, flagged when the later dose exceeds the earlier one by more than 25% (50% when both are under 10) over the selected period.",
       [[pair.from, pair.to]],
     ));
   });
 
-  // Co-administered doses are given at the same visit, so at facility level
-  // their monthly counts must match exactly (blanks are a completeness finding).
+  // Co-administered doses are given at the same visit, so their monthly counts
+  // should be close: shared rule in lib/dqa/coadmin.ts (blanks are a
+  // completeness finding).
   const coadminGroups: { id: string; name: string; ids: string[] }[] = [
     { id: "coadmin_6_weeks", name: "Co-administered Antigens — 6 weeks", ids: ["opv1", "penta1", "rota1", "pcv1", "fipv1"] },
     { id: "coadmin_10_weeks", name: "Co-administered Antigens — 10 weeks", ids: ["opv2", "penta2", "rota2"] },
@@ -742,7 +757,7 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
     cards.push(makeCard(
       spec.id,
       spec.name,
-      "Doses given at the same visit are reported with different counts.",
+      "A dose differs from the visit's reference count by more than 25% (50% when the reference is under 10).",
       "consistency",
       selectedFacilityKeys,
       selectedMonths,
@@ -751,14 +766,14 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
           .map((id) => [id, value(facilityKey, month, id)] as const)
           .filter((entry): entry is readonly [string, number] => entry[1] !== null);
         if (comparable.length < 2) return missingReport("Fewer than two comparable values");
-        const flag = coadminHasDifference(comparable.map((entry) => entry[1]));
+        const valsById: Record<string, number | null> = Object.fromEntries(comparable);
+        const outOfRange = [...coadminRedCells(valsById)];
+        const flag = outOfRange.length > 0;
         return {
           flag,
-          detail: flag
-            ? `Counts differ: ${comparable.map(([id, count]) => `${label(id)} ${count}`).join(", ")}`
-            : "All reported counts match",
+          detail: coadminDetail(valsById, label),
           values: Object.fromEntries(comparable),
-          indicators: flag ? comparable.map((entry) => entry[0]) : undefined,
+          indicators: flag ? outOfRange : undefined,
         };
       },
     ));

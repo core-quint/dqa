@@ -13,6 +13,7 @@ import {
   type PctsFilters,
   type PctsParsed,
 } from "../../lib/pcts/types";
+import { isStandardOutlierIndicator } from "../../lib/dqa/checkRules";
 
 interface Props {
   data: PctsParsed;
@@ -56,6 +57,7 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
     () => Object.fromEntries(data.indicators.map((indicator) => [indicator.id, indicator.label])),
     [data.indicators],
   );
+  const optionalOutlierIndicators = PCTS_KEY_INDICATORS.filter((id) => !isStandardOutlierIndicator(id));
   const additionalIndicators = allIndicators.filter(
     (indicator) => !PCTS_KEY_INDICATORS.includes(indicator as (typeof PCTS_KEY_INDICATORS)[number]),
   );
@@ -237,11 +239,26 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
             <option value="moderate">Rise of 50% or more / fall of 50% or more (Moderate and above)</option>
             <option value="extreme">Rise above 100% or from 0 / fall of 75% or more (Extreme)</option>
           </select>
+          <SectionLabel>Also include</SectionLabel>
+          {optionalOutlierIndicators.map((indicator) => (
+            <CheckItem
+              key={indicator}
+              label={indicatorLabels[indicator] ?? indicator}
+              checked={(draft.outlierExtraIndicators ?? []).includes(indicator)}
+              onChange={(checked) =>
+                setDraft((previous) => ({
+                  ...previous,
+                  outlierExtraIndicators: toggle(previous.outlierExtraIndicators ?? [], indicator, checked),
+                }))
+              }
+            />
+          ))}
           <p className="mt-2 text-[11px] leading-4 text-slate-500">
             Consecutive calendar months only. When both months are under 10, a rise needs twice the % (Extreme: over 200%) and falls are not flagged.
           </p>
         </Dropdown>
 
+        {months.length > 1 ? (
         <Dropdown label="Dropouts" fullWidth={isRail}>
           <SectionLabel>Dropout threshold (cumulative over the selected months)</SectionLabel>
           <select
@@ -324,14 +341,15 @@ export function PctsFilterPanel({ data, filters, onApply, layout = "inline" }: P
             </button>
           </div>
         </Dropdown>
+        ) : null}
 
         <Dropdown label="Inconsistencies" fullWidth={isRail}>
           <p className="text-[11px] leading-4 text-slate-500">
-            Co-administered doses must match exactly at facility level. Later-dose
-            checks compare the selected period&apos;s totals.
+            Co-administered doses may differ from the visit&apos;s reference count by up to
+            25% (50% when it is under 10). Later-dose checks compare the selected period&apos;s totals.
           </p>
 
-          <SectionLabel>Custom sequence pairs</SectionLabel>
+          <SectionLabel>Custom pairs (earlier dose -&gt; later dose)</SectionLabel>
           <div className="mt-2 space-y-2">
             {pairs.map((pair, index) => (
               <div

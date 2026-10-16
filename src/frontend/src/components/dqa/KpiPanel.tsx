@@ -195,6 +195,7 @@ export function KpiPanel({ card, kpis, csv }: Props) {
     if (id === "t0") return <FlatTable rows={kpis.t0Rows} highlightN />;
     if (id === "t7") return <FlatTable rows={kpis.t7Rows} highlightN />;
     if (id === "t2") return <T2Table web={kpis.t2Web} />;
+    if (id === "t10") return <FlatTable rows={kpis.t10Rows} />;
     if (id === "t6") return <FlatTable rows={kpis.t6Rows} />;
     if (id === "t3") return <T3Table web={kpis.t3Web} />;
     if (id.startsWith("drop_") && kpis.dropTables[id]) {

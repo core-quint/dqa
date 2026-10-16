@@ -157,6 +157,24 @@ function utcDay(iso: string): number {
  * such pairs: with February deselected, January -> March is a two-month change,
  * not a monthly one.
  */
+/** HMIS item code at the start of an M9 header, e.g. "9.1.2. :: Child immunisation - BCG". */
+const HMIS_M9_ITEM_RE = /^\s*9\.\d/;
+
+/**
+ * Columns the HMIS availability checks (t1, t0, t7) read: the M9 Child
+ * Immunisation items when the header carries HMIS item codes, otherwise every
+ * column after Month (an M9-only template without codes).
+ */
+export function hmisAvailabilityColumns(header: string[], idxMonth: number): number[] {
+  const all: number[] = [];
+  const m9: number[] = [];
+  for (let ci = idxMonth + 1; ci < header.length; ci++) {
+    all.push(ci);
+    if (HMIS_M9_ITEM_RE.test(header[ci] ?? '')) m9.push(ci);
+  }
+  return m9.length > 0 ? m9 : all;
+}
+
 export function periodsAreConsecutive(a: string, b: string): boolean {
   const first = periodDayRange(a);
   const second = periodDayRange(b);
