@@ -54,33 +54,6 @@ type PeriodEvaluator = (facilityKey: string) => PeriodResult;
 
 const GROUPS: PctsGroup[] = ["availability", "completeness", "accuracy", "consistency"];
 
-const SERVICE_INDICATORS = [
-  "bcg",
-  "dptFirstBooster",
-  "penta1",
-  "penta2",
-  "penta3",
-  "opv0",
-  "opv1",
-  "opv2",
-  "opv3",
-  "opvBooster",
-  "rota1",
-  "rota2",
-  "rota3",
-  "pcv1",
-  "pcv2",
-  "pcvBooster",
-  "fipv1",
-  "fipv2",
-  "fipv3",
-  "mr1",
-  "mr2",
-  "hepb0",
-  "dpt5",
-  "fullyImmunized",
-];
-
 /** Later dose > earlier dose checks, the same two in every portal. */
 const DOSE_ORDER_CHECKS: { id: string; name: string; from: string; to: string }[] = [
   { id: "penta3_gt_penta1", name: "Inconsistencies — Penta3>Penta1", from: "penta1", to: "penta3" },
@@ -407,24 +380,6 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
     },
   ));
 
-  const activeServiceIndicators = SERVICE_INDICATORS.filter((id) => indicatorById.has(id));
-  cards.push(makeCard(
-    "no_active_service",
-    "No Active Immunization Service",
-    "All service-delivery immunization indicators are zero; structural zero-only items are excluded.",
-    "availability",
-    selectedFacilityKeys,
-    selectedMonths,
-    (facilityKey, month) => {
-      const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return missingReport();
-      if (activeServiceIndicators.length === 0) return missingReport("No service indicator in this file");
-      const values = valuesFor(facilityKey, month, activeServiceIndicators);
-      const flag = values.every((item) => item !== null && item === 0);
-      return { flag, detail: flag ? "No active immunization service reported" : "Service activity or a blank value is present" };
-    },
-  ));
-
   cards.push(makeCard(
     "repeated_full_profile",
     "Repeated Complete Profile",
@@ -468,19 +423,6 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
   ));
 
   cards.push(makeCard(
-    "missing_facility_report",
-    "Missing Facility-Month Report",
-    "The facility appears in the uploaded roster but is absent from a selected month.",
-    "completeness",
-    selectedFacilityKeys,
-    selectedMonths,
-    (facilityKey, month) => {
-      const flag = !record(facilityKey, month);
-      return { flag, detail: flag ? "Facility is absent from this monthly workbook" : "Facility report present" };
-    },
-  ));
-
-  cards.push(makeCard(
     "key_indicators_missing",
     "Key Indicators Missing",
     "One or more selected key indicators are blank or absent.",
@@ -489,7 +431,7 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
     selectedMonths,
     (facilityKey, month) => {
       const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return missingReport("Facility report is missing and counted separately");
+      if (!monthRecord) return missingReport();
       if (selectedIndicators.length === 0) return missingReport("No key indicator selected");
       const missing = selectedIndicators.filter((id) =>
         !Object.prototype.hasOwnProperty.call(monthRecord.values, id) || monthRecord.values[id] === null);
@@ -510,7 +452,7 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
     selectedMonths,
     (facilityKey, month) => {
       const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return missingReport("Facility report is missing and counted separately");
+      if (!monthRecord) return missingReport();
       const blank = data.orderedIndicatorIds.filter((id) =>
         !Object.prototype.hasOwnProperty.call(monthRecord.values, id) || monthRecord.values[id] === null);
       return {

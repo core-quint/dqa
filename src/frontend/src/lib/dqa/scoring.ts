@@ -34,8 +34,11 @@
  *   "Zero Sessions with Vaccination Data" moved from HMIS-State to HMIS
  *   (session vaccines only); HMIS t1 / t0 read M9 items only, t7 is a repeated
  *   M9 profile and t2 skips facilities t1 flagged.
+ * 5 (2026-10-17): checks removed — HMIS-State "Missing District / Block
+ *   Report" and "AEFI Deaths > Serious AEFI"; PCTS "No Active Immunization
+ *   Service" and "Missing Facility-Month Report".
  */
-export const SCORING_METHOD_VERSION = 4;
+export const SCORING_METHOD_VERSION = 5;
 
 export const COMPONENT_LABELS: Record<string, string> = {
   availability: 'Availability',

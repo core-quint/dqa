@@ -327,9 +327,6 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
   }));
 
 
-  cards.push(makeCard("missing_unit", `Missing ${unitLabel} Report`, `The ${unitLabel.toLowerCase()} is absent from a monthly workbook.`, "completeness", selectedDistricts, selectedMonths, (d, m) => {
-    const flag = !record(d, m); return { flag, detail: flag ? `${unitLabel} is absent from this file` : `${unitLabel} report present` };
-  }));
   cards.push(makeCard("key_missing", "Key Missing Indicators", "One or more selected key indicators are blank or absent.", "completeness", selectedDistricts, selectedMonths, (d, m) => {
     if (keyShorts.length === 0) return notEvaluable("No key indicator selected");
     const rec = record(d, m);
@@ -484,12 +481,6 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
       return { flag: coadminViolation(valsByShort), detail: coadminDetail(valsByShort), values: Object.fromEntries(values) };
     }));
   }
-  cards.push(makeCard("aefi_deaths", "AEFI Deaths > Serious AEFI", "Reported AEFI deaths cannot exceed serious AEFI cases.", "consistency", selectedDistricts, selectedMonths, (d, m) => {
-    const serious = value(d, m, "AEFI Serious"); const deaths = value(d, m, "AEFI Deaths");
-    if (serious === null || deaths === null) return notEvaluable(`Serious ${serious ?? "blank"}; deaths ${deaths ?? "blank"}`);
-    const flag = deaths > serious;
-    return { flag, detail: `Serious ${serious}; deaths ${deaths}` };
-  }));
 
   return { cards, selectedDistricts, selectedMonths, filteredDistricts };
 }
