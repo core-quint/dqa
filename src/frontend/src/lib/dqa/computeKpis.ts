@@ -424,6 +424,8 @@ function computeKpisForSettings(
   finalizeKpiStat(t6Stat, t6Eligible);
 
   // t3: Outliers — calendar-adjacent months only, small-count bands, rises from 0.
+  // A pair that includes an all-zero month (t0) is not compared: the zero report
+  // is t0's finding, and the fall to 0 / rise from 0 would flag it a second time.
   const incBucketsSel = new Set(filters.outliersInc);
   const dropBucketsSel = new Set(filters.outliersDrop);
 
@@ -460,7 +462,8 @@ function computeKpisForSettings(
       for (const p of pairList) {
         const v1 = fd.months[p.m1]?.vals[ci] ?? null;
         const v2 = fd.months[p.m2]?.vals[ci] ?? null;
-        const change = monthOnMonthChange(v1, v2);
+        const zeroMonth = t0HitMap[key]?.[p.m1] || t0HitMap[key]?.[p.m2];
+        const change = zeroMonth ? null : monthOnMonthChange(v1, v2);
         let hit = false;
         if (change) {
           evaluablePairs.add(p.k);

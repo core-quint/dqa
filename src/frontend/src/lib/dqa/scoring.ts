@@ -37,8 +37,18 @@
  * 5 (2026-10-17): checks removed — HMIS-State "Missing District / Block
  *   Report" and "AEFI Deaths > Serious AEFI"; PCTS "No Active Immunization
  *   Service" and "Missing Facility-Month Report".
+ * 6 (2026-10-19): PCTS "Repeated Complete Profile" removed; HMIS-State
+ *   "Partial M9 Reporting" and "Missing Data Items" removed (Completeness is
+ *   "Key Missing Indicators" only); "Invalid Counts" removed from PCTS and
+ *   HMIS-State. No double flags for one finding: outliers skip month pairs
+ *   with an all-zero month (every portal); U-WIN t8 and t0 skip periods t9
+ *   flagged; HMIS-State Key Missing skips units All M9 Blank flagged;
+ *   repeated profiles need a non-zero value (HMIS-State, PCTS); Abrupt Zero
+ *   removed (HMIS-State, PCTS); PCTS "All Indicators Zero" and "Partial
+ *   Indicator Reporting" removed; PCTS "Fully Immunized Exceeds
+ *   Prerequisites" removed.
  */
-export const SCORING_METHOD_VERSION = 5;
+export const SCORING_METHOD_VERSION = 6;
 
 export const COMPONENT_LABELS: Record<string, string> = {
   availability: 'Availability',

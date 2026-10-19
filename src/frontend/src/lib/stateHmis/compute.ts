@@ -295,20 +295,27 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     return periodsAreConsecutive(previous, month) ? previous : null;
   };
 
-  cards.push(makeCard("all_m9_blank", "All M9 Indicators Blank", "Every M9 data item is blank.", "availability", selectedDistricts, selectedMonths, (d, m) => {
+  const allBlankCard = makeCard("all_m9_blank", "All M9 Indicators Blank", "Every M9 data item is blank.", "availability", selectedDistricts, selectedMonths, (d, m) => {
     const rec = record(d, m);
     if (!rec) return notEvaluable(`${unitLabel} report is missing`);
     if (m9Codes.length === 0) return notEvaluable("No M9 items in this file");
     const flag = m9Codes.every((code) => rec.values[code] === null);
     return { flag, detail: flag ? "All M9 values are blank" : "M9 data reported" };
-  }));
+  });
+  cards.push(allBlankCard);
+  const allBlankUnits = new Set(allBlankCard.affectedDistricts);
+
+  /** Every key indicator reported and 0 — the zero report "Key Indicators All Zero" owns. */
+  const keyAllZero = (d: string, m: string): boolean => {
+    const rec = record(d, m);
+    return Boolean(rec) && keyCodes.length > 0 && keyCodes.every((code) => rec!.values[code] === 0);
+  };
 
   cards.push(makeCard("key_all_zero", "Key Indicators All Zero", "All selected key indicators are reported as zero.", "availability", selectedDistricts, selectedMonths, (d, m) => {
     const rec = record(d, m);
     if (!rec) return notEvaluable(`${unitLabel} report is missing`);
     if (keyCodes.length === 0) return notEvaluable("No key indicator in this file");
-    const vals = keyCodes.map((code) => rec.values[code]);
-    const flag = vals.every((v) => v !== null && v === 0);
+    const flag = keyAllZero(d, m);
     return { flag, detail: flag ? "All selected key indicators are zero" : "Not all zero" };
   }));
 
@@ -319,29 +326,26 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     if (!current || !previous) return notEvaluable(`One of the compared ${unitLabel.toLowerCase()} reports is missing`);
     const inBoth = m9Codes.filter((code) => current.values[code] !== undefined && previous.values[code] !== undefined);
     // Two blank profiles are not a repeat (that is "All M9 Indicators Blank"): a
-    // repeat needs reported values, and blanks must line up with blanks.
+    // repeat needs reported values, and blanks must line up with blanks. Two
+    // all-zero profiles are not a repeat either (that is "Key Indicators All
+    // Zero"): a repeat needs at least one non-zero value, as in HMIS t7.
     const reported = inBoth.filter((code) => current.values[code] !== null || previous.values[code] !== null);
     if (reported.length === 0) return notEvaluable(`No M9 values reported in ${m} or ${previousMonth}`);
-    const flag = reported.every((code) => current.values[code] === previous.values[code]);
+    const flag = reported.every((code) => current.values[code] === previous.values[code])
+      && reported.some((code) => (current.values[code] ?? 0) !== 0);
     return { flag, detail: flag ? `Profile exactly matches ${previousMonth}` : `Profile differs from ${previousMonth}` };
   }));
 
-
   cards.push(makeCard("key_missing", "Key Missing Indicators", "One or more selected key indicators are blank or absent.", "completeness", selectedDistricts, selectedMonths, (d, m) => {
     if (keyShorts.length === 0) return notEvaluable("No key indicator selected");
+    // A unit "All M9 Indicators Blank" flagged is not checked again here (its
+    // blank key cells are the same finding), as HMIS t2 skips t1 facilities.
+    if (allBlankUnits.has(d)) return notEvaluable("Counted under All M9 Indicators Blank");
     const rec = record(d, m);
-    const missing = rec ? keyShorts.filter((short) => { const code = codeByShort(data, short); return !code || rec.values[code] === null || rec.values[code] === undefined; }) : keyShorts;
+    // The only completeness check, so a missing report is flagged here (all keys missing).
+    if (!rec) return { flag: true, detail: `${unitLabel} report is missing` };
+    const missing = keyShorts.filter((short) => { const code = codeByShort(data, short); return !code || rec.values[code] === null || rec.values[code] === undefined; });
     return { flag: missing.length > 0, detail: missing.length ? `Missing: ${missing.join(", ")}` : "All selected key indicators present" };
-  }));
-  cards.push(makeCard("partial_m9", "Partial M9 Reporting", "At least one M9 value is blank.", "completeness", selectedDistricts, selectedMonths, (d, m) => {
-    const rec = record(d, m); if (!rec) return { flag: true, detail: `${unitLabel} report is missing` };
-    const blank = m9Codes.filter((code) => rec.values[code] === null);
-    return { flag: blank.length > 0, detail: blank.length ? `${blank.length} blank M9 item(s)` : "All M9 values populated" };
-  }));
-  cards.push(makeCard("missing_items", "Missing Data Items", "Expected M9 codes are absent from the monthly schema.", "completeness", selectedDistricts, selectedMonths, (d, m) => {
-    const rec = record(d, m); if (!rec) return { flag: true, detail: `${unitLabel} report is missing` };
-    const missing = m9Codes.filter((code) => rec.values[code] === undefined);
-    return { flag: missing.length > 0, detail: missing.length ? `${missing.length} M9 item(s) absent from schema` : "M9 schema complete" };
   }));
 
   cards.push(makeCard("held_gt_planned", "Sessions Held > Sessions Planned", "Held exceeds planned (including sessions held with none planned).", "consistency", selectedDistricts, selectedMonths, (d, m) => {
@@ -353,6 +357,9 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
   cards.push(makeCard("outliers", "Month-on-Month Outliers", "Selected indicators cross the chosen increase/decrease threshold. When both months are under 10, a rise needs twice the % (Extreme: over 200%) and falls are not flagged.", "accuracy", selectedDistricts, selectedMonths, (d, m) => {
     const previousMonth = previousMonthOf(m);
     if (!previousMonth) return null;
+    // A pair with an all-zero month is "Key Indicators All Zero"'s finding; the
+    // fall to 0 / rise from 0 would flag it a second time.
+    if (keyAllZero(d, previousMonth) || keyAllZero(d, m)) return notEvaluable("Compared with an all-zero month (counted under Key Indicators All Zero)");
     const outliers: string[] = [];
     let comparable = 0;
     for (const short of outlierShorts) {
@@ -363,20 +370,6 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     }
     if (comparable === 0) return notEvaluable(`No indicator comparable with ${previousMonth}`);
     return { flag: outliers.length > 0, detail: outliers.length ? outliers.join("; ") : `No outlier from ${previousMonth}` };
-  }));
-  cards.push(makeCard("abrupt_zero", "Abrupt Zero", "A selected key indicator falls from a positive value to zero in the next calendar month.", "accuracy", selectedDistricts, selectedMonths, (d, m) => {
-    const previousMonth = previousMonthOf(m);
-    if (!previousMonth) return null;
-    const comparable = keyShorts.filter((short) => value(d, previousMonth, short) !== null && value(d, m, short) !== null);
-    if (comparable.length === 0) return notEvaluable(`No indicator reported in both ${previousMonth} and ${m}`);
-    const affected = comparable.filter((short) => (value(d, previousMonth, short) ?? 0) > 0 && value(d, m, short) === 0);
-    return { flag: affected.length > 0, detail: affected.length ? `Dropped to zero: ${affected.join(", ")}` : "No abrupt zero" };
-  }));
-  cards.push(makeCard("invalid_counts", "Invalid Counts", "Negative, decimal, or malformed count values.", "accuracy", selectedDistricts, selectedMonths, (d, m) => {
-    const rec = record(d, m);
-    if (!rec) return notEvaluable(`${unitLabel} report is missing`);
-    const invalid = rec.invalidCodes ?? [];
-    return { flag: invalid.length > 0, detail: invalid.length ? `Invalid item codes: ${invalid.join(", ")}` : "Counts are non-negative integers" };
   }));
 
   // Dropouts — cumulative over the selected period (months where both doses

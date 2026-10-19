@@ -155,6 +155,8 @@ export interface UwinComputedKpis {
   t7Stat: KpiStat;
   t9Stat: KpiStat;
   t9HitMap: Record<string, Record<string, boolean>>;
+  /** Periods t0 flagged (all vaccine doses 0, not already a t9 zero-coverage session). */
+  t0HitMap: Record<string, Record<string, boolean>>;
 
   // Completeness
   t2Web: T2Web;

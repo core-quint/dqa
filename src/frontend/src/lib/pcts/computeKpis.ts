@@ -342,22 +342,10 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
     return periodsAreConsecutive(previous, month) ? previous : null;
   };
   const missingReport = (detail = "Facility report is missing"): PctsHit => ({ flag: false, evaluable: false, detail });
-
-  cards.push(makeCard(
-    "all_indicators_zero",
-    "All Indicators Zero",
-    "Every reported PCTS indicator is zero for the facility-month.",
-    "availability",
-    selectedFacilityKeys,
-    selectedMonths,
-    (facilityKey, month) => {
-      const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return missingReport();
-      const values = data.orderedIndicatorIds.map((id) => monthRecord.values[id]);
-      const flag = values.length > 0 && values.every((item) => item !== null && item !== undefined && item === 0);
-      return { flag, detail: flag ? "All indicators are zero" : "At least one indicator is non-zero or blank" };
-    },
-  ));
+  /** Every key indicator reported and 0 — the zero report "Key Indicators All Zero" owns. */
+  const keyIndicatorsZero = (facilityKey: string, month: string): boolean =>
+    Boolean(record(facilityKey, month)) && selectedIndicators.length > 0
+    && valuesFor(facilityKey, month, selectedIndicators).every((item) => item === 0);
 
   cards.push(makeCard(
     "key_indicators_zero",
@@ -370,35 +358,12 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
       const monthRecord = record(facilityKey, month);
       if (!monthRecord) return missingReport();
       if (selectedIndicators.length === 0) return missingReport("No key indicator selected");
-      const values = valuesFor(facilityKey, month, selectedIndicators);
-      const flag = values.every((item) => item !== null && item === 0);
+      const flag = keyIndicatorsZero(facilityKey, month);
       return {
         flag,
         detail: flag ? "All selected key indicators are zero" : "At least one selected indicator is non-zero or blank",
         indicators: flag ? selectedIndicators : undefined,
       };
-    },
-  ));
-
-  cards.push(makeCard(
-    "repeated_full_profile",
-    "Repeated Complete Profile",
-    "The full indicator profile exactly matches the preceding calendar month.",
-    "availability",
-    selectedFacilityKeys,
-    selectedMonths,
-    (facilityKey, month) => {
-      const previousMonth = previousMonthOf(month);
-      if (!previousMonth) return null;
-      const current = record(facilityKey, month);
-      const previous = record(facilityKey, previousMonth);
-      if (!current || !previous) return missingReport("One of the compared facility reports is missing");
-      const complete = data.orderedIndicatorIds.every((id) =>
-        current.values[id] !== null && current.values[id] !== undefined
-        && previous.values[id] !== null && previous.values[id] !== undefined);
-      if (!complete) return missingReport(`Profile incomplete in ${data.months[month]} or ${data.months[previousMonth]}`);
-      const flag = data.orderedIndicatorIds.every((id) => current.values[id] === previous.values[id]);
-      return { flag, detail: flag ? `Complete profile exactly matches ${data.months[previousMonth]}` : `Profile differs from ${data.months[previousMonth]}` };
     },
   ));
 
@@ -417,7 +382,10 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
       const complete = selectedIndicators.length > 0
         && [...currentValues, ...previousValues].every((item) => item !== null);
       if (!complete) return missingReport(`Selected profile incomplete in ${data.months[month]} or ${data.months[previousMonth]}`);
-      const flag = currentValues.every((item, valueIndex) => item === previousValues[valueIndex]);
+      // Two all-zero months are not a repeat (that is "Key Indicators All Zero"):
+      // a repeat needs at least one non-zero value, as in HMIS t7.
+      const flag = currentValues.every((item, valueIndex) => item === previousValues[valueIndex])
+        && currentValues.some((item) => item !== 0);
       return { flag, detail: flag ? `Selected profile exactly matches ${data.months[previousMonth]}` : `Selected profile differs from ${data.months[previousMonth]}` };
     },
   ));
@@ -444,68 +412,6 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
   ));
 
   cards.push(makeCard(
-    "partial_reporting",
-    "Partial Indicator Reporting",
-    "At least one indicator in the monthly schema is blank.",
-    "completeness",
-    selectedFacilityKeys,
-    selectedMonths,
-    (facilityKey, month) => {
-      const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return missingReport();
-      const blank = data.orderedIndicatorIds.filter((id) =>
-        !Object.prototype.hasOwnProperty.call(monthRecord.values, id) || monthRecord.values[id] === null);
-      return {
-        flag: blank.length > 0,
-        detail: blank.length > 0 ? `${blank.length} indicator(s) blank or absent` : "All schema indicators are populated",
-        indicators: blank,
-      };
-    },
-  ));
-
-  cards.push(makeCard(
-    "invalid_counts",
-    "Invalid Counts",
-    "Negative, decimal, boolean, or malformed indicator counts.",
-    "accuracy",
-    selectedFacilityKeys,
-    selectedMonths,
-    (facilityKey, month) => {
-      const monthRecord = record(facilityKey, month);
-      if (!monthRecord) return missingReport();
-      const invalid = monthRecord.invalidIndicators ?? [];
-      return {
-        flag: invalid.length > 0,
-        detail: invalid.length > 0 ? `Invalid: ${invalid.map(label).join(", ")}` : "All counts are non-negative integers or blank",
-        indicators: invalid,
-      };
-    },
-  ));
-
-  cards.push(makeCard(
-    "abrupt_zero",
-    "Abrupt Zero",
-    "A selected indicator falls from a positive value to zero in the next calendar month.",
-    "accuracy",
-    selectedFacilityKeys,
-    selectedMonths,
-    (facilityKey, month) => {
-      const previousMonth = previousMonthOf(month);
-      if (!previousMonth) return null;
-      const comparable = selectedIndicators.filter((id) =>
-        value(facilityKey, previousMonth, id) !== null && value(facilityKey, month, id) !== null);
-      if (comparable.length === 0) return missingReport(`No indicator reported in both ${data.months[previousMonth]} and ${data.months[month]}`);
-      const affected = comparable.filter((id) =>
-        (value(facilityKey, previousMonth, id) ?? 0) > 0 && value(facilityKey, month, id) === 0);
-      return {
-        flag: affected.length > 0,
-        detail: affected.length > 0 ? `Dropped to zero: ${affected.map(label).join(", ")}` : `No abrupt zero from ${data.months[previousMonth]}`,
-        indicators: affected,
-      };
-    },
-  ));
-
-  cards.push(makeCard(
     "month_outliers",
     "Month-on-Month Outliers",
     "Selected indicators cross the chosen increase/decrease threshold. When both months are under 10, a rise needs twice the % (Extreme: over 200%) and falls are not flagged.",
@@ -515,6 +421,11 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
     (facilityKey, month) => {
       const previousMonth = previousMonthOf(month);
       if (!previousMonth) return null;
+      // A pair with an all-zero month is "Key Indicators All Zero"'s finding; the
+      // fall to 0 / rise from 0 would flag it a second time.
+      if (keyIndicatorsZero(facilityKey, previousMonth) || keyIndicatorsZero(facilityKey, month)) {
+        return missingReport("Compared with an all-zero month (counted under Key Indicators All Zero)");
+      }
       const outliers: { id: string; change: string }[] = [];
       let comparable = 0;
       for (const id of outlierIndicators) {
@@ -530,35 +441,6 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
           ? outliers.map((item) => `${label(item.id)} ${item.change}`).join("; ")
           : `No outlier from ${data.months[previousMonth]}`,
         indicators: outliers.map((item) => item.id),
-      };
-    },
-  ));
-
-  cards.push(makeCard(
-    "fully_immunized_exceeds_prerequisites",
-    "Fully Immunized Exceeds Prerequisites",
-    "Fully Immunized exceeds Penta 3, OPV 3, or MR 1.",
-    "accuracy",
-    selectedFacilityKeys,
-    selectedMonths,
-    (facilityKey, month) => {
-      const fully = value(facilityKey, month, "fullyImmunized");
-      const prerequisites = ["penta3", "opv3", "mr1"];
-      const present = prerequisites.filter((id) => value(facilityKey, month, id) !== null);
-      if (fully === null || present.length === 0) return missingReport("Fully Immunized or its prerequisites not reported");
-      const exceeded = present.filter((id) => fully > (value(facilityKey, month, id) as number));
-      return {
-        flag: exceeded.length > 0,
-        detail: exceeded.length > 0
-          ? `Fully Immunized ${fully} exceeds ${exceeded.map((id) => `${label(id)} ${value(facilityKey, month, id)}`).join(", ")}`
-          : "Fully Immunized does not exceed the prerequisite indicators",
-        values: {
-          fullyImmunized: fully,
-          penta3: value(facilityKey, month, "penta3"),
-          opv3: value(facilityKey, month, "opv3"),
-          mr1: value(facilityKey, month, "mr1"),
-        },
-        indicators: exceeded,
       };
     },
   ));

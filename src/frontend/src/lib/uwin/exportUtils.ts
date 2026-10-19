@@ -111,7 +111,8 @@ export function downloadHighlightedXLS(
         hasAny = true;
         if (v !== 0) { allZero = false; break; }
       }
-      if (hasAny && allZero) highlightRow(PINK);
+      // Only the periods t0 counted (a t9 zero-coverage period is t9's finding).
+      if (hasAny && allZero && mKey && kpis.t0HitMap[rowKey]?.[mKey]) highlightRow(PINK);
     } else if (kpiKey === 't7') {
       let firstVal: string | null = null; let ok = true; let hasAny = false;
       for (let ci = idxMonth + 1; ci < header.length; ci++) {

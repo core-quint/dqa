@@ -287,78 +287,6 @@ function computeUwinKpisForSettings(
   // AVAILABILITY
   // ============================================================
 
-  const t0Stat = emptyKpiStat();
-  const t0Rows: TableRows = [[...idHeaderCols, ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
-  const t0Eligible = new Set<string>();
-
-  for (const [key, fd] of Object.entries(filteredFacilities)) {
-    const row: (string | number | null)[] = idRowCols(fd);
-    let hitCount = 0;
-    let evaluable = 0;
-    for (const mk of selMonths) {
-      const md = fd.months[mk];
-      let isZero = false;
-      if (md) {
-        evaluable++;
-        // Scoped to vaccine-dose "target" indicator columns only — Session
-        // Planned/Held and beneficiary/Td columns are excluded (matches PHP's
-        // $indicatorIdxTargets), otherwise a real session (which always has a
-        // nonzero Session Held) would never be flagged even if every vaccine
-        // dose column is explicitly 0.
-        let allZero = true; let hasAny = false;
-        for (const ci of targetIndicatorIndices) {
-          const v = md.vals[ci];
-          if (v === null) { allZero = false; break; }
-          hasAny = true;
-          if (v !== 0) { allZero = false; break; }
-        }
-        isZero = hasAny && allZero;
-      }
-      row.push(isZero ? 'Y' : 'N');
-      if (isZero) hitCount++;
-    }
-    if (evaluable > 0 && targetIndicatorIndices.length > 0) t0Eligible.add(key);
-    if (hitCount > 0) {
-      flag(t0Stat, key, hitCount, evaluable);
-      t0Rows.push(row);
-    }
-  }
-  finalizeKpiStat(t0Stat, t0Eligible);
-
-  const t7Stat = emptyKpiStat();
-  const t7Rows: TableRows = [[...idHeaderCols, ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
-  const t7Eligible = new Set<string>();
-
-  for (const [key, fd] of Object.entries(filteredFacilities)) {
-    const row: (string | number | null)[] = idRowCols(fd);
-    let hitCount = 0;
-    let evaluable = 0;
-    for (const mk of selMonths) {
-      const md = fd.months[mk];
-      let isRepeat = false;
-      if (md) {
-        evaluable++;
-        let firstVal: number | null = null; let ok = true; let hasAny = false;
-        for (let ci = idxMonth + 1; ci < header.length; ci++) {
-          const v = md.vals[ci];
-          if (v === null) { ok = false; break; }
-          if (v === 0) { ok = false; break; }
-          if (firstVal === null) { firstVal = v; hasAny = true; }
-          else if (v !== firstVal) { ok = false; break; }
-        }
-        isRepeat = hasAny && ok;
-      }
-      row.push(isRepeat ? 'Y' : 'N');
-      if (isRepeat) hitCount++;
-    }
-    if (evaluable > 0) t7Eligible.add(key);
-    if (hitCount > 0) {
-      flag(t7Stat, key, hitCount, evaluable);
-      t7Rows.push(row);
-    }
-  }
-  finalizeKpiStat(t7Stat, t7Eligible);
-
   // t9: Zero coverage session — PW + Infants + Children + Adolescents + Td1/Td2/Td-Booster/Td10/Td16 = 0
   // in a period where at least one session was actually held. A session that was
   // not held has nobody to vaccinate; that is "Planned but not held" (t6), not
@@ -404,6 +332,92 @@ function computeUwinKpisForSettings(
     }
   }
   finalizeKpiStat(t9Stat, t9Eligible);
+
+  // t0: every vaccine-dose column reported and 0. A period t9 already flagged
+  // (session held, zero beneficiaries) is t9's finding, so t0 does not count it.
+  // zeroDoseMonths keeps every all-zero period for the outlier check below.
+  const t0Stat = emptyKpiStat();
+  const t0Rows: TableRows = [[...idHeaderCols, ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
+  const t0Eligible = new Set<string>();
+  const t0HitMap: Record<string, Record<string, boolean>> = {};
+  const zeroDoseMonths: Record<string, Record<string, boolean>> = {};
+
+  for (const [key, fd] of Object.entries(filteredFacilities)) {
+    const row: (string | number | null)[] = idRowCols(fd);
+    let hitCount = 0;
+    let evaluable = 0;
+    for (const mk of selMonths) {
+      const md = fd.months[mk];
+      let isZero = false;
+      if (md) {
+        // Scoped to vaccine-dose "target" indicator columns only — Session
+        // Planned/Held and beneficiary/Td columns are excluded (matches PHP's
+        // $indicatorIdxTargets), otherwise a real session (which always has a
+        // nonzero Session Held) would never be flagged even if every vaccine
+        // dose column is explicitly 0.
+        let allZero = true; let hasAny = false;
+        for (const ci of targetIndicatorIndices) {
+          const v = md.vals[ci];
+          if (v === null) { allZero = false; break; }
+          hasAny = true;
+          if (v !== 0) { allZero = false; break; }
+        }
+        isZero = hasAny && allZero;
+        if (isZero) {
+          if (!zeroDoseMonths[key]) zeroDoseMonths[key] = {};
+          zeroDoseMonths[key][mk] = true;
+        }
+        if (t9HitMap[key]?.[mk]) { row.push('–'); continue; }
+        evaluable++;
+      }
+      row.push(isZero ? 'Y' : 'N');
+      if (isZero) {
+        hitCount++;
+        if (!t0HitMap[key]) t0HitMap[key] = {};
+        t0HitMap[key][mk] = true;
+      }
+    }
+    if (evaluable > 0 && targetIndicatorIndices.length > 0) t0Eligible.add(key);
+    if (hitCount > 0) {
+      flag(t0Stat, key, hitCount, evaluable);
+      t0Rows.push(row);
+    }
+  }
+  finalizeKpiStat(t0Stat, t0Eligible);
+
+  const t7Stat = emptyKpiStat();
+  const t7Rows: TableRows = [[...idHeaderCols, ...selMonths.map((mk) => selMonthLabels[mk] ?? mk)]];
+  const t7Eligible = new Set<string>();
+
+  for (const [key, fd] of Object.entries(filteredFacilities)) {
+    const row: (string | number | null)[] = idRowCols(fd);
+    let hitCount = 0;
+    let evaluable = 0;
+    for (const mk of selMonths) {
+      const md = fd.months[mk];
+      let isRepeat = false;
+      if (md) {
+        evaluable++;
+        let firstVal: number | null = null; let ok = true; let hasAny = false;
+        for (let ci = idxMonth + 1; ci < header.length; ci++) {
+          const v = md.vals[ci];
+          if (v === null) { ok = false; break; }
+          if (v === 0) { ok = false; break; }
+          if (firstVal === null) { firstVal = v; hasAny = true; }
+          else if (v !== firstVal) { ok = false; break; }
+        }
+        isRepeat = hasAny && ok;
+      }
+      row.push(isRepeat ? 'Y' : 'N');
+      if (isRepeat) hitCount++;
+    }
+    if (evaluable > 0) t7Eligible.add(key);
+    if (hitCount > 0) {
+      flag(t7Stat, key, hitCount, evaluable);
+      t7Rows.push(row);
+    }
+  }
+  finalizeKpiStat(t7Stat, t7Eligible);
 
   // ============================================================
   // COMPLETENESS
@@ -536,8 +550,10 @@ function computeUwinKpisForSettings(
           if (hasAny) ben = sum;
         }
 
+        // A period t9 flagged (session held, zero beneficiaries) is t9's finding;
+        // its average of 0 is not counted again here.
         let avg: number | null = null;
-        if (sessHeld !== null && sessHeld > 0 && ben !== null) {
+        if (sessHeld !== null && sessHeld > 0 && ben !== null && !t9HitMap[key]?.[mk]) {
           avg = ben / sessHeld;
         }
 
@@ -584,6 +600,8 @@ function computeUwinKpisForSettings(
   };
 
   // t3: Outliers — calendar-adjacent periods only, small-count bands, rises from 0.
+  // A pair that includes an all-zero-dose period is not compared: the zero report
+  // is t0's (or t9's) finding, and the fall to 0 / rise from 0 would flag it again.
   const incBucketsSel = new Set(filters.outliersInc);
   const dropBucketsSel = new Set(filters.outliersDrop);
 
@@ -620,7 +638,8 @@ function computeUwinKpisForSettings(
       for (const p of pairList) {
         const v1 = fd.months[p.m1]?.vals[ci] ?? null;
         const v2 = fd.months[p.m2]?.vals[ci] ?? null;
-        const change = monthOnMonthChange(v1, v2);
+        const zeroMonth = zeroDoseMonths[key]?.[p.m1] || zeroDoseMonths[key]?.[p.m2];
+        const change = zeroMonth ? null : monthOnMonthChange(v1, v2);
         let hit = false;
         if (change) {
           evaluablePairs.add(p.k);
@@ -1048,7 +1067,7 @@ function computeUwinKpisForSettings(
     analysisMode,
 
     t0Rows, t7Rows, t9Rows,
-    t0Stat, t7Stat, t9Stat, t9HitMap,
+    t0Stat, t7Stat, t9Stat, t9HitMap, t0HitMap,
 
     t2Web, t2Stat,
     blankCountsByVax, blankAllCountsByVax,
