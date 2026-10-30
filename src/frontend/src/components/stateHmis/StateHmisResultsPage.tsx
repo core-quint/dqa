@@ -16,6 +16,7 @@ import { monthsSpanInclusive, periodDurationLabel } from "../../lib/dqa/parseUti
 import { scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
 import { componentCoverageNote, formatScore, SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
+import { WeightedScoreBreakdown } from "../dqa/WeightedScoreBreakdown";
 import {
   pickReviewBaselines,
   type ReviewBaseline,
@@ -33,9 +34,9 @@ import {
 } from "../../lib/stateHmis/types";
 import {
   downloadStateCard,
-  downloadStateHmisPdf,
   downloadStateOverall,
 } from "../../lib/stateHmis/exportUtils";
+import { downloadStateHmisDqaReport } from "../../lib/stateHmis/pdfReport";
 import { FilterBar } from "../dqa/FilterBar";
 import { IndicatorSummaryPanel } from "../dqa/IndicatorSummaryPanel";
 import { GlassPanel } from "../branding/GlassPanel";
@@ -344,10 +345,10 @@ export function StateHmisResultsPage({
             <div className="flex flex-wrap items-center gap-2">
               <button
                 disabled={generatingReport}
-                onClick={() => {
+                onClick={async () => {
                   setGeneratingReport(true);
                   try {
-                    downloadStateHmisPdf(data, computed);
+                    await downloadStateHmisDqaReport(data, computed);
                   } finally {
                     setGeneratingReport(false);
                   }
@@ -438,6 +439,13 @@ export function StateHmisResultsPage({
           </FilterBar>
 
           <div className="min-w-0 space-y-5">
+            {activeGroup === "overall" ? (
+              <WeightedScoreBreakdown
+                result={computed.weighted}
+                groups={SCORED_GROUPS}
+                unitLabel={data.reportLevel === "block" ? "blocks" : "districts"}
+              />
+            ) : null}
             {activeGroup === "overall" ? (
               <OverallUnitSummary
                 data={data}

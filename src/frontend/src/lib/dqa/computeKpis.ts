@@ -38,6 +38,7 @@ import {
   hmisAvailabilityColumns,
 } from './parseUtils';
 import { coadminViolation, coadminMatchedTotals } from './coadmin';
+import { hmisKeyMissingColumns } from './keyMissing';
 import {
   monthOnMonthChange,
   outlierBand,
@@ -49,7 +50,6 @@ import {
 } from './checkRules';
 import { standardMethodFilters, methodSignature } from './scoringProfile';
 import {
-  BASE_VAX,
   OUTLIER_VAX,
   SESSION_VAX,
   DEFAULT_FILTERS,
@@ -148,9 +148,14 @@ function computeKpisForSettings(
   const allSelVax = [...new Set([...selVaxBase, ...selVaxAdd])];
   const selVaxList = allSelVax.filter((v) => indicatorMap[v] !== undefined);
   const effectiveVaxList = selVaxList.length > 0 ? selVaxList : OUTLIER_VAX.filter((v) => indicatorMap[v] !== undefined);
-  // Completeness always checks the fixed key-indicator list — it must not move
-  // when the reviewer changes which vaccines the outlier check looks at.
-  const completenessVaxList = BASE_VAX.filter((v) => indicatorMap[v] !== undefined);
+  // Completeness checks the M9 section minus JE, delayed MR1 and Typhoid
+  // (keyMissing.ts) — it must not move when the reviewer changes which
+  // vaccines the outlier check looks at.
+  const completenessItems = hmisKeyMissingColumns(header, idxMonth);
+  const completenessVaxList = completenessItems.map((item) => item.label);
+  const completenessCol: Record<string, number> = Object.fromEntries(
+    completenessItems.map((item) => [item.label, item.ci]),
+  );
 
   // ---- apply scope filters ----
   const selBlocksSet = new Set(filters.blocks.length > 0 ? filters.blocks : Object.keys(
@@ -251,7 +256,7 @@ function computeKpisForSettings(
   }
   finalizeKpiStat(t0Stat, t0Eligible);
 
-  // t7: Repeated monthly profile — the M9 values exactly match the previous
+  // t7: Duplicate Monthly Record — the M9 values exactly match the previous
   // calendar month (copy-paste reporting). Blanks must line up with blanks, and
   // a repeat needs at least one non-zero value: two blank months are t1 and two
   // all-zero months are t0. The first month, or one without the previous
@@ -305,7 +310,7 @@ function computeKpisForSettings(
     const cellMap: Record<string, Record<string, string>> = {};
 
     for (const vx of completenessVaxList) {
-      const ci = indicatorMap[vx];
+      const ci = completenessCol[vx];
       let hasBlankForVx = false;
       let vxAllBlank = true;
       cellMap[vx] = {};
@@ -345,7 +350,7 @@ function computeKpisForSettings(
   // ACCURACY
   // ============================================================
 
-  // t10: Zero Sessions with Vaccination Data — Sessions Held = 0 while a
+  // t10: Session Not Held but Vaccinated — Sessions Held = 0 while a
   // session-given vaccine (SESSION_VAX) is reported above 0. Birth doses (BCG,
   // OPV0, Hep-B0) are left out: delivery points give them without a session.
   const t10Stat = emptyKpiStat();
@@ -763,8 +768,8 @@ function computeKpisForSettings(
   const cards: KpiCard[] = [
     { id: 't1', name: 'All Indicators Blank', stat: t1Stat, group: 'availability', downloadKey: 't1' },
     { id: 't0', name: 'Indicators having 0 values but not blank', stat: t0Stat, group: 'availability', downloadKey: 't0' },
-    { id: 't7', name: 'Repeated Monthly Profile', stat: t7Stat, group: 'availability', downloadKey: 't7' },
-    { id: 't10', name: 'Zero Sessions with Vaccination Data', stat: t10Stat, group: 'availability', downloadKey: 't10' },
+    { id: 't7', name: 'Duplicate Monthly Record', stat: t7Stat, group: 'availability', downloadKey: 't7' },
+    { id: 't10', name: 'Session Not Held but Vaccinated', stat: t10Stat, group: 'availability', downloadKey: 't10' },
     { id: 't2', name: 'Key Missing Indicators', stat: t2Stat, group: 'completeness', downloadKey: 't2' },
     { id: 't6', name: 'Sessions Held > Sessions Planned', stat: t6Stat, group: 'consistency', downloadKey: 't6' },
     { id: 't3', name: 'Outliers', stat: t3Stat, group: 'accuracy', downloadKey: 't3' },
@@ -844,8 +849,8 @@ function computeKpisForSettings(
     all: [mkRow('Indicators having 0 values', t0Stat.all)],
   };
   summaryByPid.t7 = {
-    any: [mkRow('Repeated Monthly Profile', t7Stat.any)],
-    all: [mkRow('Repeated Monthly Profile', t7Stat.all)],
+    any: [mkRow('Duplicate Monthly Record', t7Stat.any)],
+    all: [mkRow('Duplicate Monthly Record', t7Stat.all)],
   };
 
   // t2 by indicator
@@ -867,9 +872,9 @@ function computeKpisForSettings(
   }
 
   summaryByPid.t10 = {
-    any: [mkRow('Zero Sessions with Vaccination Data', t10Stat.any)],
-    all: [mkRow('Zero Sessions with Vaccination Data', t10Stat.all)],
-    overall: [mkRow('Zero Sessions with Vaccination Data', t10Stat.total)],
+    any: [mkRow('Session Not Held but Vaccinated', t10Stat.any)],
+    all: [mkRow('Session Not Held but Vaccinated', t10Stat.all)],
+    overall: [mkRow('Session Not Held but Vaccinated', t10Stat.total)],
   };
 
   summaryByPid.t6 = {

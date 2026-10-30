@@ -17,6 +17,7 @@ import { monthsSpanInclusive, periodDurationLabel } from "../../lib/dqa/parseUti
 import { scoreBadgeStyle } from "../../lib/dqa/scoreUtils";
 import { componentCoverageNote, formatScore, SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
+import { WeightedScoreBreakdown } from "../dqa/WeightedScoreBreakdown";
 import {
   pickReviewBaselines,
   type ReviewBaseline,
@@ -35,8 +36,8 @@ import {
 import {
   downloadPctsCard,
   downloadPctsOverall,
-  downloadPctsPdf,
 } from "../../lib/pcts/exportUtils";
+import { downloadPctsDqaReport } from "../../lib/pcts/pdfReport";
 import { GlassPanel } from "../branding/GlassPanel";
 import { FilterBar } from "../dqa/FilterBar";
 import { IndicatorSummaryPanel } from "../dqa/IndicatorSummaryPanel";
@@ -322,10 +323,10 @@ export function PctsResultsPage({
               <button
                 type="button"
                 disabled={generatingReport}
-                onClick={() => {
+                onClick={async () => {
                   setGeneratingReport(true);
                   try {
-                    downloadPctsPdf(data, computed);
+                    await downloadPctsDqaReport(data, computed);
                   } finally {
                     setGeneratingReport(false);
                   }
@@ -413,11 +414,14 @@ export function PctsResultsPage({
           </FilterBar>
           <div className="min-w-0 space-y-5">
             {activeGroup === "overall" ? (
-              <PctsOverallSummary
-                data={data}
-                computed={computed}
-                onExport={() => downloadPctsOverall(data, computed)}
-              />
+              <>
+                <WeightedScoreBreakdown result={computed.weighted} groups={SCORED_GROUPS} unitLabel="facilities" />
+                <PctsOverallSummary
+                  data={data}
+                  computed={computed}
+                  onExport={() => downloadPctsOverall(data, computed)}
+                />
+              </>
             ) : (
               <IndicatorSummaryPanel
                 meta={{

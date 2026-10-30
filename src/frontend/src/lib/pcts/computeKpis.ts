@@ -241,7 +241,8 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
   const { cards, selectedFacilityKeys, selectedMonths } = view;
   const facility = (facilityKey: string): PctsFacilityRecord => data.facilities[facilityKey];
   const denominator = selectedMonths.length > 0 ? selectedFacilityKeys.length : 0;
-  const result = scoreComponents(scoringCards(scoreCards), denominator, GROUPS);
+  const scoring = { portal: "PCTS" as const, periodCount: selectedMonths.length };
+  const result = scoreComponents(scoringCards(scoreCards), denominator, GROUPS, scoring);
 
   const issueNamesByFacility: Record<string, string[]> = Object.fromEntries(
     selectedFacilityKeys.map((facilityKey) => [facilityKey, []]),
@@ -266,6 +267,7 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
       scoringCards(scoreCards, blockKeySet),
       selectedMonths.length > 0 ? blockKeys.length : 0,
       GROUPS,
+      scoring,
     );
     blockSummaries[block] = {
       block,
@@ -278,12 +280,14 @@ export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsCom
 
   return {
     cards,
+    scoreCards,
     selectedFacilityKeys,
     visibleFacilityKeys,
     selectedMonths,
     denominator,
     componentScores: toComponentScores(result),
     overallScore: result.overall,
+    weighted: result.weighted,
     scoredComponents: result.scoredComponents,
     totalComponents: result.totalComponents,
     customMethod,

@@ -1,3 +1,5 @@
+import type { WeightedScoreResult } from "../dqa/weightedScoring";
+
 export type PctsGroup =
   | "availability"
   | "completeness"
@@ -212,6 +214,8 @@ export interface PctsBlockSummary {
 
 export interface PctsComputed {
   cards: PctsCard[];
+  /** The cards computed with the standard scoring settings (= `cards` unless customMethod). */
+  scoreCards: PctsCard[];
   selectedFacilityKeys: string[];
   /** When issuesOnly is enabled, this is the affected subset; scoring still uses the selected denominator. */
   visibleFacilityKeys: string[];
@@ -220,6 +224,8 @@ export interface PctsComputed {
   componentScores: Record<PctsGroup, PctsComponentScore>;
   /** null when nothing in the selection could be scored ("No data"). */
   overallScore: number | null;
+  /** The check-by-check working of the score (weights used, points). */
+  weighted: WeightedScoreResult;
   scoredComponents: number;
   totalComponents: number;
   /** True when the analysis settings differ from the standard scoring settings. */

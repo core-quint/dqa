@@ -289,6 +289,8 @@ export interface ReviewBaseline {
   completenessScore: number | null;
   accuracyScore: number | null;
   consistencyScore: number | null;
+  /** Scoring method the review was saved with; null = before versions were recorded (v1). */
+  methodVersion: number | null;
 }
 
 function toBaseline(snapshot: SnapshotRecord, kind: BaselineKind): ReviewBaseline {
@@ -302,6 +304,7 @@ function toBaseline(snapshot: SnapshotRecord, kind: BaselineKind): ReviewBaselin
     completenessScore: snapshot.kpiData?.completenessScore ?? null,
     accuracyScore: snapshot.kpiData?.accuracyScore ?? null,
     consistencyScore: snapshot.kpiData?.consistencyScore ?? null,
+    methodVersion: snapshot.kpiData?.methodVersion ?? null,
   };
 }
 

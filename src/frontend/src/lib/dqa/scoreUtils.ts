@@ -3,6 +3,7 @@
 // ============================================================
 import type { ComputedKpis, KpiCard } from './types';
 import { scoreComponents, type OverallScoreResult } from './scoring';
+import type { WeightPortal } from './weightedScoring';
 
 export type { ComponentScore, OverallScoreResult } from './scoring';
 
@@ -11,10 +12,12 @@ const DEFAULT_GROUPS = ['availability', 'completeness', 'accuracy', 'consistency
 /**
  * The score for an HMIS / U-WIN analysis. Always uses `scoreCards` (the standard
  * scoring settings) and the post-filter denominator, so the popup, the score
- * strip, the saved review and the PDF all show the same numbers.
+ * strip, the saved review and the PDF all show the same numbers. The selected
+ * periods pick the weight table (1 period / 2 or more).
  */
 export function computeOverallScore(
-  kpis: Pick<ComputedKpis, 'cards' | 'globalDen'> & { scoreCards?: KpiCard[] },
+  kpis: Pick<ComputedKpis, 'cards' | 'globalDen' | 'selMonths'> & { scoreCards?: KpiCard[] },
+  portal: Extract<WeightPortal, 'HMIS' | 'UWIN'>,
   groups: string[] = DEFAULT_GROUPS,
 ): OverallScoreResult {
   const cards = kpis.scoreCards ?? kpis.cards;
@@ -30,6 +33,7 @@ export function computeOverallScore(
     })),
     kpis.globalDen,
     groups,
+    { portal, periodCount: kpis.selMonths.length },
   );
 }
 
@@ -45,8 +49,9 @@ function countIn(keys: Set<string>, subset: Set<string>): number {
  * each check's own eligible units within it, exactly like the whole-scope score.
  */
 export function computeSubsetScore(
-  kpis: Pick<ComputedKpis, 'cards'> & { scoreCards?: KpiCard[] },
+  kpis: Pick<ComputedKpis, 'cards' | 'selMonths'> & { scoreCards?: KpiCard[] },
   unitKeys: Set<string>,
+  portal: Extract<WeightPortal, 'HMIS' | 'UWIN'>,
   groups: string[] = DEFAULT_GROUPS,
 ): OverallScoreResult {
   const cards = kpis.scoreCards ?? kpis.cards;
@@ -62,6 +67,7 @@ export function computeSubsetScore(
     })),
     unitKeys.size,
     groups,
+    { portal, periodCount: kpis.selMonths.length },
   );
 }
 

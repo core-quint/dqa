@@ -6,16 +6,28 @@
 // compute a component or overall score, so the screen, the saved review and
 // the report can never disagree.
 //
-// THE METHOD (version 2, agreed 2026-09-22):
+// THE METHOD (version 8, weighted, adopted 2026-10-29):
 //   - Denominator = the units (facilities / session sites / districts / blocks)
 //     left after the scope filters. It is never the whole upload.
-//   - KPI % = units flagged / denominator. A KPI that no unit could be
-//     evaluated for is N/A, not 0%.
-//   - Component score = 100 − the worst available KPI %. A component whose
-//     KPIs are all N/A is N/A, not 100.
-//   - Overall = mean of the components that could be scored. With no units in
-//     scope, everything is N/A ("No data").
+//   - Check % = units flagged / denominator; check score = 100 − check %. A
+//     check that no unit could be evaluated for cannot run.
+//   - Every standard check has a fixed weight (lib/dqa/weightedScoring.ts),
+//     by portal and by period count (1 month or week / 2 or more). A check
+//     that cannot run passes its weight on: group, then component, then the
+//     other components.
+//   - Component score = weighted average of its checks; N/A when none can
+//     run or it carries no weight. Overall = Σ weight × check score ÷ 100.
+//     With no units in scope, everything is N/A ("No data").
 // ============================================================
+
+import {
+  COMPONENT_LABELS,
+  scoreWeighted,
+  type WeightPortal,
+  type WeightedScoreResult,
+} from './weightedScoring';
+
+export { COMPONENT_LABELS };
 
 /**
  * Bump when a change makes new scores incomparable with saved ones.
@@ -47,15 +59,13 @@
  *   removed (HMIS-State, PCTS); PCTS "All Indicators Zero" and "Partial
  *   Indicator Reporting" removed; PCTS "Fully Immunized Exceeds
  *   Prerequisites" removed.
+ * 7 (2026-10-29): HMIS and HMIS-State "Key Missing Indicators" read every M9
+ *   item except JE (all doses), delayed MR 1st dose and Typhoid
+ *   (lib/dqa/keyMissing.ts), not the seven key vaccines.
+ * 8 (2026-10-29): weighted scoring replaces "100 − worst check per component,
+ *   overall = mean of components" (weights in lib/dqa/weightedScoring.ts).
  */
-export const SCORING_METHOD_VERSION = 6;
-
-export const COMPONENT_LABELS: Record<string, string> = {
-  availability: 'Availability',
-  completeness: 'Completeness',
-  accuracy: 'Accuracy',
-  consistency: 'Consistency',
-};
+export const SCORING_METHOD_VERSION = 8;
 
 export interface ScoringCard {
   id: string;
@@ -78,9 +88,9 @@ export interface ScoredKpi {
 
 export interface ComponentScore {
   name: string;
-  /** null = N/A: no unit in scope, or no check in this component could run. */
+  /** Weighted average of the component's checks; null = N/A (no check could run, or no weight). */
   score: number | null;
-  /** Worst KPI %, null when the component is N/A. */
+  /** The most-flagged check's % (the component's top issue); null when no check could run. */
   maxTot: number | null;
   maxAny: number;
   maxAll: number;
@@ -90,22 +100,37 @@ export interface ComponentScore {
 }
 
 export interface OverallScoreResult {
-  /** Mean of the scored components; null when none could be scored. */
+  /** Weighted overall; null when nothing could be scored. */
   overall: number | null;
   components: Record<string, ComponentScore>;
   denominator: number;
   scoredComponents: number;
   totalComponents: number;
+  /** The check-by-check working (weights used, points). */
+  weighted: WeightedScoreResult;
+}
+
+/** Which weight table applies: the portal and how many periods are selected. */
+export interface ScoringContext {
+  portal: WeightPortal;
+  periodCount: number;
 }
 
 export function scoreComponents(
   cards: ScoringCard[],
   denominator: number,
   groups: string[],
+  context: ScoringContext,
 ): OverallScoreResult {
   const components: Record<string, ComponentScore> = {};
-  const scores: number[] = [];
   const den = denominator > 0 ? denominator : 0;
+  const weighted = scoreWeighted(
+    cards.map((card) => ({ id: card.id, name: card.name, flagged: card.flagged, eligible: card.eligible })),
+    den,
+    context.portal,
+    context.periodCount,
+    groups,
+  );
 
   for (const group of groups) {
     const inGroup = cards.filter((card) => card.group === group);
@@ -122,12 +147,10 @@ export function scoreComponents(
       .sort((a, b) => b.pct - a.pct);
 
     const maxTot = kpis.length > 0 ? kpis[0].pct : null;
-    const score = maxTot === null ? null : Math.max(0, 100 - maxTot);
-    if (score !== null) scores.push(score);
 
     components[group] = {
       name: COMPONENT_LABELS[group] ?? group,
-      score,
+      score: weighted.components[group]?.score ?? null,
       maxTot,
       maxAny: Math.max(0, ...kpis.map((kpi) => kpi.pctAny)),
       maxAll: Math.max(0, ...kpis.map((kpi) => kpi.pctAll)),
@@ -140,11 +163,12 @@ export function scoreComponents(
   }
 
   return {
-    overall: scores.length > 0 ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null,
+    overall: weighted.overall,
     components,
     denominator: den,
-    scoredComponents: scores.length,
-    totalComponents: groups.length,
+    scoredComponents: weighted.scoredComponents,
+    totalComponents: weighted.totalComponents,
+    weighted,
   };
 }
 

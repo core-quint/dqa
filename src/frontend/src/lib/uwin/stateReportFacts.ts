@@ -178,7 +178,7 @@ const SEVERITY_CODE: Record<Exclude<SeverityLevel, "None">, ReportFinding["sever
  * a clear message instead of printing a misleading number.
  */
 export function uwinStateReportScores(kpis: UwinComputedKpis) {
-  const overall = computeOverallScore(kpis as never, [...REPORT_GROUPS]);
+  const overall = computeOverallScore(kpis as never, "UWIN", [...REPORT_GROUPS]);
   const missing = REPORT_GROUPS.filter((group) => overall.components[group]?.score === null);
   if (overall.overall === null || missing.length > 0) {
     throw new Error(
@@ -239,7 +239,7 @@ export function buildUwinStateFactPack(
   const districts: DistrictReportFact[] = [...districtUnits.entries()].map(([district, unitKeys]) => {
     const denominator = Math.max(1, unitKeys.size);
     // The shared scoring rule on this district's units only (lib/dqa/scoring.ts).
-    const districtScore = computeSubsetScore(kpis as never, unitKeys, [...REPORT_GROUPS]);
+    const districtScore = computeSubsetScore(kpis as never, unitKeys, "UWIN", [...REPORT_GROUPS]);
     const componentScores = Object.fromEntries(REPORT_GROUPS.map((group) => {
       const score = districtScore.components[group]?.score ?? null;
       return [group, score === null ? null : round(score)];

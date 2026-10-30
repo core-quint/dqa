@@ -28,6 +28,7 @@ import {
   passesChangeSeverity,
 } from "../dqa/checkRules";
 import { periodsAreConsecutive } from "../dqa/parseUtils";
+import { isKeyMissingExcludedItem, m9ItemLabel } from "../dqa/keyMissing";
 import { coadminDetail, coadminViolation } from "../dqa/coadmin";
 
 type Evaluator = (district: string, month: string) => StateHmisHit | null;
@@ -228,7 +229,10 @@ export function computeStateHmisKpis(
 
   const { cards, selectedDistricts, selectedMonths, filteredDistricts } = view;
   const denominator = selectedMonths.length > 0 ? selectedDistricts.length : 0;
-  const result = scoreComponents(scoringCards(scoreCards), denominator, GROUPS);
+  const result = scoreComponents(scoringCards(scoreCards), denominator, GROUPS, {
+    portal: "HMIS_STATE",
+    periodCount: selectedMonths.length,
+  });
 
   const issueNamesByDistrict: Record<string, string[]> = Object.fromEntries(selectedDistricts.map((district) => [district, []]));
   for (const card of cards) for (const district of card.affectedDistricts) issueNamesByDistrict[district].push(card.name);
@@ -245,12 +249,14 @@ export function computeStateHmisKpis(
   }));
   return {
     cards,
+    scoreCards,
     selectedUnits: selectedDistricts,
     selectedDistricts,
     selectedMonths,
     denominator,
     componentScores: toComponentScores(result),
     overallScore: result.overall,
+    weighted: result.weighted,
     scoredComponents: result.scoredComponents,
     totalComponents: result.totalComponents,
     customMethod,
@@ -276,6 +282,9 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     .filter((month) => data.months[month])
     .sort();
   const m9Codes = data.orderedItemCodes.filter((code) => /^M9\b/i.test(data.items[code]?.category ?? ""));
+  // Key Missing Indicators reads the M9 section minus JE, delayed MR1 and
+  // Typhoid (lib/dqa/keyMissing.ts), not the reviewer's key-indicator list.
+  const keyMissingCodes = m9Codes.filter((code) => !isKeyMissingExcludedItem(data.items[code]?.name ?? ""));
   const keyShorts = filters.keyIndicators.filter((short) => codeByShort(data, short));
   const keyCodes = keyShorts.map((short) => codeByShort(data, short)!).filter(Boolean);
   // The standard outlier check leaves out OPV1/OPV3; the reviewer may add them back.
@@ -319,7 +328,7 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     return { flag, detail: flag ? "All selected key indicators are zero" : "Not all zero" };
   }));
 
-  cards.push(makeCard("repeated_profile", "Repeated Monthly Profile", "The M9 profile exactly matches the preceding calendar month.", "availability", selectedDistricts, selectedMonths, (d, m) => {
+  cards.push(makeCard("repeated_profile", "Duplicate Monthly Record", "The M9 record is an exact copy of the previous calendar month's record.", "availability", selectedDistricts, selectedMonths, (d, m) => {
     const previousMonth = previousMonthOf(m);
     if (!previousMonth) return null;
     const current = record(d, m); const previous = record(d, previousMonth);
@@ -336,16 +345,21 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     return { flag, detail: flag ? `Profile exactly matches ${previousMonth}` : `Profile differs from ${previousMonth}` };
   }));
 
-  cards.push(makeCard("key_missing", "Key Missing Indicators", "One or more selected key indicators are blank or absent.", "completeness", selectedDistricts, selectedMonths, (d, m) => {
-    if (keyShorts.length === 0) return notEvaluable("No key indicator selected");
+  cards.push(makeCard("key_missing", "Key Missing Indicators", "One or more M9 items are blank or absent (JE, delayed MR 1st dose and Typhoid are not checked).", "completeness", selectedDistricts, selectedMonths, (d, m) => {
+    if (keyMissingCodes.length === 0) return notEvaluable("No M9 items in this file");
     // A unit "All M9 Indicators Blank" flagged is not checked again here (its
-    // blank key cells are the same finding), as HMIS t2 skips t1 facilities.
+    // blank M9 cells are the same finding), as HMIS t2 skips t1 facilities.
     if (allBlankUnits.has(d)) return notEvaluable("Counted under All M9 Indicators Blank");
     const rec = record(d, m);
-    // The only completeness check, so a missing report is flagged here (all keys missing).
+    // The only completeness check, so a missing report is flagged here (all items missing).
     if (!rec) return { flag: true, detail: `${unitLabel} report is missing` };
-    const missing = keyShorts.filter((short) => { const code = codeByShort(data, short); return !code || rec.values[code] === null || rec.values[code] === undefined; });
-    return { flag: missing.length > 0, detail: missing.length ? `Missing: ${missing.join(", ")}` : "All selected key indicators present" };
+    const missing = keyMissingCodes.filter((code) => rec.values[code] === null || rec.values[code] === undefined);
+    return {
+      flag: missing.length > 0,
+      detail: missing.length
+        ? `Missing: ${missing.map((code) => m9ItemLabel(code, data.items[code]?.name ?? "")).join(", ")}`
+        : "All checked M9 items present",
+    };
   }));
 
   cards.push(makeCard("held_gt_planned", "Sessions Held > Sessions Planned", "Held exceeds planned (including sessions held with none planned).", "consistency", selectedDistricts, selectedMonths, (d, m) => {

@@ -7,6 +7,7 @@ import { monthKey as monthKeyFn, asNumOrNull, hmisAvailabilityColumns } from './
 import { CO_SPECS, SESSION_VAX } from './constants';
 import { coadminRedCells } from './coadmin';
 import { laterDoseExceeds } from './checkRules';
+import { hmisKeyMissingColumns } from './keyMissing';
 
 const TABLE_STYLE = `
 <style>
@@ -21,6 +22,11 @@ th{background:#f9fafb;font-weight:bold;}
 
 type CellValue = string | number | null;
 type TableData = CellValue[][];
+
+/** Download a ready-built HTML table (inline-styled) as an .xls file. */
+export function downloadHtmlXLS(html: string, filename: string): void {
+  triggerDownload(new Blob([html], { type: 'application/vnd.ms-excel' }), `${sanitizeFilename(filename)}.xls`);
+}
 
 export function downloadXLS(rows: TableData, filename: string): void {
   if (!rows.length) return;
@@ -290,6 +296,7 @@ export function downloadHighlightedXLS(
   // indicator columns sit after it). These get the same fill as the flagged
   // cells so the export can be filtered by colour on State/District/Block/etc.
   const availCols = hmisAvailabilityColumns(header, idxMonth);
+  const keyMissingCols = hmisKeyMissingColumns(header, idxMonth).map((item) => item.ci);
   const mappingCols: number[] = [];
   for (let ci = 0; ci <= idxMonth && ci < header.length; ci++) mappingCols.push(ci);
 
@@ -319,14 +326,12 @@ export function downloadHighlightedXLS(
         for (const ci of availCols) styleMap[ri][ci] = PINK;
       }
     } else if (kpiKey === 't2') {
-      // Highlight blank vaccine columns
-      for (const [vx, ci] of Object.entries(idxByShort)) {
-        if (kpis.t2Web.vaccines.includes(vx)) {
-          const v = (r[ci] ?? '').trim();
-          if (v === '') {
-            if (!styleMap[ri]) styleMap[ri] = {};
-            styleMap[ri][ci] = PINK;
-          }
+      // Highlight the blank cells among the M9 items the check reads
+      for (const ci of keyMissingCols) {
+        const v = (r[ci] ?? '').trim();
+        if (v === '') {
+          if (!styleMap[ri]) styleMap[ri] = {};
+          styleMap[ri][ci] = PINK;
         }
       }
     } else if (kpiKey === 't10') {

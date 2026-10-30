@@ -1,7 +1,4 @@
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 import { downloadXLS } from "../dqa/exportUtils";
-import { formatScore } from "../dqa/scoring";
 import type { StateHmisCard, StateHmisComputed, StateHmisParsed } from "./types";
 
 export function stateCardRows(data: StateHmisParsed, card: StateHmisCard, months: string[]) {
@@ -50,44 +47,4 @@ export function downloadStateOverall(data: StateHmisParsed, computed: StateHmisC
     ]);
   }
   downloadXLS(rows, `HMIS State Overall - ${data.stateName}`);
-}
-
-export function downloadStateHmisPdf(data: StateHmisParsed, computed: StateHmisComputed) {
-  const doc = new jsPDF({ orientation: "landscape" });
-  const months = computed.selectedMonths;
-  const unitLabel = data.reportLevel === "block" ? "blocks" : "districts";
-  doc.setFontSize(18);
-  doc.text(`HMIS State ${data.reportLevel === "block" ? "Block-wise" : "District-wise"} DQA Report`, 14, 16);
-  doc.setFontSize(10);
-  doc.text(`${data.stateName} | ${months[0] ?? "-"} to ${months[months.length - 1] ?? "-"} | ${computed.selectedUnits.length} ${unitLabel}`, 14, 23);
-  doc.text(`Overall score: ${formatScore(computed.overallScore)}${computed.customMethod ? " (standard scoring settings)" : ""}`, 14, 29);
-  autoTable(doc, {
-    startY: 34,
-    head: [["Component", "Score", "Worst issue %"]],
-    body: Object.values(computed.componentScores).map((component) => [component.group, formatScore(component.score), formatScore(component.worstIssuePct)]),
-  });
-
-  if (data.reportLevel === "block") {
-    doc.addPage(); doc.setFontSize(15); doc.text("District roll-up", 14, 16);
-    autoTable(doc, {
-      startY: 22,
-      head: [["District", "Blocks", "Affected blocks", "Issue occurrences", "Indicators"]],
-      body: Object.entries(computed.districtRollups).map(([district, rollup]) => [
-        district, rollup.unitCount, rollup.affectedUnitCount, rollup.issueCount, rollup.issueNames.join(", ") || "None",
-      ]),
-      styles: { fontSize: 7 },
-    });
-  }
-
-  doc.addPage(); doc.setFontSize(15); doc.text(`${data.reportLevel === "block" ? "Health block" : "District"} issue summary`, 14, 16);
-  autoTable(doc, {
-    startY: 22,
-    head: [["District", ...(data.reportLevel === "block" ? ["Health Block"] : []), "Issues", "Indicators"]],
-    body: computed.selectedUnits.map((id) => {
-      const unit = data.unitData[id];
-      return [unit?.district ?? id, ...(data.reportLevel === "block" ? [unit?.block ?? ""] : []), computed.issueCountByUnit[id], computed.issueNamesByUnit[id].join(", ") || "None"];
-    }),
-    styles: { fontSize: 7 },
-  });
-  doc.save(`HMIS_State_DQA_${data.stateName.replace(/\W+/g, "_")}.pdf`);
 }

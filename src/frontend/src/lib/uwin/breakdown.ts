@@ -17,8 +17,8 @@ export function buildUwinBreakdown(csv: UwinParsedCSV): Promise<SnapshotBreakdow
   const run = (months: string[]) =>
     computeUwinKpis(csv, { ...UWIN_DEFAULT_FILTERS, analysisMode, months, activeGroup: 'availability' });
   const score = (kpis: ReturnType<typeof run>) => {
-    const cell = cellFromScore(computeOverallScore(kpis, GROUPS));
-    const rows = subsetRows(kpis, GROUPS, (unit) =>
+    const cell = cellFromScore(computeOverallScore(kpis, 'UWIN', GROUPS));
+    const rows = subsetRows(kpis, 'UWIN', GROUPS, (unit) =>
       isState ? unit.district?.trim() || 'Unknown district' : displayBlockLabel(unit.block));
     return { cell, cumulative: cell, rows };
   };

@@ -1,3 +1,5 @@
+import type { WeightedScoreResult } from "../dqa/weightedScoring";
+
 export type StateHmisGroup =
   | "availability"
   | "completeness"
@@ -124,6 +126,8 @@ export interface StateHmisComponentScore {
 
 export interface StateHmisComputed {
   cards: StateHmisCard[];
+  /** The cards computed with the standard scoring settings (= `cards` unless customMethod). */
+  scoreCards: StateHmisCard[];
   selectedUnits: string[];
   selectedDistricts: string[];
   selectedMonths: string[];
@@ -131,6 +135,8 @@ export interface StateHmisComputed {
   componentScores: Record<StateHmisGroup, StateHmisComponentScore>;
   /** null when nothing in the selection could be scored ("No data"). */
   overallScore: number | null;
+  /** The check-by-check working of the score (weights used, points). */
+  weighted: WeightedScoreResult;
   scoredComponents: number;
   totalComponents: number;
   /** True when the analysis settings differ from the standard scoring settings. */

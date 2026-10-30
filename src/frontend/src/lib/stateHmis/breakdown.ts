@@ -37,6 +37,7 @@ function districtRowsOf(data: StateHmisParsed, computed: ReturnType<typeof compu
       })),
       computed.selectedMonths.length > 0 ? units.size : 0,
       GROUPS,
+      { portal: 'HMIS_STATE', periodCount: computed.selectedMonths.length },
     )),
   }));
 }

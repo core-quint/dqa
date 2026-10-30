@@ -27,6 +27,7 @@
 
 import type { OverallScoreResult } from './dqa/scoring';
 import { computeSubsetScore } from './dqa/scoreUtils';
+import type { WeightPortal } from './dqa/weightedScoring';
 import { monthLongLabel, periodMonths } from './dqa/parseUtils';
 import type { KpiCard } from './dqa/types';
 import { getDataPeriod, getSnapshotBlock, getSnapshotDqaLevel, monthsBetween, normalizePortal, type SnapshotKpiData, type SnapshotRecord } from './snapshots';
@@ -128,7 +129,8 @@ export function cellFromComponents(
  * a single engine run. `kpis` must come from that run.
  */
 export function subsetRows<U>(
-  kpis: { filteredFacilities: Record<string, U>; cards: KpiCard[]; scoreCards?: KpiCard[] },
+  kpis: { filteredFacilities: Record<string, U>; cards: KpiCard[]; scoreCards?: KpiCard[]; selMonths: string[] },
+  portal: Extract<WeightPortal, 'HMIS' | 'UWIN'>,
   groups: string[],
   rowName: (unit: U) => string,
 ): BreakdownRow[] {
@@ -140,7 +142,7 @@ export function subsetRows<U>(
   }
   return [...units.entries()].map(([name, keys]) => ({
     name,
-    cell: cellFromScore(computeSubsetScore(kpis, keys, groups)),
+    cell: cellFromScore(computeSubsetScore(kpis, keys, portal, groups)),
   }));
 }
 

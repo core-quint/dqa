@@ -232,7 +232,7 @@ export function UwinResultsPage({
       kpis.analysisMode === saveMode
         ? kpis
         : computeUwinKpis(csv, { ...filters, analysisMode: saveMode, activeGroup });
-    const score = computeOverallScore(saveKpis as unknown as ComputedKpis, SCORED_GROUPS);
+    const score = computeOverallScore(saveKpis as unknown as ComputedKpis, "UWIN", SCORED_GROUPS);
     if (score.overall === null) {
       alert(`Nothing in the current selection can be scored ${saveModeLabel}, so no snapshot was saved.`);
       return;
@@ -301,7 +301,7 @@ export function UwinResultsPage({
   };
 
   const liveScore = kpis
-    ? computeOverallScore(kpis as unknown as ComputedKpis, SCORED_GROUPS)
+    ? computeOverallScore(kpis as unknown as ComputedKpis, "UWIN", SCORED_GROUPS)
     : null;
   const scoreRows: ScoreStripRow[] = liveScore
     ? SCORED_GROUPS.map((group) => ({
@@ -355,6 +355,7 @@ export function UwinResultsPage({
           onClose={() => setShowOverall(false)}
           groups={SCORED_GROUPS}
           unitLabel={unitPlural}
+          portal="UWIN"
         />
       ) : null}
 

@@ -214,7 +214,7 @@ export function ResultsPage({
 
   const handleSave = async () => {
     if (!kpis) return;
-    const score = computeOverallScore(kpis, SCORED_GROUPS);
+    const score = computeOverallScore(kpis, "HMIS", SCORED_GROUPS);
     if (score.overall === null) return;
     try {
       setSaving(true);
@@ -266,7 +266,7 @@ export function ResultsPage({
     }
   };
 
-  const liveScore = kpis ? computeOverallScore(kpis, SCORED_GROUPS) : null;
+  const liveScore = kpis ? computeOverallScore(kpis, "HMIS", SCORED_GROUPS) : null;
   const scoreRows: ScoreStripRow[] = liveScore
     ? SCORED_GROUPS.map((group) => ({
         key: group,
@@ -303,6 +303,7 @@ export function ResultsPage({
           kpis={kpis}
           csv={csv}
           onClose={() => setShowOverall(false)}
+          portal="HMIS"
         />
       ) : null}
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, ChevronRight, Info, Minus } from "lucide-react";
 import { scoreBadgeStyle, scoreGrade } from "../../lib/dqa/scoreUtils";
+import { SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import { periodRangeLabel, type ReviewBaseline } from "../../lib/snapshots";
 
 export interface ScoreStripRow {
@@ -67,6 +68,15 @@ function formatDate(iso: string): string {
   const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime())) return iso;
   return parsed.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/**
+ * Whether a saved review was scored with today's method. Older reviews keep their
+ * stored scores, but a change against them would mostly measure the method switch
+ * (e.g. worst-check → weighted in v8), so no movement is shown.
+ */
+function sameMethod(baseline: ReviewBaseline): boolean {
+  return baseline.methodVersion === SCORING_METHOD_VERSION;
 }
 
 function baselinePeriodLabel(baseline: ReviewBaseline): string {
@@ -143,6 +153,8 @@ export function ScoreStrip({
   }, [baselines]);
 
   const active = baselines.find((baseline) => baseline.id === activeId) ?? null;
+  // Movement is only shown against a review scored with the same method.
+  const compared = active && sameMethod(active) ? active : null;
   const badge = scoreBadgeStyle(overall);
   const grade = scoreGrade(overall);
 
@@ -233,12 +245,20 @@ export function ScoreStrip({
                         <span className="block truncate text-[10px] text-slate-500">
                           {baselinePeriodLabel(baseline)} · saved {formatDate(baseline.createdAt)}
                         </span>
+                        {sameMethod(baseline) ? null : (
+                          <span
+                            className="block truncate text-[10px] font-semibold text-amber-700"
+                            title="Saved with an earlier scoring method. Its score is shown as saved, but it is not compared with this one."
+                          >
+                            Earlier scoring method · not compared
+                          </span>
+                        )}
                       </span>
                       <span className="shrink-0 text-right">
                         <span className="block text-[11px] font-bold tabular-nums text-slate-700">
                           {baseline.overall === null ? "N/A" : baseline.overall.toFixed(1)}
                         </span>
-                        {isActive ? (
+                        {isActive && sameMethod(baseline) ? (
                           <Delta current={overall} previous={baseline.overall} />
                         ) : null}
                       </span>
@@ -261,7 +281,7 @@ export function ScoreStrip({
                 <span className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
                   {row.label}
                 </span>
-                <Delta current={row.current} previous={baselineComponentScore(active, row.key)} />
+                <Delta current={row.current} previous={baselineComponentScore(compared, row.key)} />
               </div>
               <div
                 className="mt-1 text-lg font-bold leading-none tabular-nums text-slate-900"
@@ -278,9 +298,9 @@ export function ScoreStrip({
                   }}
                 />
               </div>
-              {active ? (
+              {compared ? (
                 <div className="mt-1 text-[10px] tabular-nums text-slate-400">
-                  was {baselineComponentScore(active, row.key)?.toFixed(1) ?? "—"}
+                  was {baselineComponentScore(compared, row.key)?.toFixed(1) ?? "—"}
                 </div>
               ) : null}
             </div>
