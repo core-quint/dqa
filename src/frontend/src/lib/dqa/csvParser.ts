@@ -20,8 +20,6 @@ import {
 } from './parseUtils';
 import type { ParsedCSV, FacilityRecord } from './types';
 
-const LEGACY_HMIS_GEO_COL_COUNT = 36; // A:AJ
-
 export async function parseCSVFile(file: File): Promise<ParsedCSV> {
   if (isExcelFile(file.name)) {
     const rawRows = await parseExcelRows(file);
@@ -90,25 +88,51 @@ function isExcelFile(fileName: string): boolean {
   return /\.(xlsx|xls)$/i.test(fileName);
 }
 
+/** HMIS item-code header cell, e.g. "9.1.2. :: Child immunisation - BCG", "1.1.a :: ..." or "14.13.1.a.i :: ...". */
+const HMIS_ITEM_HEADER_RE = /^\s*\d+(?:\.[0-9a-z]+)+\.?\s*::/i;
+
+/** Rows searched for the header block before giving up (title rows come first). */
+const LEGACY_HEADER_SEARCH_ROWS = 10;
+
+function isBlankRow(row: string[]): boolean {
+  return row.every((cell) => stripBOM(String(cell ?? '')).trim() === '');
+}
+
+/** A row of the legacy header block: identity names, item codes, or a blank / merged copy of them. */
+function isLegacyHeaderRow(row: string[]): boolean {
+  return isBlankRow(row) || hasRequiredHeaders(row) || row.some((cell) => HMIS_ITEM_HEADER_RE.test(cell ?? ''));
+}
+
+/**
+ * HMIS "Data Item wise report" layout: title row(s), then a header block — the
+ * identity names (Block Name, Facility Name, Month, ...) with section labels
+ * ("M9 [CHILD IMMUNISATION]") over the item-code row, which can be followed by a
+ * blank row or, once merged cells are expanded, a copy of itself — then the data.
+ * The block is found by its content, not by position: the fixed offsets used until
+ * 2026-10-29 dropped the report's first data row whenever its blank row was merged
+ * into the item-code row. Each header cell is the column's item-code cell, or else
+ * its first non-blank cell in the block.
+ */
 function tryNormalizeLegacyHmisRows(rawRows: string[][]): string[][] | null {
-  if (rawRows.length < 6) return null;
+  const start = rawRows.findIndex((row, index) => index < LEGACY_HEADER_SEARCH_ROWS && hasRequiredHeaders(row));
+  if (start < 0) return null;
 
-  const rows = rawRows.map((row) => [...row]);
-  const withoutTitle = rows.slice(1);
-  if (withoutTitle.length < 5) return null;
+  let end = start + 1;
+  while (end < rawRows.length && isLegacyHeaderRow(rawRows[end])) end++;
 
-  const headerBase = [...withoutTitle[2]];
-  const geoSource = withoutTitle[1] ?? [];
-  const geoCols = Math.min(LEGACY_HMIS_GEO_COL_COUNT, Math.max(headerBase.length, geoSource.length));
-
-  for (let col = 0; col < geoCols; col++) {
-    const geoValue = geoSource[col]?.trim();
-    if (geoValue) {
-      headerBase[col] = geoSource[col];
-    }
+  const block = rawRows.slice(start, end);
+  const width = Math.max(...block.map((row) => row.length));
+  const header: string[] = [];
+  for (let col = 0; col < width; col++) {
+    const cells = block.map((row) => row[col] ?? '');
+    header.push(
+      cells.find((cell) => HMIS_ITEM_HEADER_RE.test(cell))
+        ?? cells.find((cell) => cell.trim() !== '')
+        ?? '',
+    );
   }
 
-  return [headerBase, ...withoutTitle.slice(4)];
+  return [header, ...rawRows.slice(end)];
 }
 
 function hasRequiredHeaders(rawHeader: string[]): boolean {
