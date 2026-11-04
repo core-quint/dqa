@@ -232,6 +232,15 @@ function toComponentScores(result: OverallScoreResult): Record<PctsGroup, PctsCo
 
 // ---- main export ----
 
+/** Doses given at the same visit (the co-administration checks), by indicator id. */
+export const PCTS_COADMIN_GROUPS: readonly { id: string; name: string; ids: string[] }[] = [
+  { id: "coadmin_6_weeks", name: "Co-administered Antigens — 6 weeks", ids: ["opv1", "penta1", "rota1", "pcv1", "fipv1"] },
+  { id: "coadmin_10_weeks", name: "Co-administered Antigens — 10 weeks", ids: ["opv2", "penta2", "rota2"] },
+  { id: "coadmin_14_weeks", name: "Co-administered Antigens — 14 weeks", ids: ["opv3", "penta3", "rota3", "pcv2", "fipv2"] },
+  { id: "coadmin_9_months", name: "Co-administered Antigens — 9 months", ids: ["mr1", "pcvBooster", "fipv3"] },
+  { id: "coadmin_16_24_months", name: "Co-administered Antigens — 16–24 months", ids: ["mr2", "dptFirstBooster"] },
+];
+
 export function computePctsKpis(data: PctsParsed, filters: PctsFilters): PctsComputed {
   const view = computeCards(data, filters);
   const standard = standardPctsFilters(filters);
@@ -574,14 +583,7 @@ function computeCards(data: PctsParsed, filters: PctsFilters) {
   // Co-administered doses are given at the same visit, so their monthly counts
   // should be close: shared rule in lib/dqa/coadmin.ts (blanks are a
   // completeness finding).
-  const coadminGroups: { id: string; name: string; ids: string[] }[] = [
-    { id: "coadmin_6_weeks", name: "Co-administered Antigens — 6 weeks", ids: ["opv1", "penta1", "rota1", "pcv1", "fipv1"] },
-    { id: "coadmin_10_weeks", name: "Co-administered Antigens — 10 weeks", ids: ["opv2", "penta2", "rota2"] },
-    { id: "coadmin_14_weeks", name: "Co-administered Antigens — 14 weeks", ids: ["opv3", "penta3", "rota3", "pcv2", "fipv2"] },
-    { id: "coadmin_9_months", name: "Co-administered Antigens — 9 months", ids: ["mr1", "pcvBooster", "fipv3"] },
-    { id: "coadmin_16_24_months", name: "Co-administered Antigens — 16–24 months", ids: ["mr2", "dptFirstBooster"] },
-  ];
-  for (const spec of coadminGroups) {
+  for (const spec of PCTS_COADMIN_GROUPS) {
     cards.push(makeCard(
       spec.id,
       spec.name,

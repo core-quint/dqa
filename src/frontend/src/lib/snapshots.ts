@@ -344,6 +344,42 @@ export function pickReviewBaselines(
   return [toBaseline(latest, "latest")];
 }
 
+/**
+ * The saved review of the period before this one — the baseline of the HMIS
+ * brief's "+2.9 vs Jan to Mar 2026" line. Only like-for-like reviews count: the
+ * same level, block and scope, the current scoring method (a change against an
+ * older method would mostly measure the method switch), and data that ended
+ * before this period starts. The latest such period wins; between reviews of
+ * that period, the one saved last. Pass the snapshots already narrowed to this
+ * portal and geography.
+ */
+export function pickPreviousPeriodReview(
+  matches: SnapshotRecord[],
+  currentPeriod: { start: string; end: string } | null,
+  currentScope: Pick<SnapshotRecord, "kpiData">,
+): ReviewBaseline | null {
+  if (!currentPeriod) return null;
+  const wantedGroup = reviewComparisonGroup(currentScope);
+  let best: { snapshot: SnapshotRecord; end: string; saved: number } | null = null;
+  for (const snapshot of matches) {
+    const period = getDataPeriod(snapshot);
+    if (
+      !period ||
+      period.end >= currentPeriod.start ||
+      typeof snapshot.overallScore !== "number" ||
+      !isCurrentMethod(snapshot) ||
+      reviewComparisonGroup(snapshot) !== wantedGroup
+    ) {
+      continue;
+    }
+    const saved = new Date(snapshot.createdAt).getTime();
+    if (!best || period.end > best.end || (period.end === best.end && saved > best.saved)) {
+      best = { snapshot, end: period.end, saved };
+    }
+  }
+  return best ? toBaseline(best.snapshot, "latest") : null;
+}
+
 /** How many months of data the review covered; falls back to the stored label. */
 export function dataDurationLabel(
   snapshot: Pick<SnapshotRecord, "kpiData" | "reportingMonth">,

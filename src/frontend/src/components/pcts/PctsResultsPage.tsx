@@ -19,6 +19,7 @@ import { componentCoverageNote, formatScore, SCORING_METHOD_VERSION } from "../.
 import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
 import { WeightedScoreBreakdown } from "../dqa/WeightedScoreBreakdown";
 import {
+  pickPreviousPeriodReview,
   pickReviewBaselines,
   type ReviewBaseline,
   type SnapshotRecord,
@@ -266,9 +267,10 @@ export function PctsResultsPage({
         end: computed.selectedMonths[computed.selectedMonths.length - 1],
       }
     : null;
-  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
-    kpiData: { dqaLevel: "DISTRICT", block: null, scope: savedScope },
-  });
+  const reviewScope = { kpiData: { dqaLevel: "DISTRICT" as const, block: null, scope: savedScope } };
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, reviewScope);
+  // The brief's "+2.9 vs Jan to Mar 2026" line compares with the period before this one.
+  const previousPeriodReview = pickPreviousPeriodReview(savedReviews, currentPeriod, reviewScope);
 
   const currentMeta = GROUP_META[activeGroup];
   const trendHandler = onOpenTrends ?? onTrend;
@@ -326,7 +328,7 @@ export function PctsResultsPage({
                 onClick={async () => {
                   setGeneratingReport(true);
                   try {
-                    await downloadPctsDqaReport(data, computed);
+                    await downloadPctsDqaReport(data, computed, previousPeriodReview);
                   } finally {
                     setGeneratingReport(false);
                   }

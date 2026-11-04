@@ -24,6 +24,7 @@ import { componentCoverageNote, SCORING_METHOD_VERSION } from "../../lib/dqa/sco
 import { ScoreStrip, type ScoreStripRow } from "./ScoreStrip";
 import {
   buildSnapshotSaveMeta,
+  pickPreviousPeriodReview,
   pickReviewBaselines,
   type ReviewBaseline,
   type SnapshotRecord,
@@ -191,9 +192,12 @@ export function ResultsPage({
     savedMeta.periodStart && savedMeta.periodEnd
       ? { start: savedMeta.periodStart, end: savedMeta.periodEnd }
       : null;
-  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
+  const currentScope = {
     kpiData: { dqaLevel: savedMeta.dqaLevel, block: savedMeta.block ?? null, scope: savedMeta.scope },
-  });
+  };
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, currentScope);
+  // The brief's "+2.9 vs Jan to Mar 2026" line compares with the period before this one.
+  const previousPeriodReview = pickPreviousPeriodReview(savedReviews, currentPeriod, currentScope);
 
   useEffect(() => {
     if (!activeGroup) {
@@ -352,7 +356,7 @@ export function ResultsPage({
                   disabled={generatingReport}
                   onClick={async () => {
                     setGeneratingReport(true);
-                    try { await downloadHmisDqaReport(csv, kpis); }
+                    try { await downloadHmisDqaReport(csv, kpis, previousPeriodReview); }
                     finally { setGeneratingReport(false); }
                   }}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"

@@ -218,6 +218,15 @@ function toComponentScores(result: OverallScoreResult): StateHmisComputed["compo
 
 // ---- main export ----
 
+/** Doses given at the same visit (the co-administration checks): id, name, item shorts. */
+export const STATE_HMIS_COADMIN_GROUPS: readonly (readonly [string, string, readonly string[]])[] = [
+  ["co1", "Co-administered Antigens — 6 weeks", ["OPV1", "Penta1", "RVV1", "PCV1", "IPV1"]],
+  ["co2", "Co-administered Antigens — 10 weeks", ["OPV2", "Penta2", "RVV2"]],
+  ["co3", "Co-administered Antigens — 14 weeks", ["OPV3", "Penta3", "RVV3", "PCV2", "IPV2"]],
+  ["co4", "Co-administered Antigens — 9 months", ["MR1", "PCV Booster", "IPV3"]],
+  ["co5", "Co-administered Antigens — 16–24 months", ["MR2", "DPT 1st Booster"]],
+];
+
 export function computeStateHmisKpis(
   data: StateHmisParsed,
   filters: StateHmisFilters,
@@ -473,14 +482,7 @@ function computeCards(data: StateHmisParsed, filters: StateHmisFilters) {
     cards.push(doseOrderCard(`custom_${index}`, `${pair.to} > ${pair.from}`, "User-defined later-dose pair, flagged when the later dose exceeds the earlier one by more than 25% (50% when both are under 10) over the selected period.", [[pair.from, pair.to]]));
   });
 
-  const coadminGroups: [string, string, string[]][] = [
-    ["co1", "Co-administered Antigens — 6 weeks", ["OPV1", "Penta1", "RVV1", "PCV1", "IPV1"]],
-    ["co2", "Co-administered Antigens — 10 weeks", ["OPV2", "Penta2", "RVV2"]],
-    ["co3", "Co-administered Antigens — 14 weeks", ["OPV3", "Penta3", "RVV3", "PCV2", "IPV2"]],
-    ["co4", "Co-administered Antigens — 9 months", ["MR1", "PCV Booster", "IPV3"]],
-    ["co5", "Co-administered Antigens — 16–24 months", ["MR2", "DPT 1st Booster"]],
-  ];
-  for (const [id, name, shorts] of coadminGroups) {
+  for (const [id, name, shorts] of STATE_HMIS_COADMIN_GROUPS) {
     cards.push(makeCard(id, name, "A dose differs from the visit's reference count by more than 25% (50% when the reference is under 10).", "consistency", selectedDistricts, selectedMonths, (d, m) => {
       const values = shorts.map((short) => [short, value(d, m, short)] as const).filter((entry) => entry[1] !== null);
       if (values.length < 2) return notEvaluable("Fewer than two comparable values");

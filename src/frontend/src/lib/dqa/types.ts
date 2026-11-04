@@ -48,6 +48,8 @@ export interface ParsedCSV {
   stateName: string;
   distName: string;
   fileName: string;
+  /** "YYYY-MM-DD" the HMIS export was taken ("Data as on …" title row, else the file name); null when neither says. */
+  dataAsOn?: string | null;
 }
 
 export interface FilterState {

@@ -18,6 +18,7 @@ import { componentCoverageNote, formatScore, SCORING_METHOD_VERSION } from "../.
 import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
 import { WeightedScoreBreakdown } from "../dqa/WeightedScoreBreakdown";
 import {
+  pickPreviousPeriodReview,
   pickReviewBaselines,
   type ReviewBaseline,
   type SnapshotRecord,
@@ -271,9 +272,17 @@ export function StateHmisResultsPage({
   const currentPeriod = selectedMonths.length
     ? { start: selectedMonths[0], end: selectedMonths[selectedMonths.length - 1] }
     : null;
-  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
-    kpiData: { dqaLevel: "STATE", block: null, scope: savedScope, analysisGranularity: data.reportLevel === "block" ? "BLOCK" : "DISTRICT" },
-  });
+  const reviewScope = {
+    kpiData: {
+      dqaLevel: "STATE" as const,
+      block: null,
+      scope: savedScope,
+      analysisGranularity: data.reportLevel === "block" ? ("BLOCK" as const) : ("DISTRICT" as const),
+    },
+  };
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, reviewScope);
+  // The brief's "+2.9 vs Jan to Mar 2026" line compares with the period before this one.
+  const previousPeriodReview = pickPreviousPeriodReview(savedReviews, currentPeriod, reviewScope);
 
   const meta = GROUP_META[activeGroup];
   const groupCards =
@@ -348,7 +357,7 @@ export function StateHmisResultsPage({
                 onClick={async () => {
                   setGeneratingReport(true);
                   try {
-                    await downloadStateHmisDqaReport(data, computed);
+                    await downloadStateHmisDqaReport(data, computed, previousPeriodReview);
                   } finally {
                     setGeneratingReport(false);
                   }

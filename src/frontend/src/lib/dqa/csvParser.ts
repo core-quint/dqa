@@ -135,6 +135,42 @@ function tryNormalizeLegacyHmisRows(rawRows: string[][]): string[][] | null {
   return [header, ...rawRows.slice(end)];
 }
 
+const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+/** "as on 16th October 2026" / "as on 16 Oct, 2026". */
+const AS_ON_NAMED_RE = /as\s+on\s+(\d{1,2})(?:st|nd|rd|th)?[\s-]+([a-z]{3,9})\.?[\s,-]+(\d{4})/i;
+/** "as on 16-10-2026" / "as on 16/10/2026". */
+const AS_ON_NUMERIC_RE = /as\s+on\s+(\d{1,2})[./-](\d{1,2})[./-](\d{4})/i;
+
+/**
+ * When the HMIS export was taken: the "Data Item wise report" title row reads
+ * "(Data as on 16th October 2026 15:57:58 PM)", and the portal names the file
+ * the same way. "YYYY-MM-DD", or null when neither says.
+ */
+function findDataAsOn(rawRows: string[][], fileName: string): string | null {
+  const texts = [...rawRows.slice(0, LEGACY_HEADER_SEARCH_ROWS).flat(), fileName];
+  for (const text of texts) {
+    let day: number;
+    let month: number;
+    let year: number;
+    const named = AS_ON_NAMED_RE.exec(text ?? '');
+    const numeric = named ? null : AS_ON_NUMERIC_RE.exec(text ?? '');
+    if (named) {
+      day = Number(named[1]);
+      month = MONTH_NAMES.indexOf(named[2].slice(0, 3).toLowerCase()) + 1;
+      year = Number(named[3]);
+    } else if (numeric) {
+      day = Number(numeric[1]);
+      month = Number(numeric[2]);
+      year = Number(numeric[3]);
+    } else {
+      continue;
+    }
+    if (month < 1 || month > 12 || day < 1 || day > 31) continue;
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  return null;
+}
+
 function hasRequiredHeaders(rawHeader: string[]): boolean {
   const header = rawHeader.map((h) => stripBOM(h.trim()));
   const norm = header.map(normalizeHeader);
@@ -336,5 +372,6 @@ function processRawRows(rawRows: string[][], fileName: string): ParsedCSV {
     stateName,
     distName,
     fileName,
+    dataAsOn: findDataAsOn(rawRows, fileName),
   };
 }

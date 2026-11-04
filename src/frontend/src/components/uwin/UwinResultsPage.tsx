@@ -18,6 +18,7 @@ import { ScoreStrip, type ScoreStripRow } from "../dqa/ScoreStrip";
 import { componentCoverageNote, SCORING_METHOD_VERSION } from "../../lib/dqa/scoring";
 import {
   buildSnapshotSaveMeta,
+  pickPreviousPeriodReview,
   pickReviewBaselines,
   type ReviewBaseline,
   type SnapshotRecord,
@@ -203,9 +204,12 @@ export function UwinResultsPage({
     savedMeta.periodStart && savedMeta.periodEnd
       ? { start: savedMeta.periodStart, end: savedMeta.periodEnd }
       : null;
-  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, {
+  const viewScope = {
     kpiData: { dqaLevel: savedLevel, block: savedBlock, scope: stateScope(viewMeta.scope) },
-  });
+  };
+  const baselines: ReviewBaseline[] = pickReviewBaselines(savedReviews, currentPeriod, viewScope);
+  // The brief's "+2.9 vs Jan to Mar 2026" line compares with the period before this one.
+  const previousPeriodReview = pickPreviousPeriodReview(savedReviews, currentPeriod, viewScope);
   const saveModeLabel = saveMode === "subcenter" ? "Sub Center-wise" : "Facility-wise";
 
   useEffect(() => {
@@ -404,7 +408,7 @@ export function UwinResultsPage({
                   disabled={generatingReport}
                   onClick={async () => {
                     setGeneratingReport(true);
-                    try { await downloadUwinDqaReport(csv, kpis); }
+                    try { await downloadUwinDqaReport(csv, kpis, previousPeriodReview); }
                     finally { setGeneratingReport(false); }
                   }}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
