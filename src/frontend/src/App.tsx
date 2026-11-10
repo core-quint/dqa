@@ -17,6 +17,7 @@ import { StateHmisResultsPage } from "./components/stateHmis/StateHmisResultsPag
 import { PctsLandingPage } from "./components/pcts/PctsLandingPage";
 import { PctsResultsPage } from "./components/pcts/PctsResultsPage";
 import { canUseHmis, canUsePcts } from "./lib/pcts/access";
+import { canUseInsights } from "./lib/insightsAccess";
 
 function AppContent() {
   const {
@@ -67,15 +68,16 @@ function AppContent() {
   const isPctsRoute = appState === "pcts-landing" || appState === "pcts-results";
   const hasHmisAccess = canUseHmis(auth);
   const hasPctsAccess = canUsePcts(auth);
+  const isRestrictedRoute =
+    (isHmisRoute && !hasHmisAccess) ||
+    (isPctsRoute && !hasPctsAccess) ||
+    (appState === "insights" && !canUseInsights(auth));
 
   useEffect(() => {
-    if (
-      auth &&
-      ((isHmisRoute && !hasHmisAccess) || (isPctsRoute && !hasPctsAccess))
-    ) {
+    if (auth && isRestrictedRoute) {
       setAppState("portal");
     }
-  }, [auth, hasHmisAccess, hasPctsAccess, isHmisRoute, isPctsRoute, setAppState]);
+  }, [auth, isRestrictedRoute, setAppState]);
 
   useEffect(() => {
     if (!auth || hasHmisAccess) return;
@@ -107,7 +109,7 @@ function AppContent() {
     );
   }
 
-  if ((isHmisRoute && !hasHmisAccess) || (isPctsRoute && !hasPctsAccess)) {
+  if (isRestrictedRoute) {
     return null;
   }
 

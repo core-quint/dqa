@@ -14,6 +14,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useAppContext } from "../../context/AppContext";
+import { canUseInsights } from "../../lib/insightsAccess";
 import { computeKpis } from "../../lib/dqa/computeKpis";
 import { computeUwinKpis, standardAnalysisMode } from "../../lib/uwin/computeKpis";
 import { DEFAULT_FILTERS, UWIN_DEFAULT_FILTERS } from "../../lib/dqa/constants";
@@ -226,7 +227,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
       hasChildren: false,
       onClick: () => setAppState("coverage"),
     },
-  ];
+  ].filter((item) => item.key !== "insights" || canUseInsights(auth));
 
   function openGroup(group: (typeof groupItems)[number]) {
     if (portal === "U-WIN") { setUwinActiveGroup(group.id); setAppState("uwin-results"); return; }
