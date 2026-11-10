@@ -35,7 +35,7 @@ if (empty($_SESSION['dqa_gateway'])) {
    data / redirect, so this is safe.
    ================================================================== */
 function dqa_tool_cleanup_session(){
-	$dqa_keys = array('csv_header','csv_norm','csv_rows','idxBlock','idxFac','idxMonth','idxOwner','idxRU','idxState','idxDist','idxSubCentre','file_name','file_names','filters','hasApplied','just_uploaded','exports','pink_fac_sets','pink_outlier_hits','pink_dropout_hits','pink_repeat_hits','allMonthsMap','drop_pair_map','incons_pair_map','dqa_access_granted','dqa_last_seen','dqa_log_id','dqa_log_state','dqa_launch','dqa_launch_logid','dqa_hl','dqa_upload_id','dqa_upload_tool','dqa_upload_sig','dqa_render_id');
+	$dqa_keys = array('csv_header','csv_norm','csv_rows','idxBlock','idxFac','idxMonth','idxOwner','idxRU','idxState','idxDist','idxSubCentre','file_name','file_names','filters','hasApplied','just_uploaded','exports','pink_fac_sets','pink_outlier_hits','pink_dropout_hits','pink_repeat_hits','allMonthsMap','drop_pair_map','incons_pair_map','dqa_access_granted','dqa_last_seen','dqa_log_id','dqa_log_state','dqa_launch','dqa_launch_logid','dqa_hl','dqa_upload_id','dqa_upload_tool','dqa_upload_sig','dqa_render_id','uwx_periods','uwx_duration');
 	foreach($dqa_keys as $dqa_k){ unset($_SESSION[$dqa_k]); }
 }
 function dqa_idle_script(){
@@ -125,6 +125,14 @@ $_SESSION['dqa_last_seen'] = time();
  *    Additional Inconsistencies pairs generate corresponding KPI cards + charts + tables + exports.
  *
  * EVERYTHING ELSE KEPT THE SAME.
+ *
+ * (changed 2026-11) WEB PARITY - the analysis is the DQA web application's U-WIN analysis
+ * (web parity engine, uwx_* functions): Weekly / Monthly upload with the From - To dates of
+ * every file; units Sub Center-wise by default, or Facility-wise / Session Site-wise (Analysis
+ * level switch); the same checks, rules, weights (scoring method v8) and Overall Score as the
+ * web application's U-WIN portal. "Download Report" (the former "Download to PDF") saves the
+ * web application's two-page DQA brief (assets/report/dqa_brief_report.js); the 2-pager test
+ * button, the "Download Word" export and "Public facilities reporting Typhoid" were removed.
  */
 
 
@@ -607,20 +615,16 @@ function display_block_label($b){
    $GLOBALS['DQA_HAS_FAC'] is set once, right after the facility
    column index is resolved, and drives all of the helpers below.
    ================================================================== */
-function dqa_has_fac(){ return !empty($GLOBALS['DQA_HAS_FAC']); }
-function dqa_id_head(){ return dqa_has_fac() ? ['LGD Block Name','Health Facility Name','Session Site Name'] : ['LGD Block Name','Session Site Name']; }
-function dqa_id_blank(){ return dqa_has_fac() ? ['','',''] : ['','']; }
-function dqa_id_row($block,$fac,$sess){ return dqa_has_fac() ? [$block,$fac,$sess] : [$block,$sess]; }
-function dqa_id_th(){
-	echo "<th rowspan='2'>LGD Block Name</th>";
-	if(dqa_has_fac()) echo "<th rowspan='2'>Health Facility Name</th>";
-	echo "<th rowspan='2'>Session Site Name</th>";
-}
-function dqa_id_td($block,$fac,$sess){
-	echo "<td>".h($block)."</td>";
-	if(dqa_has_fac()) echo "<td>".h($fac)."</td>";
-	echo "<td>".h($sess)."</td>";
-}
+/* (changed 2026-11, web parity) identity columns of the analysis level on screen:
+   LGD Block Name + Health Facility Name, + Sub Center Name (Sub Center-wise) or + Session
+   Site Name (Session Site-wise). $GLOBALS['DQA_MODE'] is set by render_results_with_data(). */
+function dqa_mode(){ return isset($GLOBALS['DQA_MODE']) ? (string)$GLOBALS['DQA_MODE'] : 'facility'; }
+function dqa_has_fac(){ return true; }
+function dqa_id_head(){ $h = ['LGD Block Name','Health Facility Name']; if(dqa_mode()==='subcenter') $h[] = 'Sub Center Name'; elseif(dqa_mode()==='sessionsite') $h[] = 'Session Site Name'; return $h; }
+function dqa_id_blank(){ return array_fill(0, count(dqa_id_head()), ''); }
+function dqa_id_row($block,$fac,$sess){ $r = [$block,$fac]; if(dqa_mode()!=='facility') $r[] = $sess; return $r; }
+function dqa_id_th(){ foreach(dqa_id_head() as $hh){ echo "<th rowspan='2'>".h($hh)."</th>"; } }
+function dqa_id_td($block,$fac,$sess){ foreach(dqa_id_row($block,$fac,$sess) as $vv){ echo "<td>".h($vv)."</td>"; } }
 /* Identifier columns that must never be treated as numeric indicators,
    even if a future export places them after the Month column. */
 function dqa_is_non_indicator_col($hdr){
@@ -1123,6 +1127,1320 @@ function dqa_uwin_find_col_compact($header, $forms){
 	return null;
 }
 
+/* ==================================================================
+   (added 2026-11) WEB PARITY ENGINE - U-WIN
+   ------------------------------------------------------------------
+   Line-by-line port of the DQA web application's U-WIN analysis, so this
+   tool gives the same units, indicators and Overall Score as the web
+   application's U-WIN portal for the same files:
+     - src/lib/dqa/parseUtils.ts      header / number / period helpers (uwx_*)
+     - src/lib/uwin/uploadPeriod.ts   Weekly / Monthly reporting-period rules
+     - src/lib/uwin/csvParser.ts      two-row header, period stamping, merge, units
+     - src/lib/uwin/computeKpis.ts    every check, at facility / sub center /
+                                      session site level (uwx_compute)
+     - src/lib/dqa/checkRules.ts, coadmin.ts (dqa_* below, shared with dqahmis.php)
+     - src/lib/dqa/weightedScoring.ts U-WIN weights, scoring method v8
+   Blank cells stay blank (never read as 0). Names and rules follow the web
+   application exactly; only the screens of this tool are its own.
+   ================================================================== */
+
+/* ---------- checkRules.ts / coadmin.ts (same code as dqahmis.php) ---------- */
+function dqa_mom_change($prev, $curr){
+	if($prev === null || $curr === null || $prev < 0) return null;
+	$small = (max($prev, $curr) < 10);
+	if($prev == 0) return $small ? null : array('pct'=>null, 'fromZero'=>true, 'small'=>false);
+	return array('pct'=>round(($curr - $prev) / $prev * 100, 9), 'fromZero'=>false, 'small'=>$small);
+}
+function dqa_outlier_band($ch){
+	if(!empty($ch['fromZero'])) return 'INC_EXT';
+	$p = $ch['pct'];
+	if($p === null) return null;
+	$f = !empty($ch['small']) ? 2 : 1;
+	if($p > 100 * $f) return 'INC_EXT';
+	if($p >= 50 * $f) return 'INC_MOD';
+	if($p >= 25 * $f) return 'INC_LOW';
+	if(!empty($ch['small'])) return null;
+	if($p <= -75) return 'DROP_EXT';
+	if($p <= -50) return 'DROP_MOD';
+	if($p <= -25) return 'DROP_LOW';
+	return null;
+}
+function dqa_dropout_pct($from, $to){
+	if($from === null || $to === null || $from <= 0) return null;
+	return round(($from - $to) / $from * 100, 9);
+}
+function dqa_dropout_range($pct){
+	if($pct === null) return null;
+	if($pct >= 20) return 'R20P';
+	if($pct >= 10) return 'R11_20';
+	if($pct >= 5) return 'R5_10';
+	return null;
+}
+function dqa_later_dose_exceeds($earlier, $later){
+	if($earlier === null || $later === null) return null;
+	if($earlier <= 0) return ($later >= 10);
+	$allowed = (max($earlier, $later) < 10) ? 50 : 25;
+	return ($later - $earlier) * 100 > $allowed * $earlier;
+}
+function dqa_dose_excess_label($earlier, $later){
+	if($earlier <= 0) return 'from 0';
+	$pct = ($later - $earlier) / $earlier * 100;
+	return ($pct > 0 ? '+' : '').number_format($pct, 1, '.', '').'%';
+}
+/* vaccines of a co-administration group out of range in one period (coadmin.ts coadminAssess) */
+function dqa_coadmin_out_of_range($vals){
+	$present = array();
+	foreach((array)$vals as $vx=>$v){ if($v !== null) $present[$vx] = (float)$v; }
+	if(count($present) < 2) return array();
+	$cnt = array(); $valOf = array();
+	foreach($present as $v){
+		$k = sprintf('%.10F', $v);
+		$cnt[$k] = isset($cnt[$k]) ? $cnt[$k] + 1 : 1;
+		$valOf[$k] = $v;
+	}
+	$max = max($cnt);
+	$modes = array_keys($cnt, $max, true);
+	$ref = null;
+	if($max > 1 && count($modes) === 1) $ref = $valOf[$modes[0]];
+	if($ref === null){ foreach($present as $vx=>$v){ if(stripos(trim((string)$vx), 'penta') === 0){ $ref = $v; break; } } }
+	if($ref === null){ foreach($present as $vx=>$v){ if(preg_match('/^mr\s*\d/i', trim((string)$vx))){ $ref = $v; break; } } }
+	if($ref === null){
+		$s = array_values($present); sort($s); $n = count($s); $mid = (int)floor($n / 2);
+		$ref = ($n % 2 === 1) ? $s[$mid] : ($s[$mid - 1] + $s[$mid]) / 2;
+	}
+	$allowed = ($ref < 10) ? 50 : 25;
+	$out = array();
+	foreach($present as $vx=>$v){
+		$bad = ($ref <= 0) ? ($v >= 10) : (abs($v - $ref) * 100 > $allowed * $ref);
+		if($bad) $out[$vx] = true;
+	}
+	return $out;
+}
+/* "All periods" totals of a co-administration row (coadmin.ts coadminMatchedTotals) */
+function dqa_coadmin_matched_totals($valsByMonth, $vaccines){
+	$reported = array();
+	foreach($vaccines as $vx){
+		foreach($valsByMonth as $row){ if(isset($row[$vx])){ $reported[] = $vx; break; } }
+	}
+	$tot = array();
+	foreach($vaccines as $vx){ $tot[$vx] = null; }
+	if(count($reported) < 2){
+		foreach($reported as $vx){
+			$s = 0;
+			foreach($valsByMonth as $row){ if(isset($row[$vx])) $s += $row[$vx]; }
+			$tot[$vx] = $s;
+		}
+		return $tot;
+	}
+	foreach($valsByMonth as $row){
+		$ok = true;
+		foreach($reported as $vx){ if(!isset($row[$vx])){ $ok = false; break; } }
+		if(!$ok) continue;
+		foreach($reported as $vx){ $tot[$vx] = ($tot[$vx] === null ? 0 : $tot[$vx]) + $row[$vx]; }
+	}
+	return $tot;
+}
+
+/* ---------- weightedScoring.ts: U-WIN weights (scoring method v8) ---------- */
+function uwx_weight_table($periodCount){
+	$t = array();
+	$add = function($comp, $grp, $w, $checks) use (&$t){
+		foreach($checks as $c){ $t[] = array('id'=>$c[0], 'name'=>$c[1], 'comp'=>$comp, 'grp'=>$grp, 'w'=>$w / count($checks)); }
+	};
+	$co = array(array('co1','Co-administration — 6 weeks'), array('co2','Co-administration — 10 weeks'), array('co3','Co-administration — 14 weeks'), array('co4','Co-administration — 9 months'), array('co5','Co-administration — 2 years'));
+	$add('availability', 'All checks', 100 / 3, array(array('t0','Indicators having 0 values but not blank'), array('t7','Indicators with same values'), array('t9','Zero coverage session')));
+	if($periodCount >= 2){
+		$add('accuracy', 'Sessions', 100 / 9, array(array('t6','Planned but not held'), array('t8','Avg Beneficiaries per Session < 5')));
+		$add('accuracy', 'Outliers', 100 / 9, array(array('t3','Outliers')));
+		$add('accuracy', 'Dropouts', 100 / 9, array(array('drop_penta1_penta3','Dropouts — Penta1→Penta3'), array('drop_mr1_mr2','Dropouts — MR1→MR2'), array('drop_penta3_mr1','Dropouts — Penta3→MR1')));
+	} else {
+		$add('accuracy', 'Sessions', 100 / 3, array(array('t6','Planned but not held'), array('t8','Avg Beneficiaries per Session < 5')));
+	}
+	$add('consistency', 'Inconsistencies', 50 / 3, array(array('i1','Inconsistencies — Penta3>Penta1'), array('i2','Inconsistencies — MR2>MR1')));
+	$add('consistency', 'Co-administration', 50 / 3, $co);
+	return $t;
+}
+/* weighted score (weightedScoring.ts scoreWeighted); $cards = id => ['flagged','eligible','name'] */
+function uwx_weighted_score($cards, $den, $periodCount){
+	$rows = uwx_weight_table($periodCount);
+	$den = ($den > 0) ? $den : 0;
+	$gBase = array(); $gRun = array();
+	foreach($rows as $i=>$r){
+		$c = isset($cards[$r['id']]) ? $cards[$r['id']] : null;
+		$run = ($den > 0 && $c !== null && (int)$c['eligible'] > 0);
+		if($c !== null && isset($c['name']) && (string)$c['name'] !== '') $rows[$i]['name'] = (string)$c['name'];
+		$rows[$i]['flagged'] = ($c !== null) ? (int)$c['flagged'] : null;
+		$rows[$i]['eligible'] = ($c !== null) ? (int)$c['eligible'] : 0;
+		$rows[$i]['run'] = $run;
+		$rows[$i]['score'] = $run ? max(0.0, 100.0 - ((float)$c['flagged'] / $den) * 100.0) : null;
+		$rows[$i]['used'] = 0.0;
+		$rows[$i]['points'] = null;
+		$gk = $r['comp'].'|'.$r['grp'];
+		$gBase[$gk] = (isset($gBase[$gk]) ? $gBase[$gk] : 0) + $r['w'];
+		if($run) $gRun[$gk] = (isset($gRun[$gk]) ? $gRun[$gk] : 0) + $r['w'];
+	}
+	$cBase = array(); $cRun = array();
+	foreach($gBase as $gk=>$w){
+		$parts = explode('|', $gk); $comp = $parts[0];
+		$cBase[$comp] = (isset($cBase[$comp]) ? $cBase[$comp] : 0) + $w;
+		if(!empty($gRun[$gk])) $cRun[$comp] = (isset($cRun[$comp]) ? $cRun[$comp] : 0) + $w;
+	}
+	$tRun = 0;
+	foreach($cBase as $comp=>$w){ if(!empty($cRun[$comp])) $tRun += $w; }
+	$overall = 0.0; $cW = array(); $cP = array();
+	foreach($rows as $i=>$r){
+		if(!$r['run'] || $tRun <= 0) continue;
+		$gk = $r['comp'].'|'.$r['grp'];
+		$used = $r['w'] * ($gBase[$gk] / $gRun[$gk]) * ($cBase[$r['comp']] / $cRun[$r['comp']]) * (100 / $tRun);
+		$pts = $used * $r['score'] / 100;
+		$rows[$i]['used'] = $used;
+		$rows[$i]['points'] = $pts;
+		$overall += $pts;
+		$cW[$r['comp']] = (isset($cW[$r['comp']]) ? $cW[$r['comp']] : 0) + $used;
+		$cP[$r['comp']] = (isset($cP[$r['comp']]) ? $cP[$r['comp']] : 0) + $pts;
+	}
+	$comps = array(); $compWeights = array();
+	foreach(array('availability', 'accuracy', 'consistency') as $comp){
+		$comps[$comp] = !empty($cW[$comp]) ? round($cP[$comp] * 100 / $cW[$comp], 9) : null;
+		$compWeights[$comp] = !empty($cW[$comp]) ? $cW[$comp] : 0;
+	}
+	return array('overall'=>($tRun > 0 ? round($overall, 9) : null), 'components'=>$comps, 'componentWeights'=>$compWeights, 'checks'=>$rows, 'periodCount'=>(int)$periodCount);
+}
+
+/* ---------- parseUtils.ts ---------- */
+function uwx_strip_bom($s){ $s = (string)$s; return (strncmp($s, "\xEF\xBB\xBF", 3) === 0) ? substr($s, 3) : $s; }
+/* String.prototype.trim (Unicode white space and the BOM) */
+function uwx_trim($s){
+	$s = (string)$s;
+	$t = preg_replace('/^[\s\x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+|[\s\x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+$/u', '', $s);
+	return ($t === null) ? trim($s) : $t;
+}
+function uwx_lower($s){ return function_exists('mb_strtolower') ? mb_strtolower((string)$s, 'UTF-8') : strtolower((string)$s); }
+function uwx_loose($s){
+	$v = uwx_strip_bom((string)$s);
+	$v = str_replace("\xC2\xA0", ' ', $v);
+	$u = preg_replace('/[\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2060}-\x{206F}]/u', '', $v);
+	if($u !== null){
+		$v = preg_replace('/[\x{2010}-\x{2015}\x{2212}\x{FE58}\x{FE63}\x{FF0D}]/u', '-', $u);
+	}
+	$v = preg_replace('/[\r\n\t]+/', ' ', $v);
+	$v = uwx_trim($v);
+	$w = preg_replace('/[\s\x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+/u', ' ', $v);
+	if($w === null) $w = preg_replace('/\s+/', ' ', $v);
+	return uwx_lower($w);
+}
+function uwx_norm($s){ return uwx_loose($s); }
+function uwx_compact($s){ return preg_replace('/[^a-z0-9]+/', '', uwx_norm($s)); }
+function uwx_fac_key($s){ $s = str_replace("\xC2\xA0", ' ', uwx_strip_bom((string)$s)); return uwx_lower(uwx_trim($s)); }
+function uwx_ownership($v){
+	$s = uwx_lower(uwx_trim($v));
+	if($s === '') return '';
+	if(strpos($s, 'pub') === 0 || strpos($s, 'government') !== false || strpos($s, 'govt') !== false) return 'Public';
+	if(strpos($s, 'pri') === 0 || strpos($s, 'pvt') !== false || strpos($s, 'private') !== false) return 'Private';
+	return mb_strtoupper(mb_substr($s, 0, 1, 'UTF-8'), 'UTF-8').mb_substr($s, 1, null, 'UTF-8');
+}
+function uwx_ru($v){
+	$s = uwx_lower(uwx_trim($v));
+	if($s === '') return '';
+	if(strpos($s, 'rur') === 0) return 'Rural';
+	if(strpos($s, 'urb') === 0) return 'Urban';
+	return mb_strtoupper(mb_substr($s, 0, 1, 'UTF-8'), 'UTF-8').mb_substr($s, 1, null, 'UTF-8');
+}
+/* asNumOrNull: blank / NA / N/A / null / - and text without a number = blank */
+function uwx_num($v){
+	if($v === null) return null;
+	$s = uwx_trim(str_replace("\xC2\xA0", ' ', uwx_strip_bom((string)$v)));
+	if($s === '') return null;
+	$low = uwx_lower($s);
+	if($low === 'na' || $low === 'n/a' || $low === 'null' || $low === '-') return null;
+	$s = str_replace(',', '', $s);
+	$s = preg_replace('/(?<=\d)\s+(?=\d)/', '', $s);
+	if(preg_match('/^[+-]?\d+(?:\.\d+)?$/', $s)) return (float)$s;
+	if(!preg_match('/[+-]?\d+(?:\.\d+)?/', $s, $m)) return null;
+	return (float)$m[0];
+}
+function uwx_array_search_first($normHeaders, $candidates){
+	foreach($candidates as $cand){
+		$cn = uwx_norm($cand);
+		foreach($normHeaders as $i=>$h){ if($h === $cn) return $i; }
+	}
+	return null;
+}
+function uwx_find_contains_any($rawHeader, $needles){
+	$norm = array(); foreach($rawHeader as $h){ $norm[] = uwx_norm($h); }
+	foreach($needles as $needle){
+		$nn = uwx_norm($needle);
+		foreach($norm as $i=>$h){
+			if($h === $nn) return $i;
+			if($nn !== '' && strpos($h, $nn) !== false) return $i;
+		}
+	}
+	return null;
+}
+function uwx_find_block($rawHeader){
+	$norm = array(); $compact = array();
+	foreach($rawHeader as $h){ $norm[] = uwx_norm($h); $compact[] = uwx_compact($h); }
+	foreach(array('lgd block name','lgd_block_name','lgd block','lgdblockname') as $c){
+		$cn = uwx_norm($c); $cc = uwx_compact($c);
+		foreach($norm as $i=>$h){ if($h === $cn || $compact[$i] === $cc) return $i; }
+	}
+	foreach($compact as $i=>$c){ if(strpos($c, 'lgdblockname') !== false || strpos($c, 'lgdblock') !== false) return $i; }
+	foreach($norm as $i=>$h){ if(strpos($h, 'lgd') !== false && strpos($h, 'block') !== false) return $i; }
+	foreach(array('block name','health block name','block') as $c){
+		$cn = uwx_norm($c); $cc = uwx_compact($c);
+		foreach($norm as $i=>$h){ if($h === $cn || $compact[$i] === $cc) return $i; }
+	}
+	foreach($norm as $i=>$h){ if(strpos($h, 'block') !== false) return $i; }
+	return null;
+}
+function uwx_find_facility($rawHeader){
+	$norm = array(); $compact = array();
+	foreach($rawHeader as $h){ $norm[] = uwx_norm($h); $compact[] = uwx_compact($h); }
+	foreach(array('health facility name','health_facility_name','facility name','facility_name') as $c){
+		$cn = uwx_norm($c); $cc = uwx_compact($c);
+		foreach($norm as $i=>$h){ if($h === $cn || $compact[$i] === $cc) return $i; }
+	}
+	foreach($norm as $i=>$h){ if(strpos($h, 'facility') !== false && strpos($h, 'name') !== false) return $i; }
+	return null;
+}
+function uwx_find_month($rawHeader){
+	$norm = array(); foreach($rawHeader as $h){ $norm[] = uwx_norm($h); }
+	foreach(array('month','reporting month','month name') as $c){
+		foreach($norm as $i=>$h){ if($h === $c) return $i; }
+	}
+	foreach($norm as $i=>$h){ if(strpos($h, 'month') !== false) return $i; }
+	return null;
+}
+function uwx_find_by_code($headers, $code){
+	if(preg_match('/\d+\.\d+/', $code)){
+		$esc = str_replace('.', '\\.', rtrim($code, '.'));
+		$pat = '/^\s*'.$esc.'\.?\s*(?::{1,2}|-|\x{2014})?\s*/ui';
+		foreach($headers as $i=>$h){ if(preg_match($pat, uwx_strip_bom(uwx_trim($h)))) return $i; }
+		return null;
+	}
+	$needle = uwx_norm($code);
+	foreach($headers as $i=>$h){ if(uwx_norm($h) === $needle) return $i; }
+	foreach($headers as $i=>$h){ if(strpos(uwx_norm($h), $needle) !== false) return $i; }
+	return null;
+}
+function uwx_textual_short($headerOriginal){
+	static $shorts = array('bcg'=>'BCG','hepb0'=>'HepB0','hepb'=>'HepB0','opv0'=>'OPV0','opv1'=>'OPV1','opv2'=>'OPV2','opv3'=>'OPV3',
+		'opvbooster'=>'OPV Booster','penta1'=>'Penta1','penta2'=>'Penta2','penta3'=>'Penta3','rvv1'=>'RVV1','rvv2'=>'RVV2','rvv3'=>'RVV3',
+		'ipv1'=>'IPV1','ipv2'=>'IPV2','ipv3'=>'IPV3','fipv1'=>'IPV1','fipv2'=>'IPV2','fipv3'=>'IPV3','pcv1'=>'PCV1','pcv2'=>'PCV2',
+		'pcvbooster'=>'PCV Booster','mr1'=>'MR1','mr2'=>'MR2','je1'=>'JE1','je2'=>'JE2','dpt1'=>'DPT1','dpt2'=>'DPT2','dpt3'=>'DPT3',
+		'dpt1stbooster'=>'DPT 1st Booster','dptbooster1'=>'DPT 1st Booster','dptb1'=>'DPT 1st Booster','dptbooster2'=>'DPT Booster 2',
+		'dptb2'=>'DPT Booster 2','mmr'=>'MMR','typhoid'=>'Typhoid');
+	$original = uwx_trim(uwx_strip_bom($headerOriginal));
+	if($original === '') return null;
+	$segs = preg_split('/\s*::\s*/u', $original);
+	if($segs === false) $segs = array($original);
+	foreach($segs as $segment){
+		$part = uwx_loose($segment);
+		if($part === '') continue;
+		$compact = uwx_compact($part);
+		$np = preg_replace('/^children vaccinated with\s+/u', '', $part);
+		$compactNoPrefix = uwx_compact($np === null ? $part : $np);
+		if(isset($shorts[$compact])) return $shorts[$compact];
+		if(isset($shorts[$compactNoPrefix])) return $shorts[$compactNoPrefix];
+		$t = function($re) use ($part){ return (bool)preg_match($re, $part); };
+		if($t('/\bbcg\b/u')) return 'BCG';
+		if($t('/\bhepb0\b/u') || $t('/\bhep\s*[- ]?b\s*0\b/u')) return 'HepB0';
+		if($t('/\bchildren\b.*\bvaccinated\b.*\bhep\s*[- ]?b\b/u') || $t('/\bhep\s*[- ]?b\b/u')) return 'HepB0';
+		if($t('/\bopv\b.*\bbooster\b/u')) return 'OPV Booster';
+		if($t('/\bopv\s*[- ]?\s*0\b/u')) return 'OPV0';
+		if($t('/\bopv\s*[- ]?\s*1\b/u')) return 'OPV1';
+		if($t('/\bopv\s*[- ]?\s*2\b/u')) return 'OPV2';
+		if($t('/\bopv\s*[- ]?\s*3\b/u')) return 'OPV3';
+		if($t('/\bpenta\s*[- ]?\s*1\b/u')) return 'Penta1';
+		if($t('/\bpenta\s*[- ]?\s*2\b/u')) return 'Penta2';
+		if($t('/\bpenta\s*[- ]?\s*3\b/u')) return 'Penta3';
+		if($t('/\brvv\s*[- ]?\s*1\b/u')) return 'RVV1';
+		if($t('/\brvv\s*[- ]?\s*2\b/u')) return 'RVV2';
+		if($t('/\brvv\s*[- ]?\s*3\b/u')) return 'RVV3';
+		if($t('/\b(?:f?ipv)\s*[- ]?\s*1\b/u')) return 'IPV1';
+		if($t('/\b(?:f?ipv)\s*[- ]?\s*2\b/u')) return 'IPV2';
+		if($t('/\b(?:f?ipv)\s*[- ]?\s*3\b/u')) return 'IPV3';
+		if($t('/\bpcv\b.*\bbooster\b/u')) return 'PCV Booster';
+		if($t('/\bpcv\s*[- ]?\s*1\b/u')) return 'PCV1';
+		if($t('/\bpcv\s*[- ]?\s*2\b/u')) return 'PCV2';
+		if($t('/\bmr\s*[- ]?\s*1\b/u')) return 'MR1';
+		if($t('/\bmr\s*[- ]?\s*2\b/u')) return 'MR2';
+		if($t('/\bje\s*[- ]?\s*1(?:st)?\b/u')) return 'JE1';
+		if($t('/\b(?:je|japanese encephalitis)\b.*\b1st\s+dose\b/u')) return 'JE1';
+		if($t('/\bje\s*[- ]?\s*2(?:nd)?\b/u')) return 'JE2';
+		if($t('/\b(?:je|japanese encephalitis)\b.*\b2nd\s+dose\b/u')) return 'JE2';
+		if($t('/\bdpt\b.*\bbooster\b.*\b1\b/u')) return 'DPT 1st Booster';
+		if($t('/\bdpt\b.*\bbooster\b.*\b2\b/u')) return 'DPT Booster 2';
+		if($t('/\bdpt\s*[- ]?\s*1\b/u')) return 'DPT1';
+		if($t('/\bdpt\s*[- ]?\s*2\b/u')) return 'DPT2';
+		if($t('/\bdpt\s*[- ]?\s*3\b/u')) return 'DPT3';
+		if($t('/\bmmr\b/u')) return 'MMR';
+		if($t('/\btyphoid\b/u')) return 'Typhoid';
+	}
+	return null;
+}
+/* detectTargetIndicator: array('code'=>..,'short'=>..) or null */
+function uwx_detect_target($headerOriginal){
+	static $targets = array(array('9.1.2','BCG'),array('9.1.3','Penta1'),array('9.1.4','Penta2'),array('9.1.5','Penta3'),array('9.1.7','OPV1'),
+		array('9.1.8','OPV2'),array('9.1.9','OPV3'),array('9.2.2','MR1'),array('9.4.1','MR2'),array('9.1.13','RVV1'),array('9.1.14','RVV2'),
+		array('9.1.15','RVV3'),array('9.1.11','IPV1'),array('9.1.12','IPV2'),array('9.2.1','IPV3'),array('9.1.16','PCV1'),array('9.2.3','JE1'),
+		array('9.4.4','JE2'),array('9.1.17','PCV2'),array('9.2.4','PCV Booster'),array('9.1.10','HepB0'),array('9.4.2','DPT 1st Booster'));
+	$h = uwx_trim(uwx_strip_bom($headerOriginal));
+	if($h === '') return null;
+	if(preg_match('/\bdelayed\b/u', uwx_loose($h))) return null;
+	$ts = uwx_textual_short($h);
+	if($ts !== null) return array('code'=>'', 'short'=>$ts);
+	foreach($targets as $t){
+		$esc = str_replace('.', '\\.', $t[0]);
+		if(preg_match('/^\s*'.$esc.'\.?\s*(?::{1,2}|-|\x{2014})?\s*/ui', $h)) return array('code'=>$t[0], 'short'=>$t[1]);
+	}
+	return null;
+}
+/* buildTargetIndicatorMap: a column whose own text names the vaccine outranks a code match; earliest wins ties */
+function uwx_target_map($header, $startIdx){
+	$map = array(); $tier = array(); $indices = array();
+	for($i = $startIdx; $i < count($header); $i++){
+		$det = uwx_detect_target($header[$i]);
+		if(!$det) continue;
+		$indices[] = $i;
+		$t = ($det['code'] === '') ? 2 : 1;
+		if(!isset($map[$det['short']]) || $t > $tier[$det['short']]){ $map[$det['short']] = $i; $tier[$det['short']] = $t; }
+	}
+	return array('map'=>$map, 'indices'=>$indices);
+}
+function uwx_short_from_header($headerOriginal){
+	$h = uwx_strip_bom(uwx_trim($headerOriginal));
+	$low = uwx_loose($h);
+	$det = uwx_detect_target($h);
+	if($det) return $det['short'];
+	if(strpos($low, 'fully immuniz') !== false || strpos($low, 'fully immunis') !== false){
+		if(strpos($low, 'female') !== false) return 'FIC-F';
+		if(strpos($low, 'male') !== false) return 'FIC-M';
+		if(strpos($low, 'total') !== false) return 'FIC-Total';
+	}
+	if(preg_match('/^\s*([0-9]+(?:\.[0-9]+)+(?:\.[a-z])?)\s*/i', $h, $m)) return strtoupper($m[1]);
+	$tok = preg_replace('/[^A-Za-z0-9]+/', '', preg_replace('/\s+/u', '', $h));
+	if($tok !== '' && $tok !== null) return substr($tok, 0, 12);
+	return 'IND';
+}
+function uwx_display_block($b){ $b = uwx_trim($b); return ($b === '') ? 'Unknown block' : $b; }
+function uwx_safe_key($s){
+	$s = preg_replace('/[\x{2192}\x{2014}\x{2013}><:\/\\\\|?*"\',;()\[\]{}]/u', '_', (string)$s);
+	$s = preg_replace('/\s+/u', '_', $s);
+	$s = preg_replace('/[^A-Za-z0-9_-]+/', '_', $s);
+	$s = strtolower(preg_replace('/^_+|_+$/', '', $s));
+	return ($s === '') ? 'key' : $s;
+}
+
+/* ---------- reporting periods (parseUtils.ts) ---------- */
+function uwx_is_month_key($k){ return (bool)preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', trim((string)$k)); }
+function uwx_iso_day_ok($d){ return (bool)preg_match('/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/', (string)$d); }
+function uwx_parse_range($k){
+	if(!preg_match('/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/', trim((string)$k), $m)) return null;
+	if(!uwx_iso_day_ok($m[1]) || !uwx_iso_day_ok($m[2])) return null;
+	return array('from'=>$m[1], 'to'=>$m[2]);
+}
+function uwx_is_range_key($k){ return (bool)preg_match('/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/', trim((string)$k)); }
+function uwx_month_end_day($ym){
+	$p = explode('-', (string)$ym);
+	if(count($p) < 2 || (int)$p[0] <= 0 || (int)$p[1] <= 0) return $ym;
+	return sprintf('%s-%02d', $ym, (int)gmdate('t', gmmktime(0, 0, 0, (int)$p[1], 1, (int)$p[0])));
+}
+function uwx_make_period_key($from, $to){
+	$s = trim((string)$from); $e = trim((string)$to);
+	if(!uwx_iso_day_ok($s) || !uwx_iso_day_ok($e)) return null;
+	if(strcmp($s, $e) > 0) return null;
+	$ym = substr($s, 0, 7);
+	if(substr($e, 0, 7) === $ym && substr($s, -3) === '-01' && $e === uwx_month_end_day($ym)) return $ym;
+	return $s.'..'.$e;
+}
+function uwx_period_day_range($k){
+	$r = uwx_parse_range($k);
+	if($r) return $r;
+	$ym = trim((string)$k);
+	if(!uwx_is_month_key($ym)) return null;
+	return array('from'=>$ym.'-01', 'to'=>uwx_month_end_day($ym));
+}
+function uwx_next_month($ym){ $p = explode('-', $ym); $y = (int)$p[0]; $m = (int)$p[1]; return ($m === 12) ? sprintf('%04d-01', $y + 1) : sprintf('%04d-%02d', $y, $m + 1); }
+function uwx_period_months($k){
+	$r = uwx_period_day_range($k);
+	if(!$r) return array();
+	$end = substr($r['to'], 0, 7); $out = array(); $cur = substr($r['from'], 0, 7);
+	for($g = 0; strcmp($cur, $end) <= 0 && $g < 240; $g++){ $out[] = $cur; $cur = uwx_next_month($cur); }
+	return $out;
+}
+function uwx_utc_day($iso){ $p = explode('-', $iso); return gmmktime(0, 0, 0, (int)$p[1], (int)$p[2], (int)$p[0]); }
+function uwx_periods_consecutive($a, $b){
+	$x = uwx_period_day_range($a); $y = uwx_period_day_range($b);
+	if(!$x || !$y) return false;
+	return (uwx_utc_day($y['from']) - uwx_utc_day($x['to'])) === 86400;
+}
+function uwx_days_span($from, $to){
+	if(!uwx_iso_day_ok($from) || !uwx_iso_day_ok($to)) return null;
+	return (int)round((uwx_utc_day($to) - uwx_utc_day($from)) / 86400) + 1;
+}
+function uwx_months_span($a, $b){
+	$x = explode('-', $a); $y = explode('-', $b);
+	if(count($x) !== 2 || count($y) !== 2) return null;
+	return ((int)$y[0] - (int)$x[0]) * 12 + ((int)$y[1] - (int)$x[1]) + 1;
+}
+function uwx_mon3($iso){ $n = array('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'); $i = (int)substr($iso, 5, 2) - 1; return isset($n[$i]) ? $n[$i] : substr($iso, 5, 2); }
+function uwx_monlong($iso){ $n = array('January','February','March','April','May','June','July','August','September','October','November','December'); $i = (int)substr($iso, 5, 2) - 1; return isset($n[$i]) ? $n[$i] : substr($iso, 5, 2); }
+function uwx_dom($iso){ return (int)substr($iso, 8, 2); }
+/* monthShortLabel: "Apr" / "1-7 Apr" */
+function uwx_month_short_label($ym){
+	$r = uwx_parse_range($ym);
+	if($r){
+		if(substr($r['from'], 0, 7) === substr($r['to'], 0, 7)) return uwx_dom($r['from']).'-'.uwx_dom($r['to']).' '.uwx_mon3($r['from']);
+		return uwx_dom($r['from']).' '.uwx_mon3($r['from']).'-'.uwx_dom($r['to']).' '.uwx_mon3($r['to']);
+	}
+	$p = explode('-', (string)$ym);
+	if(count($p) !== 2) return $ym;
+	$m = (int)$p[1] - 1;
+	if($m < 0 || $m > 11) return $ym;
+	return uwx_mon3('0000-'.$p[1]);
+}
+/* monthYearLabel: "Apr-26" / "1-7 Apr 26" */
+function uwx_month_year_label($ym){
+	$r = uwx_parse_range($ym);
+	if($r){
+		$f = $r['from']; $t = $r['to'];
+		if(substr($f, 0, 7) === substr($t, 0, 7)) return uwx_dom($f).'-'.uwx_dom($t).' '.uwx_mon3($f).' '.substr($f, 2, 2);
+		if(substr($f, 0, 4) === substr($t, 0, 4)) return uwx_dom($f).' '.uwx_mon3($f).' - '.uwx_dom($t).' '.uwx_mon3($t).' '.substr($t, 2, 2);
+		return uwx_dom($f).' '.uwx_mon3($f).' '.substr($f, 2, 2).' - '.uwx_dom($t).' '.uwx_mon3($t).' '.substr($t, 2, 2);
+	}
+	$p = explode('-', (string)$ym);
+	if(count($p) !== 2) return $ym;
+	$m = (int)$p[1] - 1;
+	if($m < 0 || $m > 11) return $ym;
+	return uwx_mon3('0000-'.$p[1]).'-'.sprintf('%02d', ((int)$p[0]) % 100);
+}
+/* monthLongLabel: "April 2026" / "1-7 April 2026" */
+function uwx_month_long_label($ym){
+	$r = uwx_parse_range($ym);
+	if($r){
+		$f = $r['from']; $t = $r['to'];
+		if(substr($f, 0, 7) === substr($t, 0, 7)) return uwx_dom($f).'-'.uwx_dom($t).' '.uwx_monlong($f).' '.substr($f, 0, 4);
+		if(substr($f, 0, 4) === substr($t, 0, 4)) return uwx_dom($f).' '.uwx_mon3($f).' - '.uwx_dom($t).' '.uwx_mon3($t).' '.substr($t, 0, 4);
+		return uwx_dom($f).' '.uwx_mon3($f).' '.substr($f, 0, 4).' - '.uwx_dom($t).' '.uwx_mon3($t).' '.substr($t, 0, 4);
+	}
+	$p = explode('-', (string)$ym);
+	if(count($p) !== 2) return $ym;
+	$m = (int)$p[1] - 1;
+	if($m < 0 || $m > 11) return $ym;
+	return uwx_monlong('0000-'.$p[1]).' '.(int)$p[0];
+}
+/* periodDurationLabel: "2 months" / "2 weeks" / "10 days" */
+function uwx_period_duration_label($keys){
+	$usable = array();
+	foreach((array)$keys as $k){ if(uwx_period_day_range($k) !== null) $usable[] = $k; }
+	if(empty($usable)) return '-';
+	$allMonth = true; foreach($usable as $k){ if(!uwx_is_month_key($k)){ $allMonth = false; break; } }
+	if($allMonth){
+		sort($usable, SORT_STRING);
+		$span = uwx_months_span($usable[0], $usable[count($usable) - 1]);
+		return $span ? $span.' month'.($span > 1 ? 's' : '') : '-';
+	}
+	$from = ''; $to = '';
+	foreach($usable as $k){ $r = uwx_period_day_range($k); if($from === '' || $r['from'] < $from) $from = $r['from']; if($to === '' || $r['to'] > $to) $to = $r['to']; }
+	$days = uwx_days_span($from, $to);
+	if($days === null) return '-';
+	if($days % 7 === 0 && $days <= 56){ $w = $days / 7; return $w.' week'.($w > 1 ? 's' : ''); }
+	return $days.' day'.($days > 1 ? 's' : '');
+}
+/* monthKey (Month column text -> "YYYY-MM") */
+function uwx_month_key($raw){
+	$s = uwx_trim(uwx_strip_bom($raw));
+	if($s === '') return null;
+	if(preg_match('/^([A-Za-z]{3,9})\s*[-\/\s]\s*(\d{2}|\d{4})$/', $s, $m)){
+		$y = (strlen($m[2]) === 2) ? 2000 + (int)$m[2] : (int)$m[2];
+		$i = array_search(strtolower(substr($m[1], 0, 3)), array('jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'), true);
+		if($i !== false) return sprintf('%04d-%02d', $y, $i + 1);
+	}
+	if(preg_match('/^(\d{4})-(\d{2})$/', $s, $m)) return $m[1].'-'.$m[2];
+	$ts = strtotime($s);
+	if($ts !== false) return date('Y-m', $ts);
+	return null;
+}
+function uwx_period_key($raw){
+	$v = uwx_trim(uwx_strip_bom((string)$raw));
+	if(uwx_is_range_key($v)) return $v;
+	return uwx_month_key($v);
+}
+
+/* ---------- uploadPeriod.ts: Weekly / Monthly rules ---------- */
+function uwx_rules(){
+	return array('WEEKLY'=>array('label'=>'Weekly','minDays'=>7,'maxDays'=>7,'maxFiles'=>4), 'MONTHLY'=>array('label'=>'Monthly','minDays'=>28,'maxDays'=>31,'maxFiles'=>12));
+}
+function uwx_today(){
+	try { $d = new DateTime('now', new DateTimeZone('Asia/Kolkata')); } catch(Exception $e){ $d = new DateTime('now'); }
+	return $d->format('Y-m-d');
+}
+function uwx_add_days($iso, $days){ $p = explode('-', $iso); return gmdate('Y-m-d', gmmktime(0, 0, 0, (int)$p[1], (int)$p[2] + (int)$days, (int)$p[0])); }
+function uwx_day_label($iso){ return uwx_dom($iso).' '.uwx_mon3($iso).' '.substr($iso, 0, 4); }
+function uwx_window_label($from, $to){ return ($from === $to) ? uwx_day_label($from) : uwx_month_long_label($from.'..'.$to); }
+function uwx_month_day_counts($from, $to){
+	$key = uwx_make_period_key($from, $to);
+	if(!$key) return array();
+	$out = array();
+	foreach(uwx_period_months($key) as $m){
+		$start = (strcmp($from, $m.'-01') > 0) ? $from : $m.'-01';
+		$end = (strcmp($to, uwx_month_end_day($m)) < 0) ? $to : uwx_month_end_day($m);
+		$d = uwx_days_span($start, $end);
+		$out[] = array('month'=>$m, 'days'=>($d === null ? 0 : $d));
+	}
+	return $out;
+}
+function uwx_analysis_month($from, $to){
+	$best = null;
+	foreach(uwx_month_day_counts($from, $to) as $e){ if($best === null || $e['days'] >= $best['days']) $best = $e; }
+	return $best ? $best['month'] : null;
+}
+function uwx_check_period($duration, $from, $to, $today = null){
+	if($today === null) $today = uwx_today();
+	if($from === '' || $to === '' || $from === null || $to === null) return 'Enter both a From date and a To date.';
+	if(strcmp($from, $to) > 0) return 'The From date must be on or before the To date.';
+	$days = uwx_days_span($from, $to);
+	if($days === null) return 'Enter valid dates.';
+	if(strcmp($to, $today) > 0) return 'Dates cannot be in the future. The latest allowed date is today, '.uwx_day_label($today).'.';
+	$rules = uwx_rules(); $rule = $rules[$duration];
+	if($days >= $rule['minDays'] && $days <= $rule['maxDays']) return null;
+	$covered = 'This window covers '.$days.' day'.($days === 1 ? '' : 's').'.';
+	return ($duration === 'WEEKLY') ? 'A weekly file must cover exactly 7 days. '.$covered : 'A monthly file must cover 28 to 31 days. '.$covered;
+}
+function uwx_upload_period_key($duration, $from, $to, $today = null){
+	if(uwx_check_period($duration, $from, $to, $today) !== null) return null;
+	return ($duration === 'MONTHLY') ? uwx_analysis_month($from, $to) : uwx_make_period_key($from, $to);
+}
+function uwx_check_upload($duration, $entries, $today = null){
+	$rules = uwx_rules(); $rule = $rules[$duration];
+	if(count($entries) > $rule['maxFiles']){
+		return array($rule['label'].' uploads take at most '.$rule['maxFiles'].' files ('.($duration === 'WEEKLY' ? 'one per week' : 'one per month').'). You selected '.count($entries).'.');
+	}
+	$errors = array();
+	foreach($entries as $e){ $err = uwx_check_period($duration, $e['from'], $e['to'], $today); if($err !== null) $errors[] = $e['fileName'].': '.$err; }
+	if(!empty($errors)) return $errors;
+	$sorted = $entries;
+	usort($sorted, function($a, $b){ $c = strcmp($a['from'], $b['from']); return ($c !== 0) ? $c : strcmp($a['to'], $b['to']); });
+	$conf = array();
+	for($i = 1; $i < count($sorted); $i++){
+		$p = $sorted[$i - 1]; $n = $sorted[$i];
+		$pair = '"'.$p['fileName'].'" ('.uwx_window_label($p['from'], $p['to']).') and "'.$n['fileName'].'" ('.uwx_window_label($n['from'], $n['to']).')';
+		if(strcmp($n['from'], $p['to']) <= 0){ $conf[] = $pair.' overlap. Each file must cover different days.'; continue; }
+		$exp = uwx_add_days($p['to'], 1);
+		if($n['from'] !== $exp){ $conf[] = $pair.' are not consecutive: '.uwx_window_label($exp, uwx_add_days($n['from'], -1)).' is missing. Each file must start the day after the previous one ends.'; continue; }
+		if($duration === 'MONTHLY'){
+			$pm = uwx_analysis_month($p['from'], $p['to']); $nm = uwx_analysis_month($n['from'], $n['to']);
+			if($nm === $pm) $conf[] = $pair.' are both analysed as '.uwx_month_long_label($pm).'. Each monthly file must cover a different month.';
+			elseif($nm !== uwx_next_month($pm)) $conf[] = $pair.' are analysed as '.uwx_month_long_label($pm).' and '.uwx_month_long_label($nm).', skipping '.uwx_month_long_label(uwx_next_month($pm)).'. Monthly files must cover consecutive months.';
+		}
+	}
+	return $conf;
+}
+
+/* ---------- csvParser.ts: header, period stamping, merge ---------- */
+function uwx_vax_codes(){
+	static $set = null;
+	if($set === null){
+		$set = array();
+		foreach(array('bcg','hepb0','hep b0','hep b','opv0','opv-0','opv1','opv-1','opv2','opv-2','opv3','opv-3','opv booster','opv-booster','rvv1','rvv2','rvv3',
+			'penta1','penta-1','penta2','penta-2','penta3','penta-3','pcv1','pcv-1','pcv2','pcv-2','pcv 2','pcv booster','pcvbooster',
+			'ipv1','ipv-1','fipv1','fipv-1','ipv2','fipv2','ipv3','fipv3','mr1','mr-1','mr2','mr-2',
+			'dpt1','dpt 1','dpt2','dpt 2','dpt3','dpt 3','dpt 1st booster','dpt booster 1','dptbooster1','dptb1','je1','je-1','je2','je-2') as $t){ $set[uwx_compact($t)] = true; }
+	}
+	return $set;
+}
+function uwx_is_second_header_row($row1, $row2){
+	if(empty($row1) || empty($row2)) return false;
+	$has = false;
+	foreach($row1 as $c){ $n = uwx_loose($c); if(strpos($n, 'children vaccin') !== false || strpos($n, 'vaccinat') !== false){ $has = true; break; } }
+	if(!$has) return false;
+	$codes = uwx_vax_codes();
+	$hits = 0; $numeric = 0; $nonEmpty = 0; $codeLike = 0; $lens = array();
+	foreach($row2 as $cell){
+		$t = uwx_loose($cell);
+		if($t === '') continue;
+		$nonEmpty++;
+		if(preg_match('/^[+-]?\d+(?:\.\d+)?$/', str_replace(',', '', $t))){ $numeric++; continue; }
+		if(isset($codes[uwx_compact($t)])) $hits++;
+		$len = mb_strlen($t, 'UTF-8');
+		$lens[] = $len;
+		$words = preg_split('/\s+/u', $t, -1, PREG_SPLIT_NO_EMPTY);
+		if($len <= 14 && count($words) <= 3 && preg_match('/^[a-z0-9 -]+$/u', $t)) $codeLike++;
+	}
+	if($nonEmpty === 0) return false;
+	if($numeric / $nonEmpty >= 0.35) return false;
+	if($hits >= 3) return true;
+	$ratio = $codeLike / max(1, $nonEmpty - $numeric);
+	$median = null;
+	if(!empty($lens)){ sort($lens); $median = $lens[(int)floor((count($lens) - 1) / 2)]; }
+	return $hits >= 2 && $ratio >= 0.5 && ($median === null || $median <= 10);
+}
+function uwx_merge_headers($row1, $row2){
+	$codes = uwx_vax_codes();
+	$n = max(count($row1), count($row2)); $out = array();
+	for($i = 0; $i < $n; $i++){
+		$a = uwx_trim(isset($row1[$i]) ? $row1[$i] : '');
+		$b = uwx_trim(isset($row2[$i]) ? $row2[$i] : '');
+		$looks = (bool)preg_match('/^[a-z]{2,8}\s*\d{0,2}(\s*booster)?(\s*\d+)?$/iu', $b);
+		$out[] = ($b !== '' && (isset($codes[uwx_compact($b)]) || $looks)) ? $b : ($a !== '' ? $a : $b);
+	}
+	return $out;
+}
+/* extractHeader: array('header'=>.., 'start'=>first data row) */
+function uwx_extract_header($rawRows){
+	$raw0 = array();
+	foreach((array)$rawRows[0] as $h){ $raw0[] = uwx_strip_bom(uwx_trim($h)); }
+	if(count($rawRows) >= 2){
+		$row2 = array(); foreach((array)$rawRows[1] as $h){ $row2[] = uwx_trim($h); }
+		if(uwx_is_second_header_row($raw0, $row2)) return array('header'=>uwx_merge_headers($raw0, $row2), 'start'=>2);
+	}
+	return array('header'=>$raw0, 'start'=>1);
+}
+/* CSV file -> rows of text cells, completely empty lines skipped (PapaParse skipEmptyLines) */
+function uwx_read_csv($path){
+	$fh = @fopen($path, 'r');
+	if(!$fh) return null;
+	if(fread($fh, 3) !== "\xEF\xBB\xBF") rewind($fh); /* the browser's text decoding drops a UTF-8 BOM */
+	$rows = array();
+	while(($r = fgetcsv($fh, 0, ',', '"', '')) !== false){
+		if(count($r) === 1 && ($r[0] === null || $r[0] === '')) continue;
+		foreach($r as $i=>$v){ if($v === null) $r[$i] = ''; }
+		$rows[] = $r;
+	}
+	fclose($fh);
+	return $rows;
+}
+/* applyReportingPeriod: the declared period replaces (or becomes) the Month column; a Month
+   column naming 2 or more months, any outside the declared window, is a multi-month export */
+function uwx_apply_period($rawRows, $period, $key, $fileName){
+	if(empty($rawRows)) return $rawRows;
+	$x = uwx_extract_header($rawRows);
+	$header = $x['header']; $start = $x['start'];
+	$idxMonth = uwx_find_month($header);
+	if($idxMonth === null){
+		$norm = array(); foreach($header as $h){ $norm[] = uwx_norm($h); }
+		$idxFac = uwx_find_facility($header);
+		$ulb = array('lgd ulb name','ulb name','lgd ulb');
+		$idxUlb = uwx_find_contains_any($header, $ulb);
+		if($idxUlb === null) $idxUlb = uwx_array_search_first($norm, $ulb);
+		$after = ($idxUlb !== null) ? $idxUlb : (($idxFac !== null) ? $idxFac : (count($norm) > 1 ? 1 : 0));
+		$at = max(0, $after + 1);
+		$out = array();
+		foreach($rawRows as $ri=>$r){
+			$val = ($ri === 0) ? 'Month' : (($ri < $start) ? '' : $key);
+			$out[] = array_merge(array_slice($r, 0, $at), array($val), array_slice($r, $at));
+		}
+		return $out;
+	}
+	$named = array();
+	for($ri = $start; $ri < count($rawRows); $ri++){
+		$k = uwx_period_key(isset($rawRows[$ri][$idxMonth]) ? $rawRows[$ri][$idxMonth] : '');
+		if($k){ foreach(uwx_period_months($k) as $m){ $named[$m] = true; } }
+	}
+	if(count($named) >= 2){
+		$wk = uwx_make_period_key($period['from'], $period['to']);
+		$in = array(); foreach(($wk ? uwx_period_months($wk) : array()) as $m){ $in[$m] = true; }
+		$outside = array(); foreach(array_keys($named) as $m){ if(!isset($in[$m])) $outside[] = $m; }
+		sort($outside, SORT_STRING);
+		if(!empty($outside)){
+			$lbl = array(); foreach($outside as $m){ $lbl[] = uwx_month_long_label($m); }
+			throw new Exception('"'.$fileName.'" has rows for '.implode(', ', $lbl).', outside its declared period '.uwx_window_label($period['from'], $period['to']).'. Upload one '.($period['duration'] === 'WEEKLY' ? 'week' : 'month').' per file.');
+		}
+	}
+	$out = array();
+	foreach($rawRows as $ri=>$r){
+		if($ri < $start){ $out[] = $r; continue; }
+		while(count($r) <= $idxMonth) $r[] = '';
+		$r[$idxMonth] = $key;
+		$out[] = $r;
+	}
+	return $out;
+}
+/* parseUwinMultipleCSVFiles: header + data rows, as processUwinRawRows receives them */
+function uwx_merge_files($fileRows, $fileNames){
+	$months = array('month','reporting month','month name');
+	if(count($fileRows) === 1){
+		$x = uwx_extract_header($fileRows[0]);
+		return array('header'=>$x['header'], 'rows'=>array_slice($fileRows[0], $x['start']));
+	}
+	$canon = null; $canonNorm = array(); $merged = array();
+	foreach($fileRows as $fi=>$raw){
+		$x = uwx_extract_header($raw);
+		if($canon === null){ $canon = $x['header']; foreach($canon as $h){ $canonNorm[] = uwx_norm($h); } }
+		$fileNorm = array(); foreach($x['header'] as $h){ $fileNorm[] = uwx_norm($h); }
+		$a = array_values(array_filter($canonNorm, function($h) use ($months){ return !in_array($h, $months, true); }));
+		$b = array_values(array_filter($fileNorm, function($h) use ($months){ return !in_array($h, $months, true); }));
+		if($a !== $b) throw new Exception('Header mismatch detected in "'.$fileNames[$fi].'". Please ensure all month-wise files have the same columns (except Month).');
+		$colMap = array();
+		foreach($canonNorm as $cn){ $p = array_search($cn, $fileNorm, true); $colMap[] = ($p === false) ? -1 : $p; }
+		for($ri = $x['start']; $ri < count($raw); $ri++){
+			$row = $raw[$ri]; $m = array();
+			foreach($colMap as $ci){ $m[] = ($ci >= 0 && isset($row[$ci])) ? $row[$ci] : ''; }
+			$merged[] = $m;
+		}
+	}
+	/* processUwinRawRows([canonicalHeader, ...mergedRows]) reads its own header row again */
+	$x = uwx_extract_header(array_merge(array($canon), array_slice($merged, 0, 1)));
+	return array('header'=>$x['header'], 'rows'=>($x['start'] === 2 ? array_slice($merged, 1) : $merged));
+}
+
+/* ---------- processUwinRawRows: columns and units at the finest grain ---------- */
+function uwx_process($header, $rows){
+	$norm = array(); foreach($header as $h){ $norm[] = uwx_norm($h); }
+	$c = array('header'=>$header);
+	$c['idxBlock'] = uwx_find_block($header);
+	$c['idxFac'] = uwx_find_facility($header);
+	$c['idxMonth'] = uwx_find_month($header);
+	$c['idxOwner'] = uwx_array_search_first($norm, array('ownership','ownership status'));
+	$c['idxRU'] = uwx_array_search_first($norm, array('rural/urban','rural urban','rural-urban','rural - urban','ruralurban'));
+	$c['idxState'] = uwx_array_search_first($norm, array('state','state name','state_name'));
+	$c['idxDist'] = uwx_array_search_first($norm, array('district','district name','district_name'));
+	if($c['idxBlock'] === null || $c['idxFac'] === null || $c['idxMonth'] === null){
+		throw new Exception('Could not find required columns: Block Name, Facility Name, Month. If this U-WIN file has no Month column, confirm the reporting period during upload.');
+	}
+	$sp = uwx_find_by_code($header, 'sessions planned'); if($sp === null) $sp = uwx_find_contains_any($header, array('session planned','sessions planned'));
+	$sh = uwx_find_by_code($header, 'sessions held'); if($sh === null) $sh = uwx_find_contains_any($header, array('session held','sessions held'));
+	$c['idxSessPlanned'] = $sp; $c['idxSessHeld'] = $sh;
+	$c['idxBenPW'] = uwx_find_contains_any($header, array('number of pregnant women vaccinated','pregnant women vaccinated','pregnant women'));
+	$c['idxBenInf'] = uwx_find_contains_any($header, array('number of infants (0-1 year) vaccinated','infants (0-1 year) vaccinated','infants 0-1 year vaccinated','infants (0-1 year)','infants 0-1 year','infants'));
+	$c['idxBenChild'] = uwx_find_contains_any($header, array('number of children (>1 year) vaccinated','children (>1 year) vaccinated','children >1 year vaccinated','children (>1 year)','children >1 year'));
+	$c['idxBenAdol'] = uwx_find_contains_any($header, array('number of adolescents vaccinated','adolescents vaccinated','adolescents'));
+	$c['idxBenTd1'] = uwx_find_contains_any($header, array('number of women vaccinated with td 1'));
+	$c['idxBenTd2'] = uwx_find_contains_any($header, array('number of women vaccinated with td 2'));
+	$c['idxBenTdB'] = uwx_find_contains_any($header, array('number of women vaccinated with td-booster','number of women vaccinated with td booster'));
+	$c['idxBenTd10'] = uwx_find_contains_any($header, array('number of adolescents vaccinated with td10','adolescents vaccinated with td10'));
+	$c['idxBenTd16'] = uwx_find_contains_any($header, array('number of adolescents vaccinated with td16','adolescents vaccinated with td16'));
+	$c['idxSubCenter'] = uwx_find_contains_any($header, array('sub center name','sub centre name','subcenter name','subcentre name','sub center','sub centre','subcenter','subcentre'));
+	$c['idxSessionSite'] = uwx_find_contains_any($header, array('session site name','session site'));
+	$im = $c['idxMonth'];
+	$imap = array(); $counts = array(); $allShorts = array();
+	for($i = $im + 1; $i < count($header); $i++){
+		$short = uwx_short_from_header($header[$i]);
+		$base = $short;
+		$counts[$base] = isset($counts[$base]) ? $counts[$base] + 1 : 1;
+		if($counts[$base] > 1) $short = $base.'-'.$counts[$base];
+		$imap[$short] = $i;
+		$allShorts[] = $short;
+	}
+	$tm = uwx_target_map($header, $im + 1);
+	foreach($tm['map'] as $k=>$v){ $imap[$k] = $v; }
+	$c['indicatorMap'] = $imap; $c['allShorts'] = $allShorts; $c['targetIdx'] = $tm['indices'];
+
+	$nh = count($header);
+	$fd = array(); $allMonths = array(); $states = array(); $statesByKey = array(); $dists = array(); $distsByKey = array();
+	foreach($rows as $ri=>$r){
+		$block = uwx_trim(isset($r[$c['idxBlock']]) ? $r[$c['idxBlock']] : '');
+		$fac = uwx_trim(isset($r[$c['idxFac']]) ? $r[$c['idxFac']] : '');
+		$scRaw = ($c['idxSubCenter'] !== null) ? uwx_trim(isset($r[$c['idxSubCenter']]) ? $r[$c['idxSubCenter']] : '') : '';
+		$sc = ($c['idxSubCenter'] !== null) ? ($scRaw !== '' ? $scRaw : 'Unknown SC') : '';
+		$sess = ($c['idxSessionSite'] !== null) ? uwx_trim(isset($r[$c['idxSessionSite']]) ? $r[$c['idxSessionSite']] : '') : '';
+		$monRaw = isset($r[$im]) ? (string)$r[$im] : '';
+		if($block === '' && $fac === '') continue;
+		if(uwx_trim($monRaw) === '') continue;
+		$mk = uwx_period_key($monRaw);
+		if(!$mk) continue;
+		$own = ($c['idxOwner'] !== null) ? uwx_ownership(isset($r[$c['idxOwner']]) ? $r[$c['idxOwner']] : '') : '';
+		$ru = ($c['idxRU'] !== null) ? uwx_ru(isset($r[$c['idxRU']]) ? $r[$c['idxRU']] : '') : '';
+		if($c['idxState'] !== null){
+			$st = uwx_trim(isset($r[$c['idxState']]) ? $r[$c['idxState']] : '');
+			if($st !== ''){ $sk = uwx_loose($st); if(!isset($statesByKey[$sk])) $statesByKey[$sk] = $st; $states[$statesByKey[$sk]] = true; }
+		}
+		$district = ($c['idxDist'] !== null) ? uwx_trim(isset($r[$c['idxDist']]) ? $r[$c['idxDist']] : '') : '';
+		if($district !== ''){ $dk = uwx_loose($district); if(!isset($distsByKey[$dk])) $distsByKey[$dk] = $district; $district = $distsByKey[$dk]; $dists[$district] = true; }
+		$allMonths[$mk] = uwx_month_short_label($mk);
+		$key = $district.'||'.$block.'||'.$fac.'||'.$sc.'||'.$sess;
+		if(!isset($fd[$key])){
+			$fd[$key] = array('district'=>$district, 'block'=>$block, 'facility'=>$fac, 'subcenter'=>($c['idxSubCenter'] !== null ? $sc : null), 'sessionsite'=>$sess, 'ownership'=>'', 'ru'=>'', 'months'=>array());
+		}
+		if($own !== ''){ if($fd[$key]['ownership'] === '') $fd[$key]['ownership'] = $own; elseif($fd[$key]['ownership'] !== $own) $fd[$key]['ownership'] = 'Mixed'; }
+		if($ru !== ''){ if($fd[$key]['ru'] === '') $fd[$key]['ru'] = $ru; elseif($fd[$key]['ru'] !== $ru) $fd[$key]['ru'] = 'Mixed'; }
+		if(!isset($fd[$key]['months'][$mk])){
+			$vals = array(); for($ci = $im + 1; $ci < $nh; $ci++){ $vals[$ci] = null; }
+			$fd[$key]['months'][$mk] = array('vals'=>$vals, 'ris'=>array());
+		}
+		$fd[$key]['months'][$mk]['ris'][] = $ri;
+		for($ci = $im + 1; $ci < $nh; $ci++){
+			$v = uwx_num(isset($r[$ci]) ? $r[$ci] : null);
+			if($v !== null) $fd[$key]['months'][$mk]['vals'][$ci] = ($fd[$key]['months'][$mk]['vals'][$ci] === null ? 0 : $fd[$key]['months'][$mk]['vals'][$ci]) + $v;
+		}
+	}
+	$gFac = array(); $gBlock = array(); $gSc = array(); $gSs = array();
+	foreach($fd as $u){
+		$fk = uwx_fac_key($u['district'].'||'.$u['block'].'||'.$u['facility']);
+		if($fk !== '' && !isset($gFac[$fk])) $gFac[$fk] = array('ownership'=>$u['ownership'], 'ru'=>$u['ru']);
+		if(uwx_trim($u['block']) !== '') $gBlock[$u['district'].'||'.uwx_trim($u['block'])] = true;
+		if($c['idxSubCenter'] !== null && uwx_trim((string)$u['subcenter']) !== '') $gSc[uwx_fac_key($u['district'].'||'.$u['block'].'||'.$u['facility'].'||'.$u['subcenter'])] = true;
+		if(uwx_trim($u['sessionsite']) !== '') $gSs[uwx_fac_key($u['district'].'||'.$u['block'].'||'.$u['facility'].'||'.$u['sessionsite'])] = true;
+	}
+	$c['facilityData'] = $fd;
+	ksort($allMonths, SORT_STRING);
+	$c['allMonths'] = $allMonths;
+	$c['globalFacilityCount'] = count($gFac);
+	$c['globalSubCenterCount'] = count($gSc);
+	$c['globalSessionSiteCount'] = count($gSs);
+	$c['globalBlockCount'] = count($gBlock);
+	$st = array_keys($states); $ds = array_keys($dists);
+	$c['stateName'] = (count($st) === 1) ? $st[0] : (count($st) > 1 ? 'Multiple' : '—');
+	$c['distName'] = (count($ds) === 1) ? $ds[0] : (count($ds) > 1 ? 'Multiple' : '—');
+	return $c;
+}
+/* standardAnalysisMode: Sub Center-wise when the file has a Sub Center column */
+function uwx_standard_mode($c){ return ($c['idxSubCenter'] !== null) ? 'subcenter' : 'facility'; }
+/* aggregateToLevel: roll the finest grain up to facility / sub center / session site */
+function uwx_aggregate($fdIn, $level){
+	$out = array();
+	foreach($fdIn as $u){
+		$parts = array($u['district'], $u['block'], $u['facility']);
+		if($level === 'subcenter') $parts[] = ($u['subcenter'] === null ? 'Unknown SC' : $u['subcenter']);
+		if($level === 'sessionsite') $parts[] = $u['sessionsite'];
+		$key = implode('||', $parts);
+		if(!isset($out[$key])){
+			$out[$key] = array('district'=>$u['district'], 'block'=>$u['block'], 'facility'=>$u['facility'],
+				'subcenter'=>($level === 'subcenter' ? ($u['subcenter'] === null ? 'Unknown SC' : $u['subcenter']) : null),
+				'sessionsite'=>($level === 'sessionsite' ? $u['sessionsite'] : null), 'ownership'=>'', 'ru'=>'', 'months'=>array());
+		}
+		$a =& $out[$key];
+		if($u['ownership'] !== ''){ if($a['ownership'] === '') $a['ownership'] = $u['ownership']; elseif($a['ownership'] !== $u['ownership']) $a['ownership'] = 'Mixed'; }
+		if($u['ru'] !== ''){ if($a['ru'] === '') $a['ru'] = $u['ru']; elseif($a['ru'] !== $u['ru']) $a['ru'] = 'Mixed'; }
+		foreach($u['months'] as $mk=>$md){
+			if(!isset($a['months'][$mk])) $a['months'][$mk] = array('vals'=>array(), 'ris'=>array());
+			foreach($md['ris'] as $ri){ $a['months'][$mk]['ris'][] = $ri; }
+			foreach($md['vals'] as $ci=>$v){
+				if($v === null){ if(!array_key_exists($ci, $a['months'][$mk]['vals'])) $a['months'][$mk]['vals'][$ci] = null; continue; }
+				$a['months'][$mk]['vals'][$ci] = (isset($a['months'][$mk]['vals'][$ci]) ? $a['months'][$mk]['vals'][$ci] : 0) + $v;
+			}
+		}
+		unset($a);
+	}
+	return $out;
+}
+
+/* ---------- scoringProfile.ts ---------- */
+function uwx_outlier_vax(){ return array('BCG','Penta1','Penta3','MR1','MR2'); }
+function uwx_pair_defaults(){ return array('Penta1→Penta3','MR1→MR2','Penta3→MR1'); }
+/* web filter state: blocks, months, ownership, ru, outliersVax, addVax, outliersInc, outliersDrop,
+   dropRanges, dropPairs, dropFrom, dropTo, inconsFrom, inconsTo, analysisMode */
+function uwx_standard_filters($f){
+	$f['outliersVax'] = uwx_outlier_vax(); $f['addVax'] = array();
+	$f['outliersInc'] = array('INC_EXT'); $f['outliersDrop'] = array('DROP_EXT');
+	$f['dropRanges'] = array('R20P'); $f['dropPairs'] = uwx_pair_defaults();
+	$f['dropFrom'] = array(); $f['dropTo'] = array(); $f['inconsFrom'] = array(); $f['inconsTo'] = array();
+	return $f;
+}
+function uwx_method_signature($f){
+	$setKey = function($vals){ $o = array(); foreach((array)$vals as $v){ $v = uwx_trim($v); if($v !== '') $o[$v] = true; } $o = array_keys($o); sort($o, SORT_STRING); return implode('|', $o); };
+	$pairs = function($from, $to){ $k = array(); $n = max(count((array)$from), count((array)$to)); for($i = 0; $i < $n; $i++){ $l = uwx_trim(isset($from[$i]) ? $from[$i] : ''); $r = uwx_trim(isset($to[$i]) ? $to[$i] : ''); if($l !== '' && $r !== '' && $l !== $r) $k[] = $l.'→'.$r; } return $k; };
+	$base = !empty($f['outliersVax']) ? $f['outliersVax'] : uwx_outlier_vax();
+	return json_encode(array(
+		$setKey(array_merge((array)$base, (array)$f['addVax'])), $setKey($f['outliersInc']), $setKey($f['outliersDrop']), $setKey($f['dropRanges']),
+		$setKey(array_merge((array)$f['dropPairs'], $pairs($f['dropFrom'], $f['dropTo']))), $setKey($pairs($f['inconsFrom'], $f['inconsTo'])),
+	));
+}
+
+/* ---------- computeKpis.ts: every check at the selected level ----------
+   Returns the cards (stat: total / any / all / eligible / keys) in the web application's
+   order, plus the on-screen tables of this tool. Y/N matrices use this tool's convention:
+   N = issue, Y = no issue, '–' = left to Zero coverage session. */
+function uwx_compute($c, $f){
+	$header = $c['header']; $im = $c['idxMonth']; $imap = $c['indicatorMap']; $nh = count($header);
+	$mode = in_array($f['analysisMode'], array('facility','subcenter','sessionsite'), true) ? $f['analysisMode'] : 'facility';
+	$fd = uwx_aggregate($c['facilityData'], $mode);
+	$unitName = function($u) use ($mode){ return ($mode === 'subcenter') ? (string)$u['subcenter'] : (($mode === 'sessionsite') ? (string)$u['sessionsite'] : ''); };
+
+	$selMonths = !empty($f['months']) ? array_values($f['months']) : array_keys($c['allMonths']);
+	sort($selMonths, SORT_STRING);
+	$labels = array(); foreach($selMonths as $mk){ $labels[$mk] = uwx_month_year_label($mk); }
+
+	$accBase = !empty($f['outliersVax']) ? $f['outliersVax'] : uwx_outlier_vax();
+	$accAll = array_values(array_unique(array_merge((array)$accBase, (array)$f['addVax'])));
+	$accVax = array(); foreach($accAll as $v){ if(isset($imap[$v])) $accVax[] = $v; }
+	if(empty($accVax)){ foreach(uwx_outlier_vax() as $v){ if(isset($imap[$v])) $accVax[] = $v; } }
+	$BASE = array('BCG','Penta1','Penta3','OPV1','OPV3','MR1','MR2');
+	$cmpDef = $BASE; if(isset($imap['FIC-Total'])) $cmpDef[] = 'FIC-Total';
+	$cmpVax = array(); foreach(array_values(array_unique($cmpDef)) as $v){ if(isset($imap[$v])) $cmpVax[] = $v; }
+	if(empty($cmpVax)){ foreach($BASE as $v){ if(isset($imap[$v])) $cmpVax[] = $v; } }
+
+	$selBlocks = array();
+	if(!empty($f['blocks'])){ foreach($f['blocks'] as $b){ $selBlocks[(string)$b] = true; } }
+	else { foreach($fd as $u){ if($u['block'] !== '') $selBlocks[$u['block']] = true; } }
+	$selMonthSet = array_fill_keys($selMonths, true);
+	$selOwn = !empty($f['ownership']) ? array_fill_keys($f['ownership'], true) : null;
+	$selRu = !empty($f['ru']) ? array_fill_keys($f['ru'], true) : null;
+	$units = array();
+	foreach($fd as $key=>$u){
+		if($u['block'] !== '' && !isset($selBlocks[$u['block']])) continue;
+		if($selOwn !== null && $u['ownership'] !== '' && !isset($selOwn[$u['ownership']])) continue;
+		if($selRu !== null && $u['ru'] !== '' && !isset($selRu[$u['ru']])) continue;
+		$keep = array(); foreach($u['months'] as $mk=>$md){ if(isset($selMonthSet[$mk])) $keep[$mk] = $md; }
+		if(empty($keep)) continue;
+		$u['months'] = $keep;
+		$units[$key] = $u;
+	}
+	$den = count($units);
+	$blk = array(); foreach($units as $u){ if($u['block'] !== '') $blk[$u['district'].'||'.$u['block']] = true; }
+
+	$HL = array();
+	$hlRows = function($dk, $md) use (&$HL){ foreach($md['ris'] as $ri){ $HL[$dk][$ri] = isset($HL[$dk][$ri]) ? $HL[$dk][$ri].',-1' : '-1'; } };
+	$hlCells = function($dk, $md, $cols, $style = 1) use (&$HL){
+		$t = ''; foreach((array)$cols as $ci){ if($ci !== null) $t .= ($t === '' ? '' : ',').(int)$ci.($style >= 2 ? ':2' : ''); }
+		if($t === '') return;
+		foreach($md['ris'] as $ri){ $HL[$dk][$ri] = isset($HL[$dk][$ri]) ? $HL[$dk][$ri].','.$t : $t; }
+	};
+	$stat = function(){ return array('keys'=>array(), 'any'=>array(), 'all'=>array(), 'eligible'=>array()); };
+	$flag = function(&$s, $key, $hit, $evaluable){ $s['keys'][$key] = true; if($evaluable > 0 && $hit === $evaluable) $s['all'][$key] = true; else $s['any'][$key] = true; };
+	$val = function($md, $ci){ return ($md !== null && $ci !== null && isset($md['vals'][$ci])) ? $md['vals'][$ci] : null; };
+	$idHead = array('LGD Block Name','Health Facility Name'); if($mode === 'subcenter') $idHead[] = 'Sub Center Name'; elseif($mode === 'sessionsite') $idHead[] = 'Session Site Name';
+	$idRow = function($u) use ($mode, $unitName){ $r = array(uwx_display_block($u['block']), $u['facility']); if($mode !== 'facility') $r[] = $unitName($u); return $r; };
+	$idObj = function($u) use ($unitName){ return array('block'=>uwx_display_block($u['block']), 'facility'=>$u['facility'], 'sessionsite'=>$unitName($u)); };
+	$mHead = array(); foreach($selMonths as $mk){ $mHead[] = $labels[$mk]; }
+	$iSP = $c['idxSessPlanned']; $iSH = $c['idxSessHeld'];
+	$out = array('mode'=>$mode, 'units'=>$units, 'den'=>$den, 'blocksSel'=>count($blk), 'selMonths'=>$selMonths, 'labels'=>$labels, 'idHead'=>$idHead,
+		'accVax'=>$accVax, 'cmpVax'=>$cmpVax);
+
+	/* t9: Zero coverage session (a period with a session held and zero beneficiaries) */
+	$t9 = $stat(); $t9Rows = array(array_merge($idHead, $mHead)); $t9Hit = array();
+	$t9Ben = array(); foreach(array('idxBenPW','idxBenInf','idxBenChild','idxBenAdol','idxBenTd1','idxBenTd2','idxBenTdB','idxBenTd10','idxBenTd16') as $bk){ if($c[$bk] !== null) $t9Ben[] = $c[$bk]; }
+	if(!empty($t9Ben)){
+		foreach($units as $key=>$u){
+			$row = $idRow($u); $hit = 0; $ev = 0;
+			foreach($selMonths as $mk){
+				$md = isset($u['months'][$mk]) ? $u['months'][$mk] : null;
+				$zero = false;
+				$held = ($md !== null && $iSH !== null) ? $val($md, $iSH) : null;
+				$sessHeld = ($iSH === null) || ($held !== null && $held > 0);
+				if($md !== null && $sessHeld){
+					$sum = 0; $has = false;
+					foreach($t9Ben as $bi){ $v = $val($md, $bi); if($v !== null){ $sum += $v; $has = true; } }
+					if($has) $ev++;
+					$zero = ($has && $sum == 0);
+				}
+				$row[] = $zero ? 'N' : 'Y';
+				if($zero){ $hit++; $t9Hit[$key][$mk] = true; $hlCells('t9', $md, $t9Ben); }
+			}
+			if($ev > 0) $t9['eligible'][$key] = true;
+			if($hit > 0){ $flag($t9, $key, $hit, $ev); $t9Rows[] = $row; }
+		}
+	}
+	/* t0: every vaccine-dose column reported and 0 (periods t9 flagged are left to t9) */
+	$t0 = $stat(); $t0Rows = array(array_merge($idHead, $mHead)); $zeroDose = array(); $tIdx = $c['targetIdx'];
+	foreach($units as $key=>$u){
+		$row = $idRow($u); $hit = 0; $ev = 0;
+		foreach($selMonths as $mk){
+			$md = isset($u['months'][$mk]) ? $u['months'][$mk] : null;
+			$zero = false;
+			if($md !== null){
+				$allZero = true; $has = false;
+				foreach($tIdx as $ci){ $v = $val($md, $ci); if($v === null){ $allZero = false; break; } $has = true; if($v != 0){ $allZero = false; break; } }
+				$zero = ($has && $allZero);
+				if($zero) $zeroDose[$key][$mk] = true;
+				if(!empty($t9Hit[$key][$mk])){ $row[] = '–'; continue; }
+				$ev++;
+			}
+			$row[] = $zero ? 'N' : 'Y';
+			if($zero){ $hit++; $hlRows('t0', $md); }
+		}
+		if($ev > 0 && !empty($tIdx)) $t0['eligible'][$key] = true;
+		if($hit > 0){ $flag($t0, $key, $hit, $ev); $t0Rows[] = $row; }
+	}
+	/* t7: every column after Month reported, non-zero and equal */
+	$t7 = $stat(); $t7Rows = array(array_merge($idHead, $mHead));
+	foreach($units as $key=>$u){
+		$row = $idRow($u); $hit = 0; $ev = 0;
+		foreach($selMonths as $mk){
+			$md = isset($u['months'][$mk]) ? $u['months'][$mk] : null;
+			$rep = false;
+			if($md !== null){
+				$ev++;
+				$first = null; $ok = true; $has = false;
+				for($ci = $im + 1; $ci < $nh; $ci++){
+					$v = $val($md, $ci);
+					if($v === null || $v == 0){ $ok = false; break; }
+					if($first === null){ $first = $v; $has = true; } elseif($v != $first){ $ok = false; break; }
+				}
+				$rep = ($has && $ok);
+			}
+			$row[] = $rep ? 'N' : 'Y';
+			if($rep){ $hit++; $hlRows('t7', $md); }
+		}
+		if($ev > 0) $t7['eligible'][$key] = true;
+		if($hit > 0){ $flag($t7, $key, $hit, $ev); $t7Rows[] = $row; }
+	}
+	/* t2: Key Missing Indicators (fixed vaccines; not scored for U-WIN) */
+	$t2 = $stat(); $t2Matrix = array(); $blankCnt = array(); $blankAll = array();
+	foreach($cmpVax as $vx){ $blankCnt[$vx] = 0; $blankAll[$vx] = 0; }
+	$t2Flat = array($idHead); foreach($cmpVax as $vx){ foreach($selMonths as $mk){ $t2Flat[0][] = $vx.' '.$labels[$mk]; } }
+	foreach($units as $key=>$u){
+		$any = false; $cells = array(); $flatRow = $idRow($u);
+		foreach($cmpVax as $vx){
+			$ci = isset($imap[$vx]) ? $imap[$vx] : null; $hasB = false; $allB = true;
+			foreach($selMonths as $mk){
+				$md = isset($u['months'][$mk]) ? $u['months'][$mk] : null;
+				$blank = ($md !== null && $ci !== null) ? ($val($md, $ci) === null) : false;
+				$cells[$vx][$mk] = $blank ? 'N' : 'Y';
+				$flatRow[] = $cells[$vx][$mk];
+				if($blank){ $any = true; $hasB = true; $hlCells('t2', $md, array($ci)); } else { $allB = false; }
+			}
+			if($hasB) $blankCnt[$vx]++;
+			if($allB) $blankAll[$vx]++;
+		}
+		if($any){
+			$rep = 0; $bm = 0;
+			foreach($selMonths as $mk){
+				if(isset($u['months'][$mk])) $rep++;
+				foreach($cmpVax as $vx){ if($cells[$vx][$mk] === 'N'){ $bm++; break; } }
+			}
+			$flag($t2, $key, $bm, $rep);
+			$t2Matrix[$key] = array_merge($idObj($u), array('cells'=>$cells));
+			$t2Flat[] = $flatRow;
+		}
+	}
+	if(!empty($cmpVax)){ foreach($units as $key=>$u){ $t2['eligible'][$key] = true; } }
+
+	/* t6: Planned but not held (periods with both reported) */
+	$t6 = $stat(); $t6Web = array('months'=>$selMonths, 'monthLabels'=>$labels, 'rows'=>array());
+	if($iSP !== null && $iSH !== null){
+		foreach($units as $key=>$u){
+			$cells = array(); $sumP = 0; $sumH = 0; $hit = 0; $ev = 0;
+			foreach($selMonths as $mk){
+				$md = isset($u['months'][$mk]) ? $u['months'][$mk] : null;
+				$P = $val($md, $iSP); $H = $val($md, $iSH);
+				$cells[$mk] = array('p'=>$P, 'h'=>$H, 'pct'=>null, 'hit'=>false);
+				if($P === null || $H === null) continue;
+				$ev++; $sumP += $P; $sumH += $H;
+				if($P > 0 && $H < $P){ $hit++; $cells[$mk]['pct'] = ($P - $H) / $P * 100; $cells[$mk]['hit'] = true; $hlCells('t6', $md, array($iSP, $iSH)); }
+			}
+			if($ev > 0) $t6['eligible'][$key] = true;
+			if($hit > 0){
+				$flag($t6, $key, $hit, $ev);
+				$totHit = ($sumP > 0 && $sumH < $sumP);
+				$t6Web['rows'][$key] = array_merge($idObj($u), array('cells'=>$cells, 'totals'=>array('p'=>$sumP, 'h'=>$sumH, 'pct'=>($totHit ? ($sumP - $sumH) / $sumP * 100 : null), 'hit'=>$totHit)));
+			}
+		}
+	}
+	/* t8: Avg Beneficiaries per Session < 5 (periods t9 flagged are left to t9) */
+	$t8 = $stat(); $t8Web = array('months'=>$selMonths, 'monthLabels'=>$labels, 'rows'=>array());
+	if($iSH !== null){
+		$benCols = array($c['idxBenPW'], $c['idxBenInf'], $c['idxBenChild'], $c['idxBenAdol']);
+		foreach($units as $key=>$u){
+			$cells = array(); $flg = 0; $ev = 0; $tS = 0; $tB = 0;
+			foreach($selMonths as $mk){
+				$md = isset($u['months'][$mk]) ? $u['months'][$mk] : null;
+				$sess = $val($md, $iSH); $ben = null;
+				if($md !== null){ $sum = 0; $has = false; foreach($benCols as $bi){ if($bi !== null){ $v = $val($md, $bi); if($v !== null){ $sum += $v; $has = true; } } } if($has) $ben = $sum; }
+				$avg = null;
+				if($sess !== null && $sess > 0 && $ben !== null && empty($t9Hit[$key][$mk])) $avg = $ben / $sess;
+				$low = ($avg !== null && $avg < 5);
+				$cells[$mk] = array('held'=>$sess, 'ben'=>$ben, 'avg'=>$avg, 'flag'=>$low);
+				if($avg !== null) $ev++;
+				if($low){ $flg++; $cols = array($iSH); foreach($benCols as $bi){ if($bi !== null) $cols[] = $bi; } $hlCells('t8', $md, $cols); }
+				if($sess !== null) $tS += $sess;
+				if($ben !== null) $tB += $ben;
+			}
+			$allAvg = ($tS > 0) ? $tB / $tS : null;
+			if($ev > 0) $t8['eligible'][$key] = true;
+			if($flg > 0){
+				$flag($t8, $key, $flg, $ev);
+				$t8Web['rows'][$key] = array_merge($idObj($u), array('cells'=>$cells, 'totals'=>array('held'=>($tS ? $tS : null), 'ben'=>($tB ? $tB : null), 'avg'=>$allAvg, 'flag'=>($allAvg !== null && $allAvg < 5))));
+			}
+		}
+	}
+	/* t3: Outliers - consecutive periods only; a pair with an all-zero-dose period is not compared */
+	$incSel = array_fill_keys((array)$f['outliersInc'], true); $dropSel = array_fill_keys((array)$f['outliersDrop'], true);
+	$pairList = array();
+	for($i = 0; $i < count($selMonths) - 1; $i++){
+		$m1 = $selMonths[$i]; $m2 = $selMonths[$i + 1];
+		if(!uwx_periods_consecutive($m1, $m2)) continue;
+		$pairList[] = array('k'=>$m1.'|'.$m2, 'm1'=>$m1, 'm2'=>$m2, 'm1lbl'=>$labels[$m1], 'm2lbl'=>$labels[$m2]);
+	}
+	$t3 = $stat(); $t3Rows = array(); $outAny = array(); $outAll = array();
+	foreach($accVax as $vx){ $outAny[$vx] = 0; $outAll[$vx] = 0; }
+	foreach($units as $key=>$u){
+		$cells = array(); $evP = array(); $hitP = array();
+		foreach($accVax as $vx){
+			$ci = $imap[$vx]; $vEv = 0; $vHit = 0;
+			foreach($pairList as $p){
+				$md1 = isset($u['months'][$p['m1']]) ? $u['months'][$p['m1']] : null;
+				$md2 = isset($u['months'][$p['m2']]) ? $u['months'][$p['m2']] : null;
+				$v1 = $val($md1, $ci); $v2 = $val($md2, $ci);
+				$zm = !empty($zeroDose[$key][$p['m1']]) || !empty($zeroDose[$key][$p['m2']]);
+				$ch = $zm ? null : dqa_mom_change($v1, $v2);
+				$hit = false;
+				if($ch !== null){
+					$evP[$p['k']] = true; $vEv++;
+					$band = dqa_outlier_band($ch);
+					if($band !== null && (isset($incSel[$band]) || isset($dropSel[$band]))){
+						$hit = true; $vHit++; $hitP[$p['k']] = true;
+						$hlCells('t3', $md1, array($ci)); $hlCells('t3', $md2, array($ci));
+					}
+				}
+				$cells[$vx][$p['k']] = array('a'=>$v1, 'b'=>$v2, 'pct'=>($ch ? $ch['pct'] : null), 'hit'=>$hit, 'fromZero'=>($ch ? $ch['fromZero'] : false));
+			}
+			if($vHit > 0) $outAny[$vx]++;
+			if($vEv > 0 && $vHit === $vEv) $outAll[$vx]++;
+		}
+		if(!empty($evP)) $t3['eligible'][$key] = true;
+		if(!empty($hitP)){ $flag($t3, $key, count($hitP), count($evP)); $t3Rows[$key] = array_merge($idObj($u), array('cells'=>$cells)); }
+	}
+	/* Dropouts - cumulative over the selected periods where both doses are reported; none for 1 period */
+	$rngSel = array_fill_keys((array)$f['dropRanges'], true);
+	$pairs = array(); foreach((array)$f['dropPairs'] as $pl){ $pairs[(string)$pl] = true; }
+	$fl = (array)$f['dropFrom']; $tl = (array)$f['dropTo'];
+	for($i = 0; $i < max(count($fl), count($tl)); $i++){
+		$a = uwx_trim(isset($fl[$i]) ? $fl[$i] : ''); $b = uwx_trim(isset($tl[$i]) ? $tl[$i] : '');
+		if($a !== '' && $b !== '' && $a !== $b) $pairs[$a.'→'.$b] = true;
+	}
+	if(count($selMonths) < 2) $pairs = array();
+	$drops = array();
+	foreach(array_keys($pairs) as $pl){
+		$pp = explode('→', $pl);
+		if(count($pp) !== 2) continue;
+		$from = uwx_trim($pp[0]); $to = uwx_trim($pp[1]);
+		if($from === '' || $to === '' || !isset($imap[$from]) || !isset($imap[$to])) continue;
+		$iF = $imap[$from]; $iT = $imap[$to];
+		$dk = 'drop_'.uwx_safe_key($from.'_'.$to);
+		$ds = $stat(); $rowsD = array();
+		foreach($units as $key=>$u){
+			$cells = array(); $sa = 0; $sb = 0; $n = 0; $ev = 0; $mh = 0; $matched = array();
+			foreach($selMonths as $mk){
+				$md = isset($u['months'][$mk]) ? $u['months'][$mk] : null;
+				$A = $val($md, $iF); $B = $val($md, $iT);
+				$cells[$mk] = array('from'=>null, 'to'=>null, 'pct'=>null);
+				if($A === null || $B === null) continue;
+				$matched[] = $mk; $sa += $A; $sb += $B; $n++;
+				$mp = dqa_dropout_pct($A, $B);
+				$cells[$mk] = array('from'=>$A, 'to'=>$B, 'pct'=>$mp);
+				if($mp !== null){ $ev++; $rg = dqa_dropout_range($mp); if($rg !== null && isset($rngSel[$rg])) $mh++; }
+			}
+			$pp2 = dqa_dropout_pct($n > 0 ? $sa : 0, $n > 0 ? $sb : 0);
+			if($pp2 !== null) $ds['eligible'][$key] = true;
+			$rg2 = dqa_dropout_range($pp2);
+			if($rg2 !== null && isset($rngSel[$rg2])){
+				$ds['keys'][$key] = true;
+				if($ev > 0 && $mh === $ev) $ds['all'][$key] = true; else $ds['any'][$key] = true;
+				foreach($matched as $mk){ $hlCells($dk, $u['months'][$mk], array($iF, $iT)); }
+				$rowsD[$key] = array_merge($idObj($u), array('cells'=>$cells, 'all'=>array('from'=>$sa, 'to'=>$sb, 'pct'=>$pp2)));
+			}
+		}
+		$drops[$dk] = array('label'=>$pl, 'from'=>$from, 'to'=>$to, 'stat'=>$ds, 'web'=>array('pairLabel'=>$pl, 'from'=>$from, 'to'=>$to, 'months'=>$selMonths, 'monthLabels'=>$labels, 'rows'=>$rowsD));
+	}
+	/* Later dose > earlier dose: period totals over periods where both are reported */
+	$doseOrder = function($iFrom, $iTo, $dk, $toLbl, $fromLbl) use ($units, $selMonths, $stat, $flag, $val, $idRow, $idHead, $hlCells){
+		$s = $stat(); $rows = array(array_merge($idHead, array($toLbl.' (total)', $fromLbl.' (total)', '% change')));
+		foreach($units as $key=>$u){
+			$a = 0; $b = 0; $n = 0; $mh = 0; $mds = array();
+			foreach($selMonths as $mk){
+				$md = isset($u['months'][$mk]) ? $u['months'][$mk] : null;
+				$A = $val($md, $iFrom); $B = $val($md, $iTo);
+				if(dqa_later_dose_exceeds($A, $B)) $mh++;
+				if($A === null || $B === null) continue;
+				$a += $A; $b += $B; $n++; $mds[] = $md;
+			}
+			if($n === 0) continue;
+			$s['eligible'][$key] = true;
+			if(dqa_later_dose_exceeds($a, $b)){
+				$flag($s, $key, $mh, $n);
+				foreach($mds as $md){ $hlCells($dk, $md, array($iFrom, $iTo)); }
+				$rows[] = array_merge($idRow($u), array(round($b), round($a), dqa_dose_excess_label($a, $b)));
+			}
+		}
+		return array('stat'=>$s, 'rows'=>$rows);
+	};
+	$i1 = (isset($imap['Penta1']) && isset($imap['Penta3'])) ? $doseOrder($imap['Penta1'], $imap['Penta3'], 't5_p3gtp1', 'Penta3', 'Penta1') : array('stat'=>$stat(), 'rows'=>array(array_merge($idHead, array('Penta3 (total)','Penta1 (total)','% change'))));
+	$i2 = (isset($imap['MR1']) && isset($imap['MR2'])) ? $doseOrder($imap['MR1'], $imap['MR2'], 't5_mr2gtmr1', 'MR2', 'MR1') : array('stat'=>$stat(), 'rows'=>array(array_merge($idHead, array('MR2 (total)','MR1 (total)','% change'))));
+	$incons = array();
+	$ifl = (array)$f['inconsFrom']; $itl = (array)$f['inconsTo'];
+	for($i = 0; $i < max(count($ifl), count($itl)); $i++){
+		$a = uwx_trim(isset($ifl[$i]) ? $ifl[$i] : ''); $b = uwx_trim(isset($itl[$i]) ? $itl[$i] : '');
+		if($a === '' || $b === '' || $a === $b) continue;
+		if($a.'→'.$b === 'Penta1→Penta3' || $a.'→'.$b === 'MR1→MR2') continue;
+		if(!isset($imap[$a]) || !isset($imap[$b])) continue;
+		$pid = 'iadd_'.uwx_safe_key($b.'_gt_'.$a); $dl = 't5_'.uwx_safe_key($b.'_gt_'.$a);
+		$r = $doseOrder($imap[$a], $imap[$b], $dl, $b, $a);
+		$incons[$dl] = array('from'=>$a, 'to'=>$b, 'label'=>'Inconsistencies — '.$b.'>'.$a, 'pid'=>$pid, 'stat'=>$r['stat'], 'rows'=>$r['rows']);
+	}
+	/* Co-administration: period by period; blanks never compared */
+	$CO = array('co1'=>array('OPV1','Penta1','RVV1','PCV1','IPV1'), 'co2'=>array('OPV2','Penta2','RVV2'), 'co3'=>array('OPV3','Penta3','RVV3','PCV2','IPV2'), 'co4'=>array('MR1','PCV Booster','IPV3'), 'co5'=>array('MR2','DPT 1st Booster'));
+	$co = array();
+	foreach($CO as $ck=>$vl){
+		$cs = $stat(); $rowsC = array();
+		foreach($units as $key=>$u){
+			$rv = array(); $viol = 0; $ev = 0; $red = array();
+			foreach($selMonths as $mk){
+				$md = isset($u['months'][$mk]) ? $u['months'][$mk] : null;
+				$rv[$mk] = array(); $nn = 0;
+				foreach($vl as $vx){ $v = ($md !== null && isset($imap[$vx])) ? $val($md, $imap[$vx]) : null; $rv[$mk][$vx] = $v; if($v !== null) $nn++; }
+				if($nn >= 2) $ev++;
+				$oor = dqa_coadmin_out_of_range($rv[$mk]);
+				if(!empty($oor)){
+					$viol++;
+					$mask = 0; $grp = array(); $bad = array();
+					foreach($vl as $vi=>$vx){
+						if(isset($oor[$vx])) $mask |= (1 << $vi);
+						if(!isset($imap[$vx]) || $rv[$mk][$vx] === null) continue;
+						if(isset($oor[$vx])) $bad[] = $imap[$vx]; else $grp[] = $imap[$vx];
+					}
+					$red[$mk] = $mask;
+					$hlCells($ck, $md, $grp, 1); $hlCells($ck, $md, $bad, 2);
+				}
+			}
+			if($ev > 0) $cs['eligible'][$key] = true;
+			if($viol > 0){
+				$flag($cs, $key, $viol, $ev);
+				$rowsC[$key] = array_merge($idObj($u), array('vals'=>$rv, 'red'=>$red, 'totals'=>dqa_coadmin_matched_totals($rv, $vl)));
+			}
+		}
+		$co[$ck] = array('stat'=>$cs, 'web'=>array('key'=>$ck, 'vaccines'=>$vl, 'months'=>$selMonths, 'monthLabels'=>$labels, 'rows'=>$rowsC));
+	}
+
+	/* cards, in the web application's order */
+	$st = function($s){ return array('total'=>count($s['keys']), 'any'=>count($s['any']), 'all'=>count($s['all']), 'eligible'=>count($s['eligible']), 'keys'=>array_keys($s['keys'])); };
+	$cards = array();
+	$cards[] = array('id'=>'t0','name'=>'Indicators having 0 values but not blank','stat'=>$st($t0),'group'=>'availability','downloadKey'=>'t0');
+	$cards[] = array('id'=>'t7','name'=>'Indicators with same values','stat'=>$st($t7),'group'=>'availability','downloadKey'=>'t7');
+	$cards[] = array('id'=>'t9','name'=>'Zero coverage session','stat'=>$st($t9),'group'=>'availability','downloadKey'=>'t9');
+	$cards[] = array('id'=>'t2','name'=>'Key Missing Indicators','stat'=>$st($t2),'group'=>'completeness','downloadKey'=>'t2');
+	$cards[] = array('id'=>'t6','name'=>'Planned but not held','stat'=>$st($t6),'group'=>'accuracy','downloadKey'=>'t6');
+	$cards[] = array('id'=>'t8','name'=>'Avg Beneficiaries per Session < 5','stat'=>$st($t8),'group'=>'accuracy','downloadKey'=>'t8');
+	$cards[] = array('id'=>'t3','name'=>'Outliers','stat'=>$st($t3),'group'=>'accuracy','downloadKey'=>'t3');
+	foreach($drops as $dk=>$d){ $cards[] = array('id'=>$dk,'name'=>'Dropouts — '.$d['label'],'stat'=>$st($d['stat']),'group'=>'accuracy','downloadKey'=>$dk); }
+	$cons = array();
+	$cons[] = array('id'=>'i1','name'=>'Inconsistencies — Penta3>Penta1','stat'=>$st($i1['stat']),'group'=>'consistency','downloadKey'=>'t5_p3gtp1');
+	$cons[] = array('id'=>'i2','name'=>'Inconsistencies — MR2>MR1','stat'=>$st($i2['stat']),'group'=>'consistency','downloadKey'=>'t5_mr2gtmr1');
+	foreach($incons as $dl=>$m){ $cons[] = array('id'=>$m['pid'],'name'=>$m['label'],'stat'=>$st($m['stat']),'group'=>'consistency','downloadKey'=>$dl); }
+	$coLabels = array('co1'=>'6 weeks — OPV1, Penta1, RVV1, PCV1, IPV1','co2'=>'10 weeks — OPV2, Penta2, RVV2','co3'=>'14 weeks — OPV3, Penta3, RVV3, PCV2, IPV2','co4'=>'9 months — MR1, PCV Booster, IPV3','co5'=>'2 years — MR2, DPT 1st Booster');
+	foreach($co as $ck=>$x){ $cons[] = array('id'=>$ck,'name'=>$coLabels[$ck],'stat'=>$st($x['stat']),'group'=>'consistency','downloadKey'=>$ck); }
+	$order = array('co1'=>0,'co3'=>1,'co2'=>2,'co4'=>3,'i1'=>4,'i2'=>5,'co5'=>6);
+	$pos = array(); foreach($cons as $i=>$cc){ $pos[$i] = isset($order[$cc['id']]) ? $order[$cc['id']] : 99; }
+	$idx = array_keys($cons);
+	usort($idx, function($a, $b) use ($pos){ return ($pos[$a] === $pos[$b]) ? ($a - $b) : ($pos[$a] - $pos[$b]); });
+	foreach($idx as $i){ $cards[] = $cons[$i]; }
+
+	$out += array('cards'=>$cards, 'HL'=>$HL,
+		't0Rows'=>$t0Rows, 't7Rows'=>$t7Rows, 't9Rows'=>$t9Rows, 't9Hit'=>$t9Hit,
+		't2Matrix'=>$t2Matrix, 't2Flat'=>$t2Flat, 'blankCnt'=>$blankCnt, 'blankAll'=>$blankAll,
+		't6Web'=>$t6Web, 't8Web'=>$t8Web, 'pairList'=>$pairList, 't3Rows'=>$t3Rows, 'outAny'=>$outAny, 'outAll'=>$outAll,
+		'drops'=>$drops, 'i1Rows'=>$i1['rows'], 'i2Rows'=>$i2['rows'], 'incons'=>$incons, 'co'=>$co);
+	return $out;
+}
+/* computeUwinKpis: the cards of the settings on screen, plus the cards the SCORE is computed
+   from (the standard scoring settings on the same scope) */
+function uwx_compute_with_score($c, $f){
+	$view = uwx_compute($c, $f);
+	$std = uwx_standard_filters($f);
+	if(uwx_method_signature($f) === uwx_method_signature($std)){ $view['scoreCards'] = $view['cards']; $view['customMethod'] = false; return $view; }
+	$s = uwx_compute($c, $std);
+	$view['scoreCards'] = $s['cards']; $view['customMethod'] = true;
+	return $view;
+}
+/* weighted Overall Score of a compute result (scoreUtils.ts computeOverallScore, portal UWIN) */
+function uwx_score_of($res){
+	$in = array();
+	foreach($res['scoreCards'] as $cc){ $in[$cc['id']] = array('flagged'=>(int)$cc['stat']['total'], 'eligible'=>(int)$cc['stat']['eligible'], 'name'=>$cc['name']); }
+	return uwx_weighted_score($in, $res['den'], count($res['selMonths']));
+}
+/* ============== end of web parity engine (U-WIN) ============== */
+
 /* -------------------- Header matching helpers (UWIN) -------------------- */
 function header_compact_key($s){
 	$s = normalize_header($s);
@@ -1320,17 +2638,6 @@ if(isset($_GET['download_pink'])){
 	$rows = $_SESSION['csv_rows'];
 	$idxBlock = isset($_SESSION['idxBlock']) ? $_SESSION['idxBlock'] : null;
 	$idxFac = isset($_SESSION['idxFac']) ? $_SESSION['idxFac'] : null;
-	$GLOBALS['DQA_HAS_FAC'] = ($idxFac !== null);
-	/* (added) When the file has no "Health Facility Name" column (newer UWIN
-	   format), use the Sub District column in its place INSIDE THE IDENTITY KEY
-	   only, so that two session sites with the same name in different sub
-	   districts of one block are never merged into one. This value is never
-	   displayed (all facility cells/columns are hidden when the column is
-	   absent); it only keeps the session-site counting and grouping accurate. */
-	if($idxFac === null){
-		$dqa_norm_tmp = array_map('normalize_header', $header);
-		$idxFac = array_search_first($dqa_norm_tmp, ['sub district','subdistrict','sub-district','sub district name','subdistrict name','subdistrict_name','sub_district','sub_district_name']);
-	}
 	$idxMonth = isset($_SESSION['idxMonth']) ? $_SESSION['idxMonth'] : null;
 	$filters = isset($_SESSION['filters']) ? $_SESSION['filters'] : [];
 	$pink_sets = isset($_SESSION['pink_fac_sets']) ? $_SESSION['pink_fac_sets'] : [];
@@ -1372,8 +2679,8 @@ if(isset($_GET['download_pink'])){
 	$dqa_norm_hdr = isset($_SESSION['csv_norm']) ? $_SESSION['csv_norm'] : array_map('normalize_header', $header);
 	$metaCols = [];
 	$dqa_real_fac = isset($_SESSION['idxFac']) ? $_SESSION['idxFac'] : null;
-	$dqa_sc_col = array_search_first($dqa_norm_hdr, ['sub centre name','subcenter name','sub centre','subcenter','sub-centre name','subcentre_name','sub_centre_name','sub centre_name','sub center name']);
-	$dqa_ss_col = find_col_index_contains_any($header, ['session site name','session site']);
+	$dqa_sc_col = uwx_find_contains_any($header, array('sub center name','sub centre name','subcenter name','subcentre name','sub center','sub centre','subcenter','subcentre')); /* (changed 2026-11) as the analysis finds it */
+	$dqa_ss_col = uwx_find_contains_any($header, array('session site name','session site'));
 	foreach([$idxBlock, $dqa_real_fac, $dqa_sc_col, $dqa_ss_col, $idxMonth] as $mc){ if($mc!==null) $metaCols[(int)$mc]=true; }
 	$dqa_hl_all = (isset($_SESSION['dqa_hl']) && is_array($_SESSION['dqa_hl'])) ? $_SESSION['dqa_hl'] : array();
 	$dqa_hl_key = (isset($dqa_hl_all[$key]) && is_array($dqa_hl_all[$key])) ? $dqa_hl_all[$key] : array();
@@ -1408,626 +2715,75 @@ if(isset($_GET['download_pink'])){
 /* -------------------- Upload / Apply Filters flow -------------------- */
 $action = isset($_POST['action']) ? $_POST['action'] : null;
 
-if($action==='download_word_overall'){
-	// Word export for Overall Score (HTML-based .doc with embedded chart images).
-	$osHtml = isset($_POST['os_word_html']) ? (string)$_POST['os_word_html'] : '';
-	if(trim($osHtml)===''){ render_page("Nothing to export."); exit; }
-
-	header("Content-Type: application/msword; charset=utf-8");
-	header('Content-Disposition: attachment; filename="Overall_Summary.doc"');
-
-	echo "\xEF\xBB\xBF"; // UTF-8 BOM helps MS Word open the file correctly
-	echo "<html xmlns:v=\"urn:schemas-microsoft-com:vml\" ".
-		"xmlns:o=\"urn:schemas-microsoft-com:office:office\" ".
-		"xmlns:w=\"urn:schemas-microsoft-com:office:word\" ".
-		"xmlns:m=\"http://schemas.microsoft.com/office/2004/12/omml\" ".
-		"xmlns=\"http://www.w3.org/TR/REC-html40\">";
-	echo "<head>";
-	echo "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">";
-	echo "<meta charset=\"utf-8\">";
-	echo "<title>Overall Score</title>";
-	echo "<style>
-<!--@page
-	{size: A4 landscape; margin:1cm;}
-#OSOVERLAY
-	{inset:auto !important;
-	position:static;}
-.OSTOPBAR
-	{position:static;}
-.OSWRAP
-	{max-width:100% !important;}
-button{display:none !important;}
-img
-	{max-width:100%;height:auto;}
-.osBarImg
-	{width:660pt !important;max-width:660pt !important;height:auto !important;}
-canvas{display:none !important;}
-.BOX
-	{border-radius:12px;}
-.DOT
-	{display:inline-block;
-	border-radius:50%;}
-.IMGBOX
-	{border-radius:12px;}
-
- /* Font Definitions */
- @font-face
-	{font-family:\"Cambria Math\";
-	panose-1:2 4 5 3 5 4 6 3 2 4;
-	mso-font-charset:0;
-	mso-generic-font-family:roman;
-	mso-font-pitch:variable;
-	mso-font-signature:-536869121 1107305727 33554432 0 415 0;}
-@font-face
-	{font-family:Calibri;
-	panose-1:2 15 5 2 2 2 4 3 2 4;
-	mso-font-charset:0;
-	mso-generic-font-family:swiss;
-	mso-font-pitch:variable;
-	mso-font-signature:-469750017 -1040178053 9 0 511 0;}
- /* Style Definitions */
- p.MsoNormal, li.MsoNormal, div.MsoNormal
-	{mso-style-unhide:no;
-	mso-style-qformat:yes;
-	mso-style-parent:\"\";
-	margin:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.msonormal0, li.msonormal0, div.msonormal0
-	{mso-style-name:msonormal;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.oswtitle, li.oswtitle, div.oswtitle
-	{mso-style-name:oswtitle;
-	mso-style-unhide:no;
-	margin-top:0cm;
-	margin-right:0cm;
-	margin-bottom:4.0pt;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:20.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	font-weight:bold;}
-p.oswmeta, li.oswmeta, div.oswmeta
-	{mso-style-name:oswmeta;
-	mso-style-unhide:no;
-	margin-top:0cm;
-	margin-right:0cm;
-	margin-bottom:12.0pt;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	color:#334155;
-	font-weight:bold;}
-p.box, li.box, div.box
-	{mso-style-name:box;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	border:none;
-	mso-border-alt:solid #CBD5E1 .75pt;
-	padding:0cm;
-	mso-padding-alt:10.0pt 10.0pt 10.0pt 10.0pt;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.muted, li.muted, div.muted
-	{mso-style-name:muted;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	color:#475569;
-	font-weight:bold;}
-p.k, li.k, div.k
-	{mso-style-name:k;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:20.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	font-weight:bold;}
-p.sm, li.sm, div.sm
-	{mso-style-name:sm;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:11.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	color:#475569;
-	font-weight:bold;}
-p.tbl, li.tbl, div.tbl
-	{mso-style-name:tbl;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.sechead, li.sechead, div.sechead
-	{mso-style-name:sechead;
-	mso-style-unhide:no;
-	margin-top:14.0pt;
-	margin-right:0cm;
-	margin-bottom:6.0pt;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:16.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	font-weight:bold;}
-p.secsub, li.secsub, div.secsub
-	{mso-style-name:secsub;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:6.0pt;
-	mso-pagination:widow-orphan;
-	font-size:11.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	color:#64748B;
-	font-weight:bold;}
-p.impactrow, li.impactrow, div.impactrow
-	{mso-style-name:impactrow;
-	mso-style-unhide:no;
-	margin-top:8.0pt;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.dot, li.dot, div.dot
-	{mso-style-name:dot;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:6.0pt;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.dotany, li.dotany, div.dotany
-	{mso-style-name:dotany;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	background:#2563EB;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.dotall, li.dotall, div.dotall
-	{mso-style-name:dotall;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	background:#0F766E;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.impactval, li.impactval, div.impactval
-	{mso-style-name:impactval;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:6.0pt;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	font-weight:bold;}
-p.imgbox, li.imgbox, div.imgbox
-	{mso-style-name:imgbox;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	border:none;
-	mso-border-alt:solid #CBD5E1 .75pt;
-	padding:0cm;
-	mso-padding-alt:8.0pt 8.0pt 8.0pt 8.0pt;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-span.secsub1
-	{mso-style-name:secsub1;
-	mso-style-unhide:no;
-	mso-ansi-font-size:11.0pt;
-	mso-bidi-font-size:11.0pt;
-	color:#64748B;
-	font-weight:bold;}
-span.dot1
-	{mso-style-name:dot1;
-	mso-style-unhide:no;}
-span.impactval1
-	{mso-style-name:impactval1;
-	mso-style-unhide:no;
-	mso-ansi-font-size:12.0pt;
-	mso-bidi-font-size:12.0pt;
-	font-weight:bold;}
-.MsoChpDefault
-	{mso-style-type:export-only;
-	mso-default-props:yes;
-	font-size:10.0pt;
-	mso-ansi-font-size:10.0pt;
-	mso-bidi-font-size:10.0pt;
-	mso-font-kerning:0pt;
-	mso-ligatures:none;}
-@page WordSection1
-	{size:595.3pt 841.9pt;
-	margin:72.0pt 72.0pt 72.0pt 72.0pt;
-	mso-header-margin:35.4pt;
-	mso-footer-margin:35.4pt;
-	mso-paper-source:0;}
-div.WordSection1
-	{page:WordSection1;}
--->
-
-
-#osOverlay{inset:auto !important; position:static !important; display:block !important;}
-.osTopbar{position:static !important;}
-.osWrap{max-width:100% !important;}
-.box{border-radius:12px;}
-.dot{display:inline-block; border-radius:50%;}
-.imgbox{border-radius:12px;}
-</style>";
-	echo "</head>";
-	echo "<body lang=\"EN-IN\" style=\"tab-interval:36.0pt;word-wrap:break-word\">";
-	echo $osHtml;
-	echo "</body></html>";
-	exit;
-}
+/* (removed 2026-11) "Download Word" of the Overall Score page (action download_word_overall) */
 
 if($action==='upload' && isset($_FILES['csv_files'])){
-	/* Multi-file (month-wise) upload: up to 12 files. If Month column is not present in a file,
-	   the user-provided month (or filename-inferred month) is injected into a synthetic Month column.
-	   Output/analytics remain exactly the same as the single-file version. */
+	/* (changed 2026-11, web parity) The U-WIN upload works as in the DQA web application
+	   (uploadPeriod.ts, csvParser.ts):
+	   - the upload is declared Weekly or Monthly, and every file carries the From - To dates it
+	     covers: weekly = exactly 7 days, at most 4 files; monthly = 28 to 31 days, at most 12
+	     files, analysed as the calendar month holding most of its days (a tie goes to the later
+	     month); files consecutive (no overlap, no gap; monthly files on consecutive months); no
+	     date after today;
+	   - the declared period becomes the Month column of every row (a Month column naming 2 or
+	     more months outside the declared window is a multi-month export and is refused);
+	   - a second header row of vaccine codes is merged into the first; every file must have the
+	     same columns (Month aside); rows are kept in file order; blank cells stay blank. */
 	$f = $_FILES['csv_files'];
-
-	// Normalize the multi-upload array
 	$fileCount = is_array($f['name']) ? count($f['name']) : 0;
 	$files = [];
 	for($i=0;$i<$fileCount;$i++){
-		if(!isset($f['error'][$i])) continue;
-		if($f['error'][$i]===UPLOAD_ERR_NO_FILE) continue;
-		$files[] = [
-			'name' => $f['name'][$i],
-			'tmp_name' => $f['tmp_name'][$i],
-			'error' => $f['error'][$i],
+		if(!isset($f['error'][$i]) || $f['error'][$i]===UPLOAD_ERR_NO_FILE) continue;
+		$files[] = ['name'=>$f['name'][$i], 'tmp_name'=>$f['tmp_name'][$i], 'error'=>$f['error'][$i], 'idx'=>$i];
+	}
+	if(empty($files)){ render_page("Please select at least one CSV file."); exit; }
+	$uwxDuration = (isset($_POST['uwx_duration']) && in_array((string)$_POST['uwx_duration'], ['WEEKLY','MONTHLY'], true)) ? (string)$_POST['uwx_duration'] : '';
+	if($uwxDuration===''){ render_page("Please choose whether the files are weekly or monthly."); exit; }
+	$postFrom = isset($_POST['file_from']) ? (array)$_POST['file_from'] : [];
+	$postTo = isset($_POST['file_to']) ? (array)$_POST['file_to'] : [];
+	$uwxEntries = [];
+	foreach($files as $file){
+		if($file['error']!==UPLOAD_ERR_OK){ render_page("Upload failed for ".$file['name'].": error code ".$file['error']); exit; }
+		$uwxEntries[] = [
+			'fileName'=>$file['name'],
+			'from'=>trim((string)(isset($postFrom[$file['idx']]) ? $postFrom[$file['idx']] : '')),
+			'to'=>trim((string)(isset($postTo[$file['idx']]) ? $postTo[$file['idx']] : '')),
 		];
 	}
-
-	if(empty($files)){
-		render_page("Please select at least one CSV file.");
+	$uwxProblems = uwx_check_upload($uwxDuration, $uwxEntries);
+	if(!empty($uwxProblems)){ render_page($uwxProblems[0]); exit; }
+	$allOrigNames = []; $uwxPeriods = []; $fileRowsAll = [];
+	try {
+		foreach($files as $n=>$file){
+			$e = $uwxEntries[$n];
+			$key = uwx_upload_period_key($uwxDuration, $e['from'], $e['to']);
+			if($key===null) throw new Exception('Invalid reporting period for "'.$file['name'].'". Enter valid dates.');
+			$raw = uwx_read_csv($file['tmp_name']);
+			if($raw===null) throw new Exception('Cannot open uploaded file: '.$file['name']);
+			if(empty($raw)) throw new Exception('Empty file or unreadable header: '.$file['name']);
+			$fileRowsAll[] = uwx_apply_period($raw, ['duration'=>$uwxDuration,'from'=>$e['from'],'to'=>$e['to']], $key, $file['name']);
+			unset($raw);
+			$allOrigNames[] = $file['name'];
+			$uwxPeriods[] = ['fileName'=>$file['name'], 'from'=>$e['from'], 'to'=>$e['to'], 'key'=>$key, 'duration'=>$uwxDuration];
+		}
+		$uwxMerged = uwx_merge_files($fileRowsAll, $allOrigNames);
+		unset($fileRowsAll);
+		$canonicalHeader = $uwxMerged['header'];
+		$mergedRows = $uwxMerged['rows'];
+		unset($uwxMerged);
+		$uwxC0 = uwx_process($canonicalHeader, array()); /* the required columns (Block, Facility, Month) */
+	} catch(Exception $uwxErr){
+		render_page($uwxErr->getMessage());
 		exit;
 	}
-	if(count($files) > 12){
-		render_page("Please upload a maximum of 12 month-wise CSV files.");
-		exit;
-	}
-
-	// Month values from the UI (same order as files[])
-	$postMonths = isset($_POST['file_month']) ? (array)$_POST['file_month'] : [];
-	while(count($postMonths) < count($files)) $postMonths[] = '';
-
-	$parse_month_from_filename = function($fname){
-		$base = strtolower(basename((string)$fname));
-		/* (changed 2026-10) also when the month follows "_" or other text, e.g. UWIN_Jul-26.csv, uwin_2026_07.csv */
-		// yyyy-mm / yyyy_mm / yyyy mm
-		if(preg_match('/(?:^|\D)(20\d{2})[-_. ]?(0?[1-9]|1[0-2])(?!\d)/', $base, $m)){
-			$y = $m[1];
-			$mm = str_pad((string)(int)$m[2], 2, '0', STR_PAD_LEFT);
-			return $y.'-'.$mm;
-		}
-		// mon + year (jan..dec) + (yy|yyyy)
-		if(preg_match('/(?:^|[^a-z])(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[^a-z0-9]?(20\d{2}|\d{2})(?!\d)/', $base, $m)){
-			$mon = substr($m[1],0,3);
-			$yy = $m[2];
-			$year = (strlen($yy)===2) ? ('20'.$yy) : $yy;
-			// Return a Month-Year string that month_key() parses reliably
-			return ucfirst($mon).'-'.substr($year,-2);
-		}
-		return '';
-	};
-
-	$canonicalHeader = null;
-	$canonicalNorm = null;
-	$canonicalMap = [];
-	$mergedRows = [];
-	$dqa_row_file = []; /* (added 2026-10) file number of every merged row */
-
-	$firstOrigName = $files[0]['name'];
-	$allOrigNames = [];
-
-	// For detecting required columns in each file
-	$requiredBlockNames = ['lgd block name','lgd_block_name','lgd block','lgdblockname','block name','health block name','block','block_name'];
-	$requiredFacNames = ['health facility name','health_facility_name','facility name','facility_name'];
-	$monthNames         = ['month','reporting month','month name'];
-	$requiredUlbNames = ['lgd ulb name','lgd_ulb_name'];
-
-	foreach($files as $i=>$file){
-		$allOrigNames[] = $file['name'];
-
-		if($file['error']!==UPLOAD_ERR_OK){
-			render_page("Upload failed for ".h($file['name']).": error code ".$file['error']);
-			exit;
-		}
-		$csvPath = $file['tmp_name'];
-		$fh = fopen($csvPath,'r');
-		if(!$fh){
-			render_page("Cannot open uploaded file: ".h($file['name']));
-			exit;
-		}
-
-		
-$rawHeader = fgetcsv($fh);
-if(!$rawHeader){
-    fclose($fh);
-    render_page("Empty file or unreadable header: ".h($file['name']));
-    exit;
-}
-
-// Some UWIN downloads (especially after Excel conversion) may produce a 2-row header:
-// 1st row = long labels, 2nd row = short codes (BCG/OPV1/Penta1/etc).
-$secondRow = fgetcsv($fh);
-
-$header = [];
-$bufferFirstDataRow = null;
-
-if($secondRow && is_probably_second_header_row($rawHeader, $secondRow)){
-    $header = merge_two_header_rows($rawHeader, $secondRow);
-} else {
-    foreach($rawHeader as $hcell){ $header[] = strip_bom(trim((string)$hcell)); }
-    // If $secondRow is actually data, keep it as the first data row
-    $bufferFirstDataRow = $secondRow;
-}
-$norm = [];
-		foreach($header as $hcell){ $norm[] = normalize_header($hcell); }
-
-		$fileIdxBlock = find_block_col_index($header);
-		$fileIdxFac   = find_facility_col_index($header);
-		$fileIdxMonth = find_month_col_index($header);
-		/* (added) Newer UWIN exports have no "Health Facility Name" column; a
-		   "Session Site Name" column is enough to identify the analysis unit. */
-		$fileIdxSess  = find_col_index_contains_any($header, ['session site name','session site']);
-
-		if($fileIdxBlock===null || ($fileIdxFac===null && $fileIdxSess===null)){
-			fclose($fh);
-			render_page("Please upload CSV with required headers: LGD Block Name and Health Facility Name (or Session Site Name). Missing in: ".h($file['name']));
-			exit;
-		}
-
-		// Determine month for this file if Month column is absent
-		$fileMonthRaw = '';
-		if($fileIdxMonth===null){
-			$fileMonthRaw = trim((string)$postMonths[$i]);
-			if($fileMonthRaw==='') $fileMonthRaw = $parse_month_from_filename($file['name']);
-			if($fileMonthRaw===''){
-				fclose($fh);
-				render_page("Month column not found in ".h($file['name']).". Please enter the month for this file (e.g., 2025-04 or Apr-25).");
-				exit;
-			}
-			/* (added 2026-10) a month that cannot be read is refused here (before, the file's
-			   rows were dropped without any message); it is stored as e.g. "Jul-26". */
-			$dqa_fmk = dqa_uwin_month_input($fileMonthRaw);
-			if($dqa_fmk === null){
-				fclose($fh);
-				render_page('The month entered for '.$file['name'].' ("'.$fileMonthRaw.'") could not be read. Please type it as 2026-07 or Jul-26.');
-				exit;
-			}
-			$fileMonthRaw = month_label_from_key_my($dqa_fmk);
-		}
-
-		// Build canonical header from first file
-		if($canonicalHeader===null){
-			$canonicalHeader = $header;
-			$canonicalNorm = $norm;
-
-			// If Month is missing, insert synthetic Month column right after LGD ULB Name (UWIN format)
-			// Fallback: insert after Facility if LGD ULB Name is not present.
-			if($fileIdxMonth===null){
-				/* (changed) Insert the synthetic Month immediately BEFORE the first
-				   measure column ("Session Planned"), so that identifier columns which
-				   sit after "LGD ULB Name" in newer exports (Facility Category /
-				   Facility Type / Facility Sub-Type) are never mistaken for numeric
-				   indicators. For older exports "Session Planned" already follows
-				   "LGD ULB Name", so the resulting position is unchanged. */
-				$fileIdxSessP = find_col_index_contains_any($header, ['session planned','sessions planned']);
-				if($fileIdxSessP !== null){
-					$insPos = $fileIdxSessP;
-				} else {
-				$fileIdxLgdUlb = array_search_first($norm,$requiredUlbNames);
-				$after = ($fileIdxLgdUlb!==null) ? $fileIdxLgdUlb : (($fileIdxFac!==null) ? $fileIdxFac : $fileIdxSess);
-				$insPos = $after + 1;
-				}
-				array_splice($canonicalHeader, $insPos, 0, ['Month']);
-				array_splice($canonicalNorm, $insPos, 0, [normalize_header('Month')]);
-			}
-
-			// Build map norm->idx for canonical (first match only)
-			foreach($canonicalNorm as $ci=>$hn){
-				if(!isset($canonicalMap[$hn])) $canonicalMap[$hn] = $ci;
-			}
-		} else {
-			// Validate that this file matches canonical header (ignoring Month differences)
-			$canonNoMonth = [];
-			foreach($canonicalNorm as $hn){
-				if(in_array($hn,$monthNames,true)) continue;
-				$canonNoMonth[] = $hn;
-			}
-			$fileNoMonth = [];
-			foreach($norm as $hn){
-				if(in_array($hn,$monthNames,true)) continue;
-				$fileNoMonth[] = $hn;
-			}
-			if($canonNoMonth !== $fileNoMonth){
-				fclose($fh);
-				render_page("Header mismatch detected in ".h($file['name']).". Please ensure all month-wise files have the same columns (except Month).");
-				exit;
-			}
-		}
-
-		// Build per-file map norm->idx
-		$fileMap = [];
-		foreach($norm as $fi=>$hn){
-			if(!isset($fileMap[$hn])) $fileMap[$hn] = $fi;
-		}
-
-		// Ensure we know canonical indices for required fields
-		$idxBlock = find_block_col_index($canonicalHeader);
-		$idxFac   = find_facility_col_index($canonicalHeader);
-		$idxMonth = find_month_col_index($canonicalHeader);
-		if($idxMonth===null){
-			// In case Month was appended, it will normalize to 'month'
-			$idxMonth = array_search_first($canonicalNorm,['month']);
-		}
-
-		// Read rows and map into canonical shape
-		while(true){
-			if(isset($bufferFirstDataRow) && $bufferFirstDataRow!==null){
-				$r = $bufferFirstDataRow;
-				$bufferFirstDataRow = null;
-			} else {
-				$r = fgetcsv($fh);
-				if($r===false) break;
-			}
-
-			if(count($r)<count($header)) $r=array_pad($r,count($header),'');
-			$out = array_fill(0, count($canonicalHeader), '');
-
-			// Block & Facility
-			$out[$idxBlock] = isset($r[$fileIdxBlock]) ? $r[$fileIdxBlock] : '';
-			if($idxFac !== null && $fileIdxFac !== null){
-				$out[$idxFac] = isset($r[$fileIdxFac]) ? $r[$fileIdxFac] : '';
-			}
-
-			// Month
-			if($fileIdxMonth!==null){
-				$out[$idxMonth] = isset($r[$fileIdxMonth]) ? $r[$fileIdxMonth] : '';
-			} else {
-				$out[$idxMonth] = $fileMonthRaw;
-			}
-
-			// Copy all other canonical columns by header name
-			foreach($canonicalMap as $hn=>$ci){
-				if($ci===$idxBlock || $ci===$idxFac || $ci===$idxMonth) continue;
-				if(isset($fileMap[$hn])){
-					$fi = $fileMap[$hn];
-					$valTmp = isset($r[$fi]) ? $r[$fi] : '';
-					$out[$ci] = ($idxMonth!==null && $ci>$idxMonth) ? sanitize_number($valTmp) : $valTmp;
-}
-			}
-
-			$mergedRows[] = $out;
-			$dqa_row_file[] = $i;
-		}
-		fclose($fh);
-	}
-
-	/* (added 2026-10) the same session site and month must not come from two different
-	   files (e.g. one month uploaded twice): its values would otherwise be added twice. */
-	if(count($files) > 1 && isset($dqa_row_file) && count($dqa_row_file) === count($mergedRows)){
-		$dqa_cb = find_block_col_index($canonicalHeader);
-		$dqa_cf = find_facility_col_index($canonicalHeader);
-		$dqa_cm = find_month_col_index($canonicalHeader);
-		if($dqa_cm===null) $dqa_cm = array_search_first($canonicalNorm,['month']);
-		if($dqa_cf===null) $dqa_cf = array_search_first($canonicalNorm, ['sub district','subdistrict','sub-district','sub district name','subdistrict name','subdistrict_name','sub_district','sub_district_name']);
-		$dqa_csc = array_search_first($canonicalNorm, ['sub centre name','subcenter name','sub centre','subcenter','sub-centre name','subcentre_name','sub_centre_name','sub centre_name','sub center name']);
-		$dqa_css = find_col_index_contains_any($canonicalHeader, ['session site name','session site']);
-		$dqa_seen = array();
-		foreach($mergedRows as $dqa_ri=>$dqa_r){
-			$dqa_mk = ($dqa_cm!==null && isset($dqa_r[$dqa_cm])) ? month_key($dqa_r[$dqa_cm]) : null;
-			if($dqa_mk===null) continue;
-			$dqa_b = ($dqa_cb!==null && isset($dqa_r[$dqa_cb])) ? trim((string)$dqa_r[$dqa_cb]) : '';
-			$dqa_f = ($dqa_cf!==null && isset($dqa_r[$dqa_cf])) ? trim((string)$dqa_r[$dqa_cf]) : '';
-			if($dqa_b==='' && $dqa_f==='') continue;
-			$dqa_k = dqa_uwin_unit_key($dqa_r, $dqa_cb, $dqa_cf, $dqa_csc, $dqa_css).'##'.$dqa_mk;
-			$dqa_fi = $dqa_row_file[$dqa_ri];
-			if(isset($dqa_seen[$dqa_k]) && $dqa_seen[$dqa_k] !== $dqa_fi){
-				$dqa_site = ($dqa_css!==null && isset($dqa_r[$dqa_css])) ? trim((string)$dqa_r[$dqa_css]) : '';
-				render_page('The same session site and month were found in more than one uploaded file (for example '.display_block_label($dqa_b).' / '.$dqa_site.' / '.month_label_from_key_my($dqa_mk).' in '.$files[$dqa_seen[$dqa_k]]['name'].' and '.$files[$dqa_fi]['name'].'). The same month may have been uploaded twice. Please upload each month only once.');
-				exit;
-			}
-			if(!isset($dqa_seen[$dqa_k])) $dqa_seen[$dqa_k] = $dqa_fi;
-		}
-		unset($dqa_seen);
-	}
-
-	// Detect indices on canonical header
-	$idxBlock = find_block_col_index($canonicalHeader);
-	$idxFac   = find_facility_col_index($canonicalHeader);
-	$idxMonth = find_month_col_index($canonicalHeader);
-	$idxOwner = array_search_first($canonicalNorm,['ownership','ownership status']);
-	$idxRU    = array_search_first($canonicalNorm,['rural/urban','rural urban','rural-urban','rural - urban','ruralurban','rural','urban']);
-	$idxState = array_search_first($canonicalNorm,['state','state name','state_name']);
-	$idxDist  = array_search_first($canonicalNorm,['district','district name','district_name']);
-
-	$idxSessionSiteChk = find_col_index_contains_any($canonicalHeader, ['session site name','session site']);
-	if($idxBlock===null || $idxMonth===null || ($idxFac===null && $idxSessionSiteChk===null)){
-		render_page("Please upload CSV with required headers: LGD Block Name, Health Facility Name (or Session Site Name), Month (or provide month per file).");
-		exit;
-	}
+	$canonicalNorm = array_map('uwx_norm', $canonicalHeader);
+	$idxBlock = $uwxC0['idxBlock'];
+	$idxFac   = $uwxC0['idxFac'];
+	$idxMonth = $uwxC0['idxMonth'];
+	$idxOwner = $uwxC0['idxOwner'];
+	$idxRU    = $uwxC0['idxRU'];
+	$idxState = $uwxC0['idxState'];
+	$idxDist  = $uwxC0['idxDist'];
 
 	/* ==================================================================
 	   (added) DQA Launcher State verification + District override
@@ -2188,82 +2944,7 @@ $norm = [];
 	}
 	/* ============== end of added DQA launcher verification ============== */
 
-	/* NEW: Sort merged rows for consistent (sorted) downloads when multiple months are uploaded (applied safely for all uploads) */
-	$idxSubDist = array_search_first($canonicalNorm, ['sub district','subdistrict','sub-district','sub district name','subdistrict name','subdistrict_name','sub_district','sub_district_name']);
-	$idxSubCentre = array_search_first($canonicalNorm, ['sub centre name','subcenter name','sub centre','subcenter','sub-centre name','subcentre_name','sub_centre_name','sub centre_name','sub center name']);
-	$idxType = array_search_first($canonicalNorm, ['type','facility type','session type']);
-	$idxSessionSite = array_search_first($canonicalNorm, ['session site name','session site','session_site_name']);
-
-	if(!empty($mergedRows) && count($mergedRows) > 1){
-		$wrapped = [];
-		foreach($mergedRows as $ri=>$rr){ $wrapped[] = ['i'=>$ri,'r'=>$rr]; }
-
-		$cmpText = function($a,$b){
-			$a = trim((string)$a); $b = trim((string)$b);
-			if(function_exists('mb_strtolower')){ $a = mb_strtolower($a); $b = mb_strtolower($b); } else { $a = strtolower($a); $b = strtolower($b); }
-			return $a <=> $b;
-		};
-
-		usort($wrapped, function($A,$B) use ($idxState,$idxDist,$idxBlock,$idxSubDist,$idxFac,$idxSubCentre,$idxType,$idxSessionSite,$idxMonth,$cmpText){
-			$ra = $A['r']; $rb = $B['r'];
-
-			$get = function($row,$idx){ return ($idx!==null && isset($row[$idx])) ? $row[$idx] : ''; };
-
-			// Text keys
-			$keys = [
-				['idx'=>$idxState,'isMonth'=>false],
-				['idx'=>$idxDist,'isMonth'=>false],
-				['idx'=>$idxBlock,'isMonth'=>false],
-				['idx'=>$idxSubDist,'isMonth'=>false],
-				['idx'=>$idxFac,'isMonth'=>false],
-				['idx'=>$idxSubCentre,'isMonth'=>false],
-				['idx'=>$idxType,'isMonth'=>false],
-				['idx'=>$idxSessionSite,'isMonth'=>false],
-				['idx'=>$idxMonth,'isMonth'=>true],
-			];
-
-			foreach($keys as $k){
-				$idx = $k['idx'];
-				if($idx===null) continue;
-				$av = $get($ra,$idx);
-				$bv = $get($rb,$idx);
-				if($k['isMonth']){
-					$am = month_key($av);
-					$bm = month_key($bv);
-					$am = ($am===null) ? trim((string)$av) : $am;
-					$bm = ($bm===null) ? trim((string)$bv) : $bm;
-					$c = $cmpText($am,$bm);
-				} else {
-					$c = $cmpText($av,$bv);
-				}
-				if($c!==0) return $c;
-			}
-
-			// Stable tie-breaker
-			return $A['i'] <=> $B['i'];
-		});
-
-		$mergedRows = [];
-		foreach($wrapped as $w){ $mergedRows[] = $w['r']; }
-	}
-
-	if($STORE_TO_DB){
-		$db = db_connect($GLOBALS['DB_HOST'],$GLOBALS['DB_USER'],$GLOBALS['DB_PASS'],$GLOBALS['DB_NAME']);
-		db_bootstrap($db);
-		if($db){
-			$stmt=$db->prepare("INSERT INTO csv_uploads(filename,num_rows,header_json) VALUES(?,?,?)");
-			if($stmt){
-				$num_rows=count($mergedRows);
-				$hjson=json_encode($canonicalHeader,JSON_UNESCAPED_UNICODE);
-				$origName = 'merged: '.implode(', ', $allOrigNames);
-				$stmt->bind_param('sis',$origName,$num_rows,$hjson);
-				$stmt->execute();
-				$stmt->close();
-			}
-			$db->close();
-		}
-	}
-
+	/* (changed 2026-11, web parity) rows stay in file order, as the web application reads them */
 	$_SESSION['csv_header']=$canonicalHeader;
 	$_SESSION['csv_norm']=$canonicalNorm;
 	$_SESSION['csv_rows']=$mergedRows;
@@ -2274,7 +2955,9 @@ $norm = [];
 	$_SESSION['idxRU']=$idxRU;
 	$_SESSION['idxState']=$idxState;
 	$_SESSION['idxDist']=$idxDist;
-	$_SESSION['file_name']='merged_upload.csv';
+	$_SESSION['uwx_periods']=$uwxPeriods;   /* (added 2026-11) declared From - To of every file */
+	$_SESSION['uwx_duration']=$uwxDuration; /* (added 2026-11) WEEKLY / MONTHLY */
+	$_SESSION['file_name']=implode(', ', $allOrigNames);
 	$_SESSION['file_names']=$allOrigNames;
 	/* (added) identity of this upload: pages and downloads built from it carry the id,
 	   so data replaced later by another upload in this browser is detected */
@@ -2283,26 +2966,25 @@ $norm = [];
 	$_SESSION['dqa_upload_sig'] = dqa_data_sig();
 	$_SESSION['dqa_hl'] = [];
 
-	/* Default filters */
+	/* Default filters = the web application's U-WIN defaults; the analysis opens Sub
+	   Center-wise (Facility-wise when the file has no Sub Center column) */
 	$_SESSION['filters'] = [
 		'blocks'=>[],
 		'months'=>[],
 		'ownership'=>[],
 		'ru'=>[],
-		'outliers_vax'=>['BCG','Penta1','Penta3','OPV1','OPV3','MR1','MR2'],
+		'outliers_vax'=>uwx_outlier_vax(),
 		'add_vax'=>[],
 		'outliers_inc'=>['INC_EXT'],
 		'outliers_drop'=>['DROP_EXT'],
-		/* default ONLY >=20% */
 		'drop_ranges'=>['R20P'],
-		'drop_pairs'=>['Penta1→Penta3','MR1→MR2','BCG→MR1','Penta3→MR1'],
-		/* pair builder rows (index-wise) */
+		'drop_pairs'=>uwx_pair_defaults(),
 		'drop_from'=>[],
 		'drop_to'=>[],
-		/* NEW: inconsistencies pair builder rows (index-wise) */
 		'incons_from'=>[],
 		'incons_to'=>[],
 		'active_group' => '',
+		'analysis_mode' => uwx_standard_mode($uwxC0),
 	];
 
 	$_SESSION['hasApplied'] = false;
@@ -2355,12 +3037,14 @@ elseif($action==='refresh'){
 		'drop_ranges' => isset($_POST['drop_ranges']) ? (array)$_POST['drop_ranges'] : [],
 		'drop_pairs' => isset($_POST['drop_pairs']) ? (array)$_POST['drop_pairs'] : [],
 		/* pair builder rows (index-wise) */
-		'drop_from' => $clean_nonempty(isset($_POST['drop_from']) ? (array)$_POST['drop_from'] : []),
-		'drop_to' => $clean_nonempty(isset($_POST['drop_to']) ? (array)$_POST['drop_to'] : []),
+		/* (changed 2026-11, web parity) pair rows keep their position; an incomplete row is skipped */
+		'drop_from' => isset($_POST['drop_from']) ? array_map('strval', (array)$_POST['drop_from']) : [],
+		'drop_to' => isset($_POST['drop_to']) ? array_map('strval', (array)$_POST['drop_to']) : [],
 		/* NEW: inconsistencies pair builder rows (index-wise) */
-		'incons_from' => $clean_nonempty(isset($_POST['incons_from']) ? (array)$_POST['incons_from'] : []),
-		'incons_to' => $clean_nonempty(isset($_POST['incons_to']) ? (array)$_POST['incons_to'] : []),
+		'incons_from' => isset($_POST['incons_from']) ? array_map('strval', (array)$_POST['incons_from']) : [],
+		'incons_to' => isset($_POST['incons_to']) ? array_map('strval', (array)$_POST['incons_to']) : [],
 		'active_group' => isset($_POST['active_group']) ? (string)$_POST['active_group'] : (isset($prev['active_group']) ? (string)$prev['active_group'] : ''),
+		'analysis_mode' => isset($_POST['analysis_mode']) ? (string)$_POST['analysis_mode'] : (isset($prev['analysis_mode']) ? (string)$prev['analysis_mode'] : ''), /* (added 2026-11) */
 	];
 
 	$_SESSION['hasApplied'] = true;
@@ -2491,78 +3175,117 @@ function render_page($msg=null){
 					<input type="hidden" name="access_code" value="<?=h($GLOBALS['ACCESS_CODE_CURRENT'])?>">
 					<div class="formRow">
 						<div style="flex:1 1 520px">
-							<label>Select month-wise CSV file(s) (max 12). Use ctrl key to select multiple files.</label>
-							<input type="file" id="csv_files" name="csv_files[]" accept=".csv" multiple required>
-							<div id="monthMap" style="margin-top:10px"></div>
-							<div style="color:#475569;font-size:13px;margin-top:8px">
-								If your files do not contain a <b>Month</b> column, enter the month for each file below (e.g., <b>2025-04</b> or <b>Apr-25</b>).
-							</div>
-							<script>
-							(function(){
-								var inp = document.getElementById('csv_files');
-								var map = document.getElementById('monthMap');
-								if(!inp || !map) return;
-								function guessMonth(name){
-									var n = (name||'').toLowerCase();
-									var m = n.match(/(?:^|\D)(20\d{2})[-_. ]?(0?[1-9]|1[0-2])(?!\d)/);
-									if(m){
-										var y = m[1];
-										var mm = ('0' + parseInt(m[2],10)).slice(-2);
-										return y + '-' + mm;
+								<?php /* (changed 2026-11, web parity) Weekly / Monthly and the From - To dates of every file, as in the DQA web application */ ?>
+								<label>The files cover</label>
+								<div style="display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 12px">
+									<label style="display:flex;gap:8px;align-items:center;background:#fff;border:1px solid rgba(148,163,184,.55);border-radius:12px;padding:10px 12px;font-weight:800;cursor:pointer"><input type="radio" name="uwx_duration" value="MONTHLY" required> Monthly <span style="font-weight:600;color:#475569">(28 to 31 days per file, up to 12 files)</span></label>
+									<label style="display:flex;gap:8px;align-items:center;background:#fff;border:1px solid rgba(148,163,184,.55);border-radius:12px;padding:10px 12px;font-weight:800;cursor:pointer"><input type="radio" name="uwx_duration" value="WEEKLY"> Weekly <span style="font-weight:600;color:#475569">(exactly 7 days per file, up to 4 files)</span></label>
+								</div>
+								<label>Select U-WIN CSV file(s). Use the Ctrl key to select several files.</label>
+								<input type="file" id="csv_files" name="csv_files[]" accept=".csv" multiple required>
+								<div id="periodMap" style="margin-top:10px"></div>
+								<div id="periodMsg" style="display:none;margin-top:8px;color:#991b1b;font-weight:800;font-size:13px"></div>
+								<div style="color:#475569;font-size:13px;margin-top:8px">
+									Enter the <b>From</b> and <b>To</b> date each file covers (the dates the U-WIN report was taken for). A monthly file is analysed as the calendar month holding most of its days (20 Apr &ndash; 20 May is May). Files must follow one another, with no gap or overlap, and no date may be after today.
+								</div>
+								<script>
+								(function(){
+									var TODAY = <?=json_encode(uwx_today())?>;
+									var inp = document.getElementById('csv_files');
+									var map = document.getElementById('periodMap');
+									var msg = document.getElementById('periodMsg');
+									if(!inp || !map) return;
+									var form = inp.form;
+									var MON3 = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+									var MONF = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+									var MONS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+									function pad(n){ return (n < 10 ? '0' : '') + n; }
+									function dur(){ var r = form.querySelector('input[name="uwx_duration"]:checked'); return r ? r.value : ''; }
+									function monthEnd(ym){ var p = ym.split('-'); return ym + '-' + pad(new Date(Date.UTC(+p[0], +p[1], 0)).getUTCDate()); }
+									function addDays(iso, d){ var p = iso.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + d)).toISOString().slice(0, 10); }
+									function days(a, b){ var x = a.split('-'), y = b.split('-'); return Math.round((Date.UTC(+y[0], +y[1] - 1, +y[2]) - Date.UTC(+x[0], +x[1] - 1, +x[2])) / 86400000) + 1; }
+									function dayLabel(iso){ var p = iso.split('-'); return (+p[2]) + ' ' + MONS[+p[1] - 1] + ' ' + p[0]; }
+									/* the month in a file name, as the web application guesses it (csvParser.ts extractMonthFromFilename) */
+									function fileMonth(name){
+										var b = name.replace(/\.[^.]+$/, '').replace(/[_\-\s]+/g, ' ').toLowerCase(), m;
+										m = b.match(/\b((?:19|20)\d{2})\s+(\d{2})\b/); if(m && +m[2] >= 1 && +m[2] <= 12) return m[1] + '-' + pad(+m[2]);
+										m = b.match(/\b(\d{1,2})\s+((?:19|20)\d{2})\b/); if(m && +m[1] >= 1 && +m[1] <= 12) return m[2] + '-' + pad(+m[1]);
+										var yf = b.match(/\b((?:19|20)\d{2})\b/), y = yf ? +yf[1] : null;
+										if(!yf){ var ys = b.match(/\b(\d{2})\b/); y = ys ? 2000 + (+ys[1]) : null; }
+										if(!y) return null;
+										for(var i = 0; i < 12; i++){ if(b.indexOf(MONF[i]) >= 0 || b.indexOf(MON3[i]) >= 0) return y + '-' + pad(i + 1); }
+										return null;
 									}
-									m = n.match(/(?:^|[^a-z])(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[^a-z0-9]?(20\d{2}|\d{2})(?!\d)/);
-									if(m){
-										var mon = (m[1]||'').slice(0,3);
-										var y2 = m[2]||'';
-										if(y2.length===2) y2 = '20'+y2;
-										mon = mon.charAt(0).toUpperCase() + mon.slice(1);
-										return mon + '-' + y2.slice(-2);
+									/* To date for a newly picked From date (uploadPeriod.ts suggestedPeriodEnd) */
+									function suggestedEnd(d, from){
+										if(d === 'WEEKLY') return addDays(from, 6);
+										if(from.slice(8) === '01') return monthEnd(from.slice(0, 7));
+										var p = from.split('-'), ny = (+p[1] === 12) ? (+p[0] + 1) : +p[0], nm = (+p[1] === 12) ? 1 : (+p[1] + 1);
+										var nym = ny + '-' + pad(nm), last = +monthEnd(nym).slice(8);
+										return addDays(nym + '-' + pad(Math.min(+p[2], last)), -1);
 									}
-									return '';
-								}
-								function rebuild(){
-									map.innerHTML = '';
-									var files = inp.files;
-									if(!files || !files.length) return;
-									if(files.length > 12){
-										alert('Please select up to 12 month-wise files.');
-										inp.value = '';
-										return;
+									function fits(d, from, to){ if(!from || !to || from > to) return false; var n = days(from, to); return d === 'WEEKLY' ? n === 7 : (n >= 28 && n <= 31); }
+									function rebuild(){
+										msg.style.display = 'none';
+										map.innerHTML = '';
+										var files = inp.files;
+										if(!files || !files.length) return;
+										var d = dur();
+										var t = document.createElement('table');
+										t.style.width = '100%'; t.style.borderCollapse = 'collapse';
+										t.innerHTML = '<thead><tr><th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0">File</th><th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0">From</th><th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0">To</th></tr></thead>';
+										var tb = document.createElement('tbody');
+										for(var i = 0; i < files.length; i++){
+											var tr = document.createElement('tr');
+											var td = document.createElement('td'); td.style.padding = '6px 8px'; td.style.borderBottom = '1px solid #f1f5f9'; td.textContent = files[i].name; tr.appendChild(td);
+											var fm = (d === 'MONTHLY') ? fileMonth(files[i].name) : null;
+											var from = fm ? fm + '-01' : '', to = fm ? monthEnd(fm) : '';
+											['file_from[]', 'file_to[]'].forEach(function(nm, k){
+												var c = document.createElement('td'); c.style.padding = '6px 8px'; c.style.borderBottom = '1px solid #f1f5f9';
+												var e = document.createElement('input'); e.type = 'date'; e.name = nm; e.max = TODAY; e.required = true;
+												e.value = k === 0 ? from : to;
+												e.style.padding = '9px 10px'; e.style.border = '1px solid #e2e8f0'; e.style.borderRadius = '10px';
+												c.appendChild(e); tr.appendChild(c);
+											});
+											(function(row){
+												var a = row.querySelector('input[name="file_from[]"]'), b = row.querySelector('input[name="file_to[]"]');
+												a.addEventListener('change', function(){ var dd = dur(); if(a.value && dd && (dd === 'WEEKLY' || !fits(dd, a.value, b.value))) b.value = suggestedEnd(dd, a.value); });
+												b.addEventListener('change', function(){ if(b.value && dur() === 'WEEKLY') a.value = addDays(b.value, -6); });
+											})(tr);
+											tb.appendChild(tr);
+										}
+										t.appendChild(tb);
+										map.appendChild(t);
 									}
-									var table = document.createElement('table');
-									table.style.width = '100%';
-									table.style.borderCollapse = 'collapse';
-									table.innerHTML = '<thead><tr><th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0">File</th><th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0">Month for this file (only if Month column missing)</th></tr></thead>';
-									var tb = document.createElement('tbody');
-									for(var i=0;i<files.length;i++){
-										var tr = document.createElement('tr');
-										var td1 = document.createElement('td');
-										td1.style.padding = '6px 8px';
-										td1.style.borderBottom = '1px solid #f1f5f9';
-										td1.textContent = files[i].name;
-										var td2 = document.createElement('td');
-										td2.style.padding = '6px 8px';
-										td2.style.borderBottom = '1px solid #f1f5f9';
-										var input = document.createElement('input');
-										input.type = 'text';
-										input.name = 'file_month[]';
-										input.placeholder = 'e.g., 2025-04 or Apr-25';
-										input.value = guessMonth(files[i].name);
-										input.style.width = '100%';
-										input.style.padding = '10px 12px';
-										input.style.border = '1px solid #e2e8f0';
-										input.style.borderRadius = '10px';
-										td2.appendChild(input);
-										tr.appendChild(td1);
-										tr.appendChild(td2);
-										tb.appendChild(tr);
+									/* the rules of uploadPeriod.ts, checked before the files are sent (the server checks them again) */
+									function problems(){
+										var d = dur(), rows = map.querySelectorAll('tbody tr'), list = [];
+										if(!d) return 'Please choose whether the files are weekly or monthly.';
+										var maxF = d === 'WEEKLY' ? 4 : 12;
+										if(rows.length > maxF) return (d === 'WEEKLY' ? 'Weekly' : 'Monthly') + ' uploads take at most ' + maxF + ' files (' + (d === 'WEEKLY' ? 'one per week' : 'one per month') + '). You selected ' + rows.length + '.';
+										for(var i = 0; i < rows.length; i++){
+											var nm = rows[i].cells[0].textContent, a = rows[i].querySelector('input[name="file_from[]"]').value, b = rows[i].querySelector('input[name="file_to[]"]').value;
+											if(!a || !b) return nm + ': Enter both a From date and a To date.';
+											if(a > b) return nm + ': The From date must be on or before the To date.';
+											if(b > TODAY) return nm + ': Dates cannot be in the future. The latest allowed date is today, ' + dayLabel(TODAY) + '.';
+											if(!fits(d, a, b)) return nm + ': ' + (d === 'WEEKLY' ? 'A weekly file must cover exactly 7 days. ' : 'A monthly file must cover 28 to 31 days. ') + 'This window covers ' + days(a, b) + ' day' + (days(a, b) === 1 ? '' : 's') + '.';
+											list.push({ n: nm, a: a, b: b });
+										}
+										list.sort(function(x, y){ return x.a < y.a ? -1 : (x.a > y.a ? 1 : (x.b < y.b ? -1 : 1)); });
+										for(var j = 1; j < list.length; j++){
+											if(list[j].a <= list[j - 1].b) return '"' + list[j - 1].n + '" and "' + list[j].n + '" overlap. Each file must cover different days.';
+											if(list[j].a !== addDays(list[j - 1].b, 1)) return '"' + list[j - 1].n + '" and "' + list[j].n + '" are not consecutive. Each file must start the day after the previous one ends.';
+										}
+										return '';
 									}
-									table.appendChild(tb);
-									map.appendChild(table);
-								}
-								inp.addEventListener('change', rebuild);
-							})();
-							</script>
+									inp.addEventListener('change', rebuild);
+									Array.prototype.forEach.call(form.querySelectorAll('input[name="uwx_duration"]'), function(r){ r.addEventListener('change', rebuild); });
+									form.addEventListener('submit', function(ev){
+										var p = problems();
+										if(p){ ev.preventDefault(); msg.textContent = p; msg.style.display = 'block'; }
+									});
+								})();
+								</script>
 							<div style="color:#475569;font-size:15px;margin-top:8px">
 								UIP Reports->Coverage->Session Site data to be downloaded from UWIN Portal.
 								
@@ -2814,7 +3537,7 @@ function render_outliers_two_level($t3_web){
 					echo "<td></td><td></td><td></td>";
 				} else {
 					$a = $cell['a']; $b = $cell['b']; $pct = $cell['pct'];
-					$pctStr = ($pct===null) ? '' : (($pct>0?'+':'').round($pct,1).'%');
+					$pctStr = !empty($cell['fromZero']) ? 'from 0' : (($pct===null) ? '' : (($pct>0?'+':'').round($pct,1).'%'));
 					echo "<td>".h($a===null?'':round($a))."</td>";
 					echo "<td>".h($b===null?'':round($b))."</td>";
 					echo "<td>".h($pctStr)."</td>";
@@ -2959,177 +3682,6 @@ function render_coadmin_two_level($web){
 }
 
 /* -------------------- Render: Results -------------------- */
-/* ==================================================================
-   (added 2026-10) data of the DQA 2-pager report (small unlabelled button, top left)
-   ------------------------------------------------------------------
-   The report (A4 portrait, laid out like the DQA 2-pager template) is drawn in
-   the browser and saved with the print window's "Save as PDF". Its data is built
-   here only from figures this page already shows, so every number agrees with
-   the cards, panels and Overall Score:
-   - the KPI cards of the Overall Score components (in card order) and their totals;
-   - the units each card counts = the same unit sets as its table, chart and
-     highlighted download ($_SESSION['pink_fac_sets'][downloadKey]);
-   - the component and overall scores and the denominator (units under the
-     current selection).
-   Issues of a unit = number of those KPI cards that count the unit.
-   Nothing is written to the session or to the database.
-   ================================================================== */
-function dqa2p_month_full($mk){
-	$p = explode('-', (string)$mk);
-	$y = isset($p[0]) ? (int)$p[0] : 0; $m = isset($p[1]) ? (int)$p[1] : 0;
-	if($y <= 0 || $m < 1 || $m > 12) return (string)$mk;
-	$n = array('January','February','March','April','May','June','July','August','September','October','November','December');
-	return $n[$m - 1].' '.$y;
-}
-function dqa2p_month_short($mk){
-	$p = explode('-', (string)$mk);
-	$y = isset($p[0]) ? (int)$p[0] : 0; $m = isset($p[1]) ? (int)$p[1] : 0;
-	if($y <= 0 || $m < 1 || $m > 12) return (string)$mk;
-	$n = array('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec');
-	return $n[$m - 1].'-'.substr(sprintf('%04d', $y), -2);
-}
-/* Selected months: "January 2026" / "January 2026 to March 2026" / a list when months are missing in between */
-function dqa2p_period($keys, $short){
-	$k = array_values(array_unique(array_map('strval', (array)$keys)));
-	sort($k, SORT_STRING);
-	$n = count($k);
-	if($n === 0) return '—';
-	$f = $short ? 'dqa2p_month_short' : 'dqa2p_month_full';
-	if($n === 1) return $f($k[0]);
-	$ix = array();
-	foreach($k as $mk){ $p = explode('-', $mk); $ix[] = (isset($p[0]) ? (int)$p[0] : 0) * 12 + (isset($p[1]) ? (int)$p[1] : 0); }
-	$contig = true;
-	for($i = 1; $i < $n; $i++){ if($ix[$i] !== $ix[$i - 1] + 1){ $contig = false; break; } }
-	if($contig) return $f($k[0]).' to '.$f($k[$n - 1]);
-	return implode(', ', array_map($f, $k));
-}
-function dqa2p_build($p){
-	$den = (int)$p['den'];
-	$units = is_array($p['units']) ? $p['units'] : array();
-	$sets = is_array($p['sets']) ? $p['sets'] : array();
-	$uw = ($p['kind'] === 'uw');
-	/* every unit under the selection: its block (as in the tool's tables and charts) and its name */
-	$blockOf = array(); $nameOf = array(); $issues = array();
-	foreach($units as $k => $u){
-		$blockOf[$k] = display_block_label(isset($u['block']) ? $u['block'] : '');
-		$nameOf[$k] = (string)($uw ? (isset($u['sessionsite']) ? $u['sessionsite'] : '') : (isset($u['facility']) ? $u['facility'] : ''));
-		$issues[$k] = 0;
-	}
-	if($uw){
-		/* one session-site name used by two sites of a block (under different facilities): the facility is added */
-		$grp = array();
-		foreach($nameOf as $k => $nm){ $grp[$blockOf[$k]."\x1F".$nm][] = $k; }
-		foreach($grp as $ks){
-			if(count($ks) < 2) continue;
-			foreach($ks as $k){
-				$fn = trim((string)(isset($units[$k]['facility']) ? $units[$k]['facility'] : ''));
-				if($fn !== '') $nameOf[$k] .= ' ('.$fn.')';
-			}
-		}
-	}
-	$blocks = array();
-	foreach($blockOf as $k => $b){ $blocks[$b][] = $k; }
-	/* the selected dropout ranges / outlier buckets, named with the worst KPI when it is a Dropouts / Outliers card */
-	$flt = (isset($p['filters']) && is_array($p['filters'])) ? $p['filters'] : array();
-	$qDrop = array();
-	foreach(array('R5_10'=>'5–10.99%', 'R11_20'=>'11–19.99%', 'R20P'=>'>=20%') as $rk => $rl){
-		if(in_array($rk, (array)(isset($flt['drop_ranges']) ? $flt['drop_ranges'] : array()), true)) $qDrop[] = $rl;
-	}
-	$qOut = array();
-	foreach(array('INC_LOW'=>'25–50.49 Low', 'INC_MOD'=>'50.50–100 Moderate', 'INC_EXT'=>'>100 Extreme') as $bk => $bl){
-		if(in_array($bk, (array)(isset($flt['outliers_inc']) ? $flt['outliers_inc'] : array()), true)) $qOut[] = $bl;
-	}
-	foreach(array('DROP_LOW'=>'−25 to −50.49 Low', 'DROP_MOD'=>'−50.50 to −100 Moderate', 'DROP_EXT'=>'<−100 Extreme') as $bk => $bl){
-		if(in_array($bk, (array)(isset($flt['outliers_drop']) ? $flt['outliers_drop'] : array()), true)) $qOut[] = $bl;
-	}
-	/* KPI cards of the Overall Score components */
-	$comps = array(); $chk = array();
-	foreach($p['comps'] as $gid => $g){
-		$sc = isset($g['score']) ? $g['score'] : null;
-		$comps[$gid] = array('id'=>(string)$gid, 'name'=>(string)$g['name'], 'score'=>($sc === null ? null : (string)round((float)$sc)), 'kpis'=>array(), 'worst'=>null);
-	}
-	$kpiBlocks = array();  /* [component][kpi index] => block => units */
-	$typeSeen = array();   /* block => KPI => true (KPIs with at least one unit in the block) */
-	foreach($p['cards'] as $c){
-		$gid = isset($c['group']) ? (string)$c['group'] : '';
-		if(!isset($comps[$gid])) continue;
-		$n = isset($c['stat']['total']) ? (int)$c['stat']['total'] : 0;
-		$dk = isset($c['downloadKey']) ? (string)$c['downloadKey'] : '';
-		$list = isset($sets[$dk]) ? (array)$sets[$dk] : array();
-		$byB = array(); $cnt = 0; $seenU = array();
-		foreach($list as $k){
-			if(!isset($units[$k]) || isset($seenU[$k])) continue;
-			$seenU[$k] = true;
-			$cnt++;
-			$issues[$k]++;
-			$b = $blockOf[$k];
-			$byB[$b] = isset($byB[$b]) ? $byB[$b] + 1 : 1;
-			$typeSeen[$b][$gid.'|'.$c['id']] = true;
-		}
-		if($cnt !== $n) $chk[] = (string)$c['name'];
-		$q = '';
-		if(strpos((string)$c['id'], 'drop_') === 0 && !empty($qDrop)) $q = ' ('.implode(', ', $qDrop).')';
-		elseif((string)$c['id'] === 't3' && !empty($qOut)) $q = ' ('.implode(', ', $qOut).')';
-		$comps[$gid]['kpis'][] = array('id'=>(string)$c['id'], 'name'=>(string)$c['name'], 'q'=>$q, 'n'=>$n,
-			'pct'=>($den > 0 ? number_format($n * 100.0 / $den, 1) : '0.0'), 'worst'=>false);
-		$kpiBlocks[$gid][] = $byB;
-	}
-	/* worst KPI of each component (the one that sets its score) and its units per block */
-	foreach($comps as $gid => $g){
-		$max = 0;
-		foreach($g['kpis'] as $kp){ if($kp['n'] > $max) $max = $kp['n']; }
-		if($max <= 0 || $den <= 0) continue;
-		$names = array(); $first = null;
-		foreach($g['kpis'] as $i => $kp){
-			if($kp['n'] !== $max) continue;
-			$comps[$gid]['kpis'][$i]['worst'] = true;
-			$names[] = $kp['name'].$kp['q'];
-			if($first === null) $first = $i;
-		}
-		$byB = isset($kpiBlocks[$gid][$first]) ? $kpiBlocks[$gid][$first] : array();
-		$bl = array();
-		foreach($blocks as $b => $ks){ $bl[] = array('b'=>(string)$b, 'n'=>(isset($byB[$b]) ? (int)$byB[$b] : 0)); }
-		usort($bl, function($x, $y){ if($x['n'] !== $y['n']) return ($x['n'] > $y['n']) ? -1 : 1; return strnatcasecmp($x['b'], $y['b']); });
-		$comps[$gid]['worst'] = array('n'=>$max, 'pct'=>number_format($max * 100.0 / $den, 1), 'names'=>$names,
-			'chart'=>$g['kpis'][$first]['name'].$g['kpis'][$first]['q'], 'blocks'=>$bl);
-	}
-	/* blocks: units by number of issues, KPIs with at least one unit in the block, top 3 units */
-	$rowsB = array(); $tot = array('g4'=>0, 'g13'=>0, 'g0'=>0, 'tot'=>0);
-	foreach($blocks as $b => $ks){
-		$g4 = 0; $g13 = 0; $g0 = 0; $cand = array();
-		foreach($ks as $k){
-			$is = $issues[$k];
-			if($is >= 4) $g4++; elseif($is >= 1) $g13++; else $g0++;
-			if($is >= 1) $cand[] = array('u'=>$nameOf[$k], 'n'=>$is);
-		}
-		usort($cand, function($x, $y){ if($x['n'] !== $y['n']) return ($x['n'] > $y['n']) ? -1 : 1; return strnatcasecmp($x['u'], $y['u']); });
-		$rowsB[] = array('b'=>(string)$b, 'types'=>(isset($typeSeen[$b]) ? count($typeSeen[$b]) : 0), 'g4'=>$g4, 'g13'=>$g13, 'g0'=>$g0, 'tot'=>count($ks), 'top'=>array_slice($cand, 0, 3));
-		$tot['g4'] += $g4; $tot['g13'] += $g13; $tot['g0'] += $g0; $tot['tot'] += count($ks);
-	}
-	usort($rowsB, function($x, $y){ if($x['types'] !== $y['types']) return ($x['types'] > $y['types']) ? -1 : 1; return strnatcasecmp($x['b'], $y['b']); });
-	$nKpi = 0; foreach($comps as $g){ $nKpi += count($g['kpis']); }
-	$dist = (string)$p['district'];
-	$file = 'DQA_2-pager_'.$p['tool'].(($dist !== '' && $dist !== '—' && $dist !== 'Multiple') ? '_'.$dist : '').'_'.dqa2p_period($p['months'], true);
-	$file = trim(preg_replace('/_+/', '_', preg_replace('/[^A-Za-z0-9\-]+/', '_', $file)), '_');
-	return array(
-		'tool'=>(string)$p['tool'], 'unit'=>($uw ? 'session sites' : 'facilities'), 'unitOne'=>($uw ? 'session site' : 'facility'),
-		'state'=>(string)$p['state'], 'district'=>$dist,
-		'period'=>dqa2p_period($p['months'], false), 'periodShort'=>dqa2p_period($p['months'], true),
-		'den'=>$den, 'blocks'=>(int)$p['blocksCount'],
-		'overall'=>($p['overall'] === null ? null : number_format((float)$p['overall'], 1)),
-		'selection'=>array_values(array_map('strval', (array)$p['selection'])),
-		'comps'=>array_values($comps), 'kpiCount'=>$nKpi,
-		'blockRows'=>$rowsB, 'totals'=>$tot, 'chk'=>$chk, 'file'=>$file
-	);
-}
-/* JSON for a <script> block: <, >, &, quotes escaped; invalid UTF-8 replaced instead of failing */
-function dqa2p_json($data){
-	$fl = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE;
-	if(defined('JSON_INVALID_UTF8_SUBSTITUTE')) $fl |= JSON_INVALID_UTF8_SUBSTITUTE;
-	$j = json_encode($data, $fl);
-	return ($j === false) ? 'null' : $j;
-}
-/* ============== end of added DQA 2-pager data ============== */
 
 function render_results_with_data(){
 	$APP_NAME = $GLOBALS['APP_NAME'];
@@ -3137,1742 +3689,251 @@ function render_results_with_data(){
 
 	$header = $_SESSION['csv_header'];
 	$rows = $_SESSION['csv_rows'];
-	$idxBlock = $_SESSION['idxBlock'];
-	$idxFac = isset($_SESSION['idxFac']) ? $_SESSION['idxFac'] : null;
-	$GLOBALS['DQA_HAS_FAC'] = ($idxFac !== null);
-	/* (added) When the file has no "Health Facility Name" column (newer UWIN
-	   format), use the Sub District column in its place INSIDE THE IDENTITY KEY
-	   only, so that two session sites with the same name in different sub
-	   districts of one block are never merged into one. This value is never
-	   displayed (all facility cells/columns are hidden when the column is
-	   absent); it only keeps the session-site counting and grouping accurate. */
-	if($idxFac === null){
-		$dqa_norm_tmp = isset($_SESSION['csv_norm']) ? $_SESSION['csv_norm'] : array_map('normalize_header', $header);
-		$idxFac = array_search_first($dqa_norm_tmp, ['sub district','subdistrict','sub-district','sub district name','subdistrict name','subdistrict_name','sub_district','sub_district_name']);
-	}
-	$idxMonth = $_SESSION['idxMonth'];
-	$idxOwner = isset($_SESSION['idxOwner']) ? $_SESSION['idxOwner'] : null;
-	$idxRU = isset($_SESSION['idxRU']) ? $_SESSION['idxRU'] : null;
-	$idxState = isset($_SESSION['idxState']) ? $_SESSION['idxState'] : null;
-	$idxDist = isset($_SESSION['idxDist']) ? $_SESSION['idxDist'] : null;
-	/* NEW: Session Site column (all KPIs are now session-site-wise) */
-	$idxSessionSite = find_col_index_contains_any($header, ['session site name','session site']);
 	$filters = isset($_SESSION['filters']) ? $_SESSION['filters'] : [];
 	$fileName = isset($_SESSION['file_name']) ? $_SESSION['file_name'] : 'uploaded.csv';
 	$hasApplied = isset($_SESSION['hasApplied']) ? (bool)$_SESSION['hasApplied'] : false;
 	$justUploaded = !empty($_SESSION['just_uploaded']);
 	unset($_SESSION['just_uploaded']);
-	/* (added 2026-10) the download data of the previous page is rebuilt below: release it
-	   first, so large files stay within the memory limit */
+	/* the download data of the previous page is rebuilt below: release it first, so large files
+	   stay within the memory limit */
 	$_SESSION['exports'] = [];
 	$_SESSION['dqa_hl'] = [];
 	$_SESSION['pink_fac_sets'] = []; $_SESSION['pink_outlier_hits'] = []; $_SESSION['pink_dropout_hits'] = []; $_SESSION['pink_repeat_hits'] = [];
 
+	/* (changed 2026-11, web parity) The analysis is the DQA web application's U-WIN analysis
+	   (web parity engine above): units at the selected level - Facility-wise, Sub Center-wise
+	   (the default, as in the web application) or Session Site-wise - every check, its rules and
+	   its counts. The screens, tables and downloads below show its results. */
+	$uwxC = uwx_process($header, $rows);
+	$idxMonth = $uwxC['idxMonth'];
+	$stdMode = uwx_standard_mode($uwxC);
+	$uwxModes = ['facility'=>'Facility-wise'];
+	if($uwxC['idxSubCenter'] !== null) $uwxModes['subcenter'] = 'Sub Center-wise';
+	if($uwxC['idxSessionSite'] !== null) $uwxModes['sessionsite'] = 'Session Site-wise';
+	$uwxMode = (isset($filters['analysis_mode']) && isset($uwxModes[(string)$filters['analysis_mode']])) ? (string)$filters['analysis_mode'] : $stdMode;
+	$GLOBALS['DQA_MODE'] = $uwxMode;
+	$unitPlural = ['facility'=>'facilities', 'subcenter'=>'sub centers', 'sessionsite'=>'session sites'][$uwxMode];
+	$unitTitle = ['facility'=>'Facilities', 'subcenter'=>'Sub Centers', 'sessionsite'=>'Session Sites'][$uwxMode];
+
 	$BASE_VAX = ['BCG','Penta1','Penta3','OPV1','OPV3','MR1','MR2'];
-
-	$ADD_VAX = ['RVV1','RVV2','RVV3','IPV1','IPV2','IPV3','PCV1','PCV2','PCV Booster','HepB0','DPT 1st Booster'];
-
-	/* Build data map per session site
-	   (changed 2026-10) One session site = LGD Block + Health Facility (in the newer format
-	   without that column: the Sub District, never shown) + Sub Center + Session Site Name,
-	   compared without case/extra-space differences: two sites sharing a name under
-	   different sub centres are no longer merged (their names are followed by the sub
-	   centre in the tables), and rows with a blank Session Site Name form their own site
-	   ("(blank)"), counted in Number of session sites. Several rows of one site in one month
-	   are added up (as before); every month keeps the numbers of its rows ('ris') so the
-	   highlighted download marks exactly the cells counted on screen. Blank cells stay
-	   blank. Month labels carry the year (Jul-26). */
-	$dqaNormHdr = isset($_SESSION['csv_norm']) ? $_SESSION['csv_norm'] : array_map('normalize_header', $header);
-	$idxSubCentre = array_search_first($dqaNormHdr, ['sub centre name','subcenter name','sub centre','subcenter','sub-centre name','subcentre_name','sub_centre_name','sub centre_name','sub center name']);
-	$dqa_t0_sessH = find_index_by_code($header,'sessions held');
-	if($dqa_t0_sessH===null) $dqa_t0_sessH = find_col_index_contains_any($header, ['session held','sessions held']);
-	$dqa_t0_sessP = find_index_by_code($header,'sessions planned');
-	if($dqa_t0_sessP===null) $dqa_t0_sessP = find_col_index_contains_any($header, ['session planned','sessions planned']);
-	$facData=[];
-	$allMonthKeys=[];
-	$statesSet=[];
-	$distsSet=[];
-	$dqaBadMonthRows = 0; /* rows left out because their Month cannot be read */
-	$dqaBadMonthExample = '';
-	$dqaBlockCanon = [];
-	foreach($rows as $dqa_ri=>$r){
-		if(count($r) < count($header)) $r = array_pad($r, count($header), '');
-		$block = isset($r[$idxBlock]) ? trim((string)$r[$idxBlock]) : '';
-		$fac = isset($r[$idxFac]) ? trim((string)$r[$idxFac]) : '';
-		$sess = ($idxSessionSite!==null && isset($r[$idxSessionSite])) ? trim((string)$r[$idxSessionSite]) : '';
-		$subc = ($idxSubCentre!==null && isset($r[$idxSubCentre])) ? trim((string)$r[$idxSubCentre]) : '';
-		$monRaw= isset($r[$idxMonth]) ? (string)$r[$idxMonth] : '';
-		if($block==='' && $fac==='') continue;
-		if(trim($monRaw)==='') continue;
-		$mKey = month_key($monRaw);
-		if($mKey===null){
-			$dqaBadMonthRows++;
-			if($dqaBadMonthExample==='') $dqaBadMonthExample = trim($monRaw);
-			continue;
-		}
-		$mLbl = month_label_from_key_my($mKey);
-
-		$own = ($idxOwner!==null && isset($r[$idxOwner])) ? normalize_ownership($r[$idxOwner]) : '';
-		$ru = ($idxRU!==null && isset($r[$idxRU])) ? normalize_ru($r[$idxRU]) : '';
-
-		/* (changed) Key State/District on a case-insensitive form so that files
-		   mixing e.g. "UTTAR PRADESH" and "Uttar Pradesh" resolve to ONE name
-		   instead of showing "Multiple"; the first spelling seen is displayed. */
-		if($idxState!==null && isset($r[$idxState])){
-			$sv=trim((string)$r[$idxState]);
-			if($sv!==''){
-				$svk = function_exists('mb_strtolower') ? mb_strtolower($sv,'UTF-8') : strtolower($sv);
-				if(!isset($statesSet[$svk])) $statesSet[$svk]=$sv;
-			}
-		}
-		if($idxDist!==null && isset($r[$idxDist])){
-			$dv=trim((string)$r[$idxDist]);
-			if($dv!==''){
-				$dvk = function_exists('mb_strtolower') ? mb_strtolower($dv,'UTF-8') : strtolower($dv);
-				if(!isset($distsSet[$dvk])) $distsSet[$dvk]=$dv;
-			}
-		}
-
-		$allMonthKeys[$mKey]=true;
-		$key = dqa_uwin_unit_key($r, $idxBlock, $idxFac, $idxSubCentre, $idxSessionSite);
-		if(!isset($facData[$key])){
-			/* one spelling per block (the first one met), so options, charts and counts agree */
-			$dqa_bk = dqa_unit_norm($block);
-			if(!isset($dqaBlockCanon[$dqa_bk])) $dqaBlockCanon[$dqa_bk] = $block;
-			$facData[$key]=[
-				'block'=>$dqaBlockCanon[$dqa_bk],'facility'=>$fac,'subcentre'=>$subc,
-				'sessionsite'=>($sess!=='' ? $sess : '(blank)'),'sessname'=>$sess,
-				'ownership'=>'','ru'=>'',
-				'months'=>[]
-			];
-		}
-
-		if($own!==''){
-			if($facData[$key]['ownership']===''){ $facData[$key]['ownership']=$own; }
-			elseif($facData[$key]['ownership']!==$own){ $facData[$key]['ownership']='Mixed'; }
-		}
-		if($ru!==''){
-			if($facData[$key]['ru']===''){ $facData[$key]['ru']=$ru; }
-			elseif($facData[$key]['ru']!==$ru){ $facData[$key]['ru']='Mixed'; }
-		}
-
-		if(!isset($facData[$key]['months'][$mKey])){
-			$facData[$key]['months'][$mKey]=['label'=>$mLbl,'raw'=>$monRaw,'ris'=>[],'zero_ris'=>[],'sums'=>[],'has'=>[]];
-		}
-		$facData[$key]['months'][$mKey]['ris'][] = $dqa_ri;
-		/* "All Indicators having 0 values but not blank" is judged on each raw row (shared rule
-		   dqa_t0_row_all_zero(): every indicator column after "Session Held" is a numeric 0). */
-		if(dqa_t0_row_all_zero($r, $header, $idxMonth, $dqa_t0_sessH, $dqa_t0_sessP)){
-			$facData[$key]['months'][$mKey]['zero_ris'][] = $dqa_ri;
-		}
-		for($ci=$idxMonth+1;$ci<count($header);$ci++){
-			$v = as_num_or_null(isset($r[$ci]) ? $r[$ci] : null);
-			if($v !== null){
-				if(!isset($facData[$key]['months'][$mKey]['sums'][$ci])) $facData[$key]['months'][$mKey]['sums'][$ci] = 0;
-				$facData[$key]['months'][$mKey]['sums'][$ci] += $v;
-				$facData[$key]['months'][$mKey]['has'][$ci] = true;
-			} else {
-				if(!isset($facData[$key]['months'][$mKey]['has'][$ci])) $facData[$key]['months'][$mKey]['has'][$ci] = false;
-			}
-		}
-	}
-
-	/* One displayed name (Block + Facility + Session Site) used by more than one site: the
-	   site name is followed by what tells them apart (Sub Center, or Sub District). */
-	$dqaNameGroups = [];
-	foreach($facData as $dqa_k=>$dqa_fd){
-		$dqa_nk = dqa_unit_norm($dqa_fd['block']).'||'.(dqa_has_fac() ? dqa_unit_norm($dqa_fd['facility']).'||' : '').dqa_unit_norm($dqa_fd['sessname']);
-		$dqaNameGroups[$dqa_nk][] = $dqa_k;
-	}
-	foreach($dqaNameGroups as $dqa_keys){
-		if(count($dqa_keys) < 2) continue;
-		$dqa_atts = dqa_has_fac() ? ['subcentre'=>'no Sub Center'] : ['facility'=>'no Sub District','subcentre'=>'no Sub Center'];
-		$dqa_vary = [];
-		foreach($dqa_atts as $dqa_att=>$dqa_blank){
-			$dqa_vals = [];
-			foreach($dqa_keys as $dqa_k){ $dqa_vals[dqa_unit_norm($facData[$dqa_k][$dqa_att])] = true; }
-			$dqa_vary[$dqa_att] = (count($dqa_vals) > 1);
-		}
-		foreach($dqa_keys as $dqa_k){
-			$dqa_parts = [];
-			foreach($dqa_atts as $dqa_att=>$dqa_blank){
-				if($dqa_vary[$dqa_att]) $dqa_parts[] = ($facData[$dqa_k][$dqa_att]!=='' ? $facData[$dqa_k][$dqa_att] : $dqa_blank);
-			}
-			if(!empty($dqa_parts)) $facData[$dqa_k]['sessionsite'] .= ' ['.implode(', ', $dqa_parts).']';
-		}
-	}
-
-	/* FIX (required for the requested t0 red-'Y' display to ever take effect):
-	   the target indicator map must be built BEFORE the raw-zero loop below uses it.
-	   Previously it was defined only later in this function, so $indicatorIdxTargets was
-	   empty here and the t0 KPI ("All Indicators having 0 values but not blank") could
-	   never produce any rows. The map itself is unchanged. */
-	$indicatorIdxTargets=[];
-	for($i=$idxMonth+1;$i<count($header);$i++){
-		$detect=detect_target_indicator($header[$i]);
-		if($detect){
-			$indicatorIdxTargets[$i]=[
-				'header'=>$header[$i],
-				'short'=>$detect['short'],
-				'code'=>$detect['code']
-			];
-		}
-	}
-
-	/* Several rows of one session site in one month are added up: sum per column (a column
-	   left blank in every row stays blank). */
-	foreach($facData as $facKey=>&$fd){
-		foreach($fd['months'] as $mk=>&$mm){
-			$vals = [];
-			for($ci=$idxMonth+1;$ci<count($header);$ci++){
-				if(isset($mm['has'][$ci]) && $mm['has'][$ci]){
-					$vals[$ci] = isset($mm['sums'][$ci]) ? $mm['sums'][$ci] : 0;
-				} else {
-					$vals[$ci] = null;
-				}
-			}
-			$mm['vals'] = $vals;
-			$mm['raw_zero_targets'] = !empty($mm['zero_ris']);
-			unset($mm['sums'], $mm['has']);
-		}
-	}
-	unset($fd);
-
-$monthKeys=array_keys($allMonthKeys);
-	sort($monthKeys,SORT_STRING);
-	$singleMonthDataset=(count($monthKeys)===1);
-
-	/* Outliers dropdown hidden ONLY for 1-month dataset */
-	$showOutliersDropdown = (count($monthKeys) > 1);
-	/* Dropouts dropdown visible even for 1-month dataset */
-	$showDropoutsDropdown = true;
-
-	/* Meta line */
-	$stateName = '—';
-	$distName = '—';
-	if(count($statesSet)===1){ foreach($statesSet as $k=>$v){ $stateName=$v; break; } }
-	elseif(count($statesSet)>1){ $stateName='Multiple'; }
-	if(count($distsSet)===1){ foreach($distsSet as $k=>$v){ $distName=$v; break; } }
-	elseif(count($distsSet)>1){ $distName='Multiple'; }
-
-	/* (changed 2026-10) Duration counts the months present in the files (a missing
-	   month in between is not counted, and the months are then listed). */
-	$durationStr = dqa_months_label($monthKeys);
-
-	/* Duration HTML (line break before bracket text as requested) */
-	$durationStrHtml = h($durationStr);
-	$durationStrHtml = preg_replace('/\s*\(/','<br>(', $durationStrHtml, 1);
-
-	/* Target indicator map (built earlier in this function, before the raw-zero availability loop) */
-	$idxByShort = [];
-	foreach($indicatorIdxTargets as $ci=>$meta){ $idxByShort[$meta['short']] = $ci; }
-
-	/* NEW: all indicators after Month (short form) */
-	$idxByShortAll = [];
-	$allIndicatorMeta = [];
-	for($ci=$idxMonth+1;$ci<count($header);$ci++){
-		$short = indicator_short_from_header($header[$ci]);
-		$base = $short;
-		$k=1;
-		while(isset($idxByShortAll[$short])){
-			$k++;
-			$short = $base.'-'.$k;
-		}
-		$idxByShortAll[$short] = $ci;
-		$allIndicatorMeta[$short] = ['idx'=>$ci,'header'=>$header[$ci]];
-	}
-	$allDetectedVax = array_keys($idxByShortAll);
-	sort($allDetectedVax, SORT_NATURAL|SORT_FLAG_CASE);
-
-	/* Additional Indicators dropdown options (fixed list as requested) */
 	$ADD_VAX = ['RVV1','RVV2','RVV3','IPV1','IPV2','IPV3','PCV1','PCV2','PCV Booster','HepB0','DPT 1st Booster'];
 	$KEY_VAX = $BASE_VAX;
-	if(isset($idxByShortAll['FIC-Total'])) $KEY_VAX[] = 'FIC-Total';
-
-$find = function($code) use ($header){ return find_index_by_code($header,$code); };
-
-	$iP1 =$find('9.1.3.');
-	$iP2 =$find('9.1.4.');
-	$iP3 =$find('9.1.5.');
-	$iO1 =$find('9.1.7.');
-	$iO2 =$find('9.1.8.');
-	$iO3 =$find('9.1.9.');
-	$iMR1=$find('9.2.2.');
-	$iMR2=$find('9.4.1.');
-	$iRVV1=$find('9.1.13.');
-	$iRVV2=$find('9.1.14.');
-	$iRVV3=$find('9.1.15.');
-	$iPCV1=$find('9.1.16.');
-	$iPCV2=$find('9.1.17.');
-	$iIPV1=$find('9.1.11.');
-	$iIPV2=$find('9.1.12.');
-	$iIPV3=$find('9.2.1.');
-	$iPCVB=$find('9.2.4.');
-	$iDPTB=$find('9.4.2.');
-	$iSessP = $find('sessions planned');
-	$iSessH = $find('sessions held');
-	// UWIN headers are usually "Session Planned" / "Session Held"
-	if($iSessP===null) $iSessP = find_col_index_contains_any($header, ['session planned','sessions planned']);
-	if($iSessH===null) $iSessH = find_col_index_contains_any($header, ['session held','sessions held']);
-
-	/* NEW: Beneficiaries columns (UWIN sample: columns N–Q) */
-	$iBenPW = find_col_index_contains_any($header, ['number of pregnant women vaccinated','pregnant women vaccinated']);
-	$iBenInf = find_col_index_contains_any($header, ['number of infants (0-1 year) vaccinated','infants (0-1 year) vaccinated','infants 0-1 year vaccinated']);
-	$iBenChild = find_col_index_contains_any($header, ['number of children (>1 year) vaccinated','children (>1 year) vaccinated','children >1 year vaccinated']);
-	$iBenAdol = find_col_index_contains_any($header, ['number of adolescents vaccinated','adolescents vaccinated']);
-
-	/* (added) "Public facilities reporting Typhoid" - Typhoid column(s) and which analysis
-	   units belong to PUBLIC facilities. Ownership is read, in order, from: (1) an Ownership
-	   column; (2) a TEXT Facility Category / Type / Facility Type column whose values read
-	   Government / Public / Private; (3) numeric Facility Category codes listed in
-	   $DQA_UWIN_PUBLIC_CATEGORY_CODES (top of this file). Units whose rows disagree
-	   (public in one row, not in another) are left out. When ownership cannot be read the
-	   indicator is not shown at all. */
-	$iTyphList = dqa_typhoid_indices($header, $idxMonth);
-	/* Ownership reading: the tool's normalize_ownership() (Public / Private) plus the short
-	   forms used by the U-WIN portal in "Facility Category" (Gvt / Gov / Govt / Pvt). */
-	$typOwnOf = function($v){
-		$o = normalize_ownership($v);
-		if($o==='Public' || $o==='Private') return $o;
-		$l = strtolower(trim((string)$v));
-		if(preg_match('/^(gvt|gov|govt|government|public)\b/', $l)) return 'Public';
-		if(preg_match('/^(pvt|pri|private)\b/', $l)) return 'Private';
-		return '';
-	};
-	$typPublicSet = []; $typNonPublicSet = [];
-	$typOwnerCol = null; $typOwnerMode = '';
-	$typCodes = (isset($GLOBALS['DQA_UWIN_PUBLIC_CATEGORY_CODES']) && is_array($GLOBALS['DQA_UWIN_PUBLIC_CATEGORY_CODES'])) ? array_map('strval', $GLOBALS['DQA_UWIN_PUBLIC_CATEGORY_CODES']) : [];
-	if($idxOwner!==null){ $typOwnerCol = $idxOwner; $typOwnerMode = 'text'; }
-	else {
-		$typNormHdr = isset($_SESSION['csv_norm']) ? $_SESSION['csv_norm'] : array_map('normalize_header', $header);
-		foreach(['facility category','type','facility type'] as $typCand){
-			$typCi = array_search_first($typNormHdr, [$typCand]);
-			if($typCi===null) continue;
-			$typText=false; $typNum=false;
-			foreach($rows as $r){
-				$v = trim((string)(isset($r[$typCi]) ? $r[$typCi] : ''));
-				if($v==='') continue;
-				$o = $typOwnOf($v);
-				if($o==='Public' || $o==='Private'){ $typText=true; break; }
-				if(is_numeric($v)) $typNum=true;
-			}
-			if($typText){ $typOwnerCol=$typCi; $typOwnerMode='text'; break; }
-			if($typNum && !empty($typCodes)){ $typOwnerCol=$typCi; $typOwnerMode='code'; break; }
-		}
-	}
-	if($typOwnerCol!==null){
-		foreach($rows as $r){
-			$block = ($idxBlock!==null && isset($r[$idxBlock])) ? trim((string)$r[$idxBlock]) : '';
-			$fac = ($idxFac!==null && isset($r[$idxFac])) ? trim((string)$r[$idxFac]) : '';
-			$sess = ($idxSessionSite!==null && isset($r[$idxSessionSite])) ? trim((string)$r[$idxSessionSite]) : '';
-			$k = dqa_uwin_unit_key($r, $idxBlock, $idxFac, $idxSubCentre, $idxSessionSite); /* (changed 2026-10) same site identity as the analysis */
-			$v = trim((string)(isset($r[$typOwnerCol]) ? $r[$typOwnerCol] : ''));
-			if($v==='') continue;
-			if($typOwnerMode==='text'){ $isPub = ($typOwnOf($v)==='Public'); }
-			else { $vc = preg_replace('/\.0+$/','',$v); $isPub = in_array($vc, $typCodes, true); }
-			if($isPub) $typPublicSet[$k]=true; else $typNonPublicSet[$k]=true;
-		}
-	}
-	$typOwnerKnown = ($typOwnerCol!==null);
-	$typIsPublic = function($key,$fd) use ($typPublicSet,$typNonPublicSet){ return isset($typPublicSet[$key]) && !isset($typNonPublicSet[$key]); };
-	$typAvailable = (!empty($iTyphList) && $typOwnerKnown);
-
-	/* NEW: Td columns (for "Total Beneficiaries vaccinated = 0" KPI) */
-	$iBenTd1 = find_col_index_contains_any($header, ['number of women vaccinated with td 1','number of women vaccinated with td-1']);
-	$iBenTd2 = find_col_index_contains_any($header, ['number of women vaccinated with td 2','number of women vaccinated with td-2']);
-	$iBenTdB = find_col_index_contains_any($header, ['number of women vaccinated with td-booster','number of women vaccinated with td booster','number of women vaccinated with td - booster']);
-	$iBenTd10 = find_col_index_contains_any($header, ['number of adolescents vaccinated with td10','adolescents vaccinated with td10']);
-	$iBenTd16 = find_col_index_contains_any($header, ['number of adolescents vaccinated with td16','adolescents vaccinated with td16']);
-	/* (added 2026-10) exports that name these columns "Td-1", "Td-2", "Td - Booster", "TD10", "TD16" */
-	if($iBenTd1===null) $iBenTd1 = dqa_uwin_find_col_compact($header, ['td1']);
-	if($iBenTd2===null) $iBenTd2 = dqa_uwin_find_col_compact($header, ['td2']);
-	if($iBenTdB===null) $iBenTdB = dqa_uwin_find_col_compact($header, ['tdbooster','tdb']);
-	if($iBenTd10===null) $iBenTd10 = dqa_uwin_find_col_compact($header, ['td10']);
-	if($iBenTd16===null) $iBenTd16 = dqa_uwin_find_col_compact($header, ['td16']);
-
-	// Prefer UWIN vaccine columns (short names) when available
-	$getIdx = function($short) use ($idxByShortAll){ return isset($idxByShortAll[$short]) ? $idxByShortAll[$short] : null; };
-	$use = function(&$var, $short) use ($getIdx){ $tmp = $getIdx($short); if($tmp!==null) $var = $tmp; };
-
-	$use($iP1,'Penta1');
-	$use($iP2,'Penta2');
-	$use($iP3,'Penta3');
-	$use($iO1,'OPV1');
-	$use($iO2,'OPV2');
-	$use($iO3,'OPV3');
-	$use($iMR1,'MR1');
-	$use($iMR2,'MR2');
-	$use($iRVV1,'RVV1');
-	$use($iRVV2,'RVV2');
-	$use($iRVV3,'RVV3');
-	$use($iPCV1,'PCV1');
-	$use($iPCV2,'PCV2');
-	$use($iIPV1,'IPV1');
-	$use($iIPV2,'IPV2');
-	$use($iIPV3,'IPV3');
-	$use($iPCVB,'PCV Booster');
-	$use($iDPTB,'DPT 1st Booster');
-
+	$PAIR_DEFAULTS = array_merge(uwx_pair_defaults(), ['BCG→MR1']); /* pairs offered as ticks; only the 3 standard pairs are scored */
 
 	/* Option sets */
-	$allBlocks=[];
-	$allMonths=[];
-	foreach($facData as $fd){
-		$allBlocks[$fd['block']]=true;
-		foreach($fd['months'] as $mk=>$md){ $allMonths[$mk]=$md['label']; }
-	}
+	$allMonths = [];
+	foreach($uwxC['allMonths'] as $mk=>$lbl){ $allMonths[$mk] = uwx_month_year_label($mk); }
+	$allBlocks = [];
+	foreach($uwxC['facilityData'] as $u){ $allBlocks[$u['block']] = true; }
 	ksort($allBlocks, SORT_NATURAL|SORT_FLAG_CASE);
-	ksort($allMonths, SORT_STRING);
 	$_SESSION['allMonthsMap'] = $allMonths;
+	$monthKeys = array_keys($allMonths);
+	$singleMonthDataset = (count($monthKeys) === 1);
+	$showOutliersDropdown = (count($monthKeys) > 1);
+	$showDropoutsDropdown = (count($monthKeys) > 1); /* no dropout for one month or one week */
 
-	/* Normalize Select All */
-	$OUT_INC_ALL = ['INC_LOW','INC_MOD','INC_EXT'];
-	$OUT_DROP_ALL = ['DROP_LOW','DROP_MOD','DROP_EXT'];
-	$DROP_RANGE_ALL = ['R5_10','R11_20','R20P'];
-	$PAIR_DEFAULTS = ['Penta1→Penta3','MR1→MR2','BCG→MR1','Penta3→MR1'];
-
-	$expandAll = function($arr,$all){
-		if(!is_array($arr)) $arr=[];
-		// In this UI, an empty selection means "Select All"
-		if(empty($arr)) return $all;
-		if(in_array('__ALL__',$arr,true)) return $all;
-		return $arr;
-	};
-
-	$filters['blocks'] = $expandAll(isset($filters['blocks']) ? $filters['blocks'] : [], array_keys($allBlocks));
-	$filters['months'] = $expandAll(isset($filters['months']) ? $filters['months'] : [], array_keys($allMonths));
-	$filters['ownership'] = $expandAll(isset($filters['ownership']) ? $filters['ownership'] : [], ['Public','Private']);
-	$filters['ru'] = $expandAll(isset($filters['ru']) ? $filters['ru'] : [], ['Rural','Urban']);
-	$filters['outliers_inc'] = $expandAll(isset($filters['outliers_inc']) ? $filters['outliers_inc'] : [], $OUT_INC_ALL);
-	$filters['outliers_drop'] = $expandAll(isset($filters['outliers_drop']) ? $filters['outliers_drop'] : [], $OUT_DROP_ALL);
-	// Key Indicators: empty means "Select All" (includes FIC-Total when present in this dataset)
-	$filters['outliers_vax'] = $expandAll(isset($filters['outliers_vax']) ? $filters['outliers_vax'] : [], $KEY_VAX);
-	/*
-	  Additional Filter (Additional Indicators):
-	  - IMPORTANT requirement: after upload, NOTHING should be selected by default.
-	  - So, unlike other filters, an empty selection means "Select None" (NOT "Select All").
-	  - "Select All" is still supported (either via UI selecting all boxes, or '__ALL__').
-	*/
-	$filters['add_vax'] = isset($filters['add_vax']) ? $filters['add_vax'] : [];
-	if(!is_array($filters['add_vax'])) $filters['add_vax'] = [$filters['add_vax']];
-	if(in_array('__ALL__', $filters['add_vax'], true)){
-		$filters['add_vax'] = $ADD_VAX;
-	} else {
-		$allowedAdd = array_fill_keys($ADD_VAX, true);
-		$tmpAdd = [];
-		foreach($filters['add_vax'] as $v){
-			$v = trim((string)$v);
-			if($v !== '' && isset($allowedAdd[$v])) $tmpAdd[] = $v;
-		}
-		$filters['add_vax'] = $tmpAdd;
-	}
-	$filters['drop_ranges'] = $expandAll(isset($filters['drop_ranges']) ? $filters['drop_ranges'] : [], $DROP_RANGE_ALL);
-	$filters['drop_pairs'] = $expandAll(isset($filters['drop_pairs']) ? $filters['drop_pairs'] : [], $PAIR_DEFAULTS);
-
-	if(!isset($filters['drop_from'])) $filters['drop_from'] = [];
-	if(!is_array($filters['drop_from'])) $filters['drop_from'] = [$filters['drop_from']];
-	if(!isset($filters['drop_to'])) $filters['drop_to'] = [];
-	if(!is_array($filters['drop_to'])) $filters['drop_to'] = [$filters['drop_to']];
-
-	/* NEW: inconsistencies builder arrays */
-	if(!isset($filters['incons_from'])) $filters['incons_from'] = [];
-	if(!is_array($filters['incons_from'])) $filters['incons_from'] = [$filters['incons_from']];
-	if(!isset($filters['incons_to'])) $filters['incons_to'] = [];
-	if(!is_array($filters['incons_to'])) $filters['incons_to'] = [$filters['incons_to']];
-
-	/* Clean empty */
-	$df=[]; foreach((array)$filters['drop_from'] as $v){ $v=trim((string)$v); if($v!=='') $df[]=$v; } $filters['drop_from']=$df;
-	$dt=[]; foreach((array)$filters['drop_to'] as $v){ $v=trim((string)$v); if($v!=='') $dt[]=$v; } $filters['drop_to']=$dt;
-
-	$ifrom=[]; foreach((array)$filters['incons_from'] as $v){ $v=trim((string)$v); if($v!=='') $ifrom[]=$v; } $filters['incons_from']=$ifrom;
-	$ito=[]; foreach((array)$filters['incons_to'] as $v){ $v=trim((string)$v); if($v!=='') $ito[]=$v; } $filters['incons_to']=$ito;
-
-	$filters['active_group'] = isset($filters['active_group']) ? $filters['active_group'] : '';
+	/* Filters: the selections on screen, as the web application reads them */
+	$arr = function($k) use ($filters){ return (isset($filters[$k]) && is_array($filters[$k])) ? array_values($filters[$k]) : []; };
+	$mSel = []; foreach($arr('months') as $mk){ if(isset($allMonths[(string)$mk])) $mSel[] = (string)$mk; }
+	$bSel = []; foreach($arr('blocks') as $b){ if(isset($allBlocks[(string)$b])) $bSel[] = (string)$b; }
+	if(count($bSel) === count($allBlocks)) $bSel = [];
+	$ovSel = []; foreach($arr('outliers_vax') as $v){ if(in_array((string)$v, $KEY_VAX, true)) $ovSel[] = (string)$v; }
+	$avSel = []; foreach($arr('add_vax') as $v){ if(in_array((string)$v, $ADD_VAX, true)) $avSel[] = (string)$v; }
+	$filters['blocks'] = $bSel; $filters['months'] = $mSel;
+	$filters['outliers_vax'] = !empty($ovSel) ? $ovSel : uwx_outlier_vax();
+	$filters['add_vax'] = $avSel;
+	foreach(['outliers_inc','outliers_drop','drop_ranges','drop_pairs','drop_from','drop_to','incons_from','incons_to'] as $k){ $filters[$k] = array_map('strval', $arr($k)); }
+	$filters['active_group'] = isset($filters['active_group']) ? (string)$filters['active_group'] : '';
+	$filters['analysis_mode'] = $uwxMode;
 	$_SESSION['filters'] = $filters;
+	$uwxF = [
+		'blocks'=>$bSel, 'months'=>$mSel, 'ownership'=>[], 'ru'=>[], 'analysisMode'=>$uwxMode,
+		'outliersVax'=>$filters['outliers_vax'], 'addVax'=>$avSel,
+		'outliersInc'=>$filters['outliers_inc'], 'outliersDrop'=>$filters['outliers_drop'],
+		'dropRanges'=>$filters['drop_ranges'], 'dropPairs'=>$filters['drop_pairs'],
+		'dropFrom'=>$filters['drop_from'], 'dropTo'=>$filters['drop_to'],
+		'inconsFrom'=>$filters['incons_from'], 'inconsTo'=>$filters['incons_to'],
+	];
+	$R = uwx_compute_with_score($uwxC, $uwxF);
 
-	/* Apply global filters */
-	$selBlocks = array_fill_keys($filters['blocks'], true);
+	$facFiltered = $R['units'];
+	$selDen = (int)$R['den'];
+	$selBlocksCount = (int)$R['blocksSel'];
+	$selMonthKeysOrdered = $R['selMonths'];
+	$selMonthLabelsOrdered = $R['labels'];
+	$globalBlocksCount = (int)$uwxC['globalBlockCount'];
+	$globalDen = (int)$uwxC['globalFacilityCount'];
+	$ssDen = (int)$uwxC['globalSessionSiteCount'];
+	$scDen = (int)$uwxC['globalSubCenterCount'];
+	$cardsList = $R['cards'];
+	$scoreCardsList = $R['scoreCards'];
 
-	if (empty($filters['months'])) {
-		$filters['months'] = array_keys($allMonths);  // select all months by default
+	/* Meta line */
+	$stateName = $uwxC['stateName'];
+	$distName = $uwxC['distName'];
+	$dqaLbl = []; foreach($monthKeys as $mk){ $dqaLbl[] = uwx_month_year_label($mk); }
+	$durationStr = uwx_period_duration_label($monthKeys).(count($dqaLbl) ? ' ('.(count($dqaLbl) === 1 ? $dqaLbl[0] : $dqaLbl[0].'–'.$dqaLbl[count($dqaLbl) - 1]).')' : '');
+	$durationStrHtml = preg_replace('/\s*\(/', '<br>(', h($durationStr), 1);
+	/* the declared From - To dates of the files behind the selected periods (uploadPeriod.ts declaredWindow) */
+	$uwxPeriods = isset($_SESSION['uwx_periods']) ? (array)$_SESSION['uwx_periods'] : [];
+	$uwxSelKeys = array_fill_keys($selMonthKeysOrdered, true);
+	$uwxFrom = ''; $uwxTo = ''; $uwxDur = isset($_SESSION['uwx_duration']) ? (string)$_SESSION['uwx_duration'] : '';
+	foreach($uwxPeriods as $p){
+		if(!isset($uwxSelKeys[$p['key']])) continue;
+		if($uwxFrom === '' || $p['from'] < $uwxFrom) $uwxFrom = $p['from'];
+		if($uwxTo === '' || $p['to'] > $uwxTo) $uwxTo = $p['to'];
 	}
-	$selMonths = array_fill_keys($filters['months'], true);
+	$uwxDatesLabel = ($uwxFrom !== '') ? uwx_day_label($uwxFrom).' – '.uwx_day_label($uwxTo) : '';
 
-	$selOwner = array_fill_keys($filters['ownership'], true);
-	$selRU = array_fill_keys($filters['ru'], true);
-	/* (changed 2026-10) an Ownership / Rural-Urban column is used only when the file has
-	   it; with both options in force (always, as these filters have no box here) every
-	   session site is kept, including blank / unrecognised / changing values. */
-	$dqa_set_eq = function($sel, $all){
-		$s = array_values(array_unique(array_map('strval', (array)$sel)));
-		$a = array_values(array_unique(array_map('strval', (array)$all)));
-		sort($s, SORT_STRING); sort($a, SORT_STRING);
-		return $s === $a;
-	};
-	$dqaOwnAll = $dqa_set_eq($filters['ownership'], ['Public','Private']);
-	$dqaRuAll  = $dqa_set_eq($filters['ru'], ['Rural','Urban']);
+	/* Tables for the panels (built by the engine) */
+	$t0 = $R['t0Rows']; $t7 = $R['t7Rows']; $t9 = $R['t9Rows'];
+	$t2 = $R['t2Flat'];
+	$t2Title = 'Key Missing Indicators';
+	$selVaxList = $R['cmpVax'];
+	$t6_web = $R['t6Web']; $t8_web = $R['t8Web'];
+	$pairList = $R['pairList'];
+	$t5_p3gtp1 = $R['i1Rows']; $t5_mr2gtmr1 = $R['i2Rows'];
 
-	$facFiltered = [];
-	foreach($facData as $key=>$fd){
-		$__blk = isset($fd['block']) ? trim((string)$fd['block']) : '';
-		$__blkLabel = display_block_label($__blk);
-		if(!isset($selBlocks[$__blk]) && !isset($selBlocks[$__blkLabel])) continue;
-		if($idxOwner!==null && !$dqaOwnAll && !isset($selOwner[$fd['ownership']])) continue;
-		if($idxRU!==null && !$dqaRuAll && !isset($selRU[$fd['ru']])) continue;
-
-		$monthsKeep=[];
-		foreach($fd['months'] as $mk=>$md){
-			if(isset($selMonths[$mk])) $monthsKeep[$mk]=$md;
-		}
-		if(empty($monthsKeep)) continue;
-
-		$facFiltered[$key]=[
-			'block'=>$fd['block'],
-			'facility'=>$fd['facility'],
-			'sessionsite'=>isset($fd['sessionsite']) ? $fd['sessionsite'] : '',
-			'ownership'=>$fd['ownership'],
-			'ru'=>$fd['ru'],
-			'months'=>$monthsKeep
-		];
-	}
-
-	/* Independent KPIs
-	   (changed 2026-10) Counts use the session-site unit of every KPI: "Number of session
-	   sites" = sites in the uploaded files (a blank Session Site Name included); "Number of
-	   facilities" = Block + Health Facility pairs; the percentages and the Overall Score use
-	   the session sites under the current selection (ticked blocks / months). */
-	$globalBlocksSet = [];
-	$globalFacilitySet = [];
-	foreach($facData as $fd){
-		$blockRaw = isset($fd['block']) ? trim((string)$fd['block']) : '';
-		if($blockRaw!=='') $globalBlocksSet[dqa_unit_norm($blockRaw)] = true; // do not count blank block names
-		$facRaw = isset($fd['facility']) ? trim((string)$fd['facility']) : '';
-		if($facRaw!=='') $globalFacilitySet[dqa_unit_norm($blockRaw).'||'.dqa_unit_norm($facRaw)] = true;
-	}
-	$globalDen = count($globalFacilitySet);
-	$globalBlocksCount = count($globalBlocksSet);
-	$ssDen = count($facData);
-
-	$selBlocksSet = [];
-	foreach($facFiltered as $fd){
-		$blockRaw = isset($fd['block']) ? trim((string)$fd['block']) : '';
-		if($blockRaw!=='') $selBlocksSet[dqa_unit_norm($blockRaw)] = true;
-	}
-	$selDen = count($facFiltered);
-	$selBlocksCount = count($selBlocksSet);
-
-	/* Selected months ordered (always in calendar order) */
-	$selMonthKeysOrdered = array_values(array_intersect(array_keys($allMonths), array_map('strval', (array)$filters['months'])));
-	if(empty($selMonthKeysOrdered)) $selMonthKeysOrdered = array_keys($allMonths);
-	$selMonthLabelsOrdered = [];
-	foreach($selMonthKeysOrdered as $mk){ $selMonthLabelsOrdered[$mk] = isset($allMonths[$mk]) ? $allMonths[$mk] : $mk; }
-
-	/* (added 2026-10) Highlight map for "Actual data with highlighted cells":
-	   $HL[downloadKey][row number in the uploaded rows] = "12,15:2" (columns counted by the
-	   KPI; ":2" = dark pink, "-1" = whole row). Every KPI below records exactly the cells it
-	   counts, in all rows of the session site for that month. Kept as short text so that
-	   large files stay within the memory limit. */
-	$HL = [];
-	$hlRows = function($dlKey, $ris) use (&$HL){
-		foreach((array)$ris as $ri){
-			$ri = (int)$ri;
-			$HL[$dlKey][$ri] = isset($HL[$dlKey][$ri]) ? $HL[$dlKey][$ri].',-1' : '-1';
-		}
-	};
-	$hlCells = function($dlKey, $md, $cols, $style = 1) use (&$HL){
-		if(!$md || empty($md['ris'])) return;
-		$t = '';
-		foreach((array)$cols as $ci){ if($ci!==null) $t .= ($t==='' ? '' : ',').(int)$ci.($style >= 2 ? ':2' : ''); }
-		if($t==='') return;
-		foreach($md['ris'] as $ri){
-			$ri = (int)$ri;
-			$HL[$dlKey][$ri] = isset($HL[$dlKey][$ri]) ? $HL[$dlKey][$ri].','.$t : $t;
-		}
-	};
-
-	
-	$t0=[]; $t0_facilities=[]; $t0_any_facilities=[]; $t0_all_facilities=[];
-	$t0[] = array_merge(dqa_id_head(), array_values($selMonthLabelsOrdered));
-	$totalMonthsSel = count($selMonthKeysOrdered);
-	foreach($facFiltered as $key=>$fd){
-		$row = dqa_id_row(display_block_label($fd['block']),$fd['facility'],$fd['sessionsite']);
-		$hitCount = 0;
-		foreach($selMonthKeysOrdered as $mk){
-			$md = isset($fd['months'][$mk]) ? $fd['months'][$mk] : null;
-			$isZero = false;
-			if($md){
-				/* IMPORTANT: facility-month should be Y only when at least one RAW row
-				   for that facility-month has all target indicators explicitly equal to 0.
-				   Do not derive Y from consolidated sums alone. */
-				$isZero = !empty($md['raw_zero_targets']);
-			}
-			$row[] = $isZero ? 'N' : 'Y'; /* (changed) N = issue, Y = no issue */
-			if($isZero){ $hitCount++; $hlRows('t0', $md['zero_ris']); }
-		}
-		if($hitCount > 0){
-			$t0_facilities[$key]=true;
-			$t0[]=$row;
-			if($totalMonthsSel>0 && $hitCount === $totalMonthsSel){
-				$t0_all_facilities[$key]=true;
-			} else {
-				$t0_any_facilities[$key]=true;
-			}
-		}
-	}
-
-	/* Same values */
-	$t7=[]; $t7_facilities=[];
-	$t7[] = array_merge(dqa_id_head(), array_values($selMonthLabelsOrdered));
-	$repeatHitsByFac = [];
-	foreach($facFiltered as $key=>$fd){
-		$row = dqa_id_row(display_block_label($fd['block']), $fd['facility'], $fd['sessionsite']);
-		$anyY = false; $allY = true;
-		foreach($selMonthKeysOrdered as $mk){
-			$md = isset($fd['months'][$mk]) ? $fd['months'][$mk] : null;
-			$isRepeat = false;
-			if($md){
-				$firstVal = null; $ok = true; $hasAny = false;
-				for($ci=$idxMonth+1;$ci<count($header);$ci++){
-					if(dqa_is_non_indicator_col($header[$ci])) continue;
-					$v = isset($md['vals'][$ci]) ? $md['vals'][$ci] : null;
-					if($v === null){ $ok = false; break; }
-					if((float)$v == 0.0){ $ok = false; break; }
-					$vv = sprintf('%.10F', (float)$v);
-					if($firstVal === null){ $firstVal = $vv; $hasAny = true; }
-					else { if($vv !== $firstVal){ $ok = false; break; } }
-				}
-				$isRepeat = ($hasAny && $ok);
-			}
-			$row[] = $isRepeat ? 'N' : 'Y'; /* (changed) N = issue, Y = no issue */
-			if($isRepeat){
-				$anyY = true;
-				$hlRows('t7', $md['ris']);
-				if(!isset($repeatHitsByFac[$key])) $repeatHitsByFac[$key] = [];
-				$repeatHitsByFac[$key][$mk] = true;
-			} else {
-				$allY = false;
-			}
-		}
-		if($anyY){ $t7_facilities[$key] = true; $t7[] = $row; }
-		if($anyY && $allY){ if(!isset($t7_all_facilities)) $t7_all_facilities=[]; $t7_all_facilities[$key]=true; }
-	}
-	$_SESSION['pink_repeat_hits'] = $repeatHitsByFac;
-
-	/* NEW KPI (Availability): Total Beneficiaries vaccinated = 0
-	   Y when, for a session-site-month, the total of:
-	   Number of Pregnant Women vaccinated + Number of Infants (0-1 year) vaccinated +
-	   Number of Children (>1 year) vaccinated + Number of Adolescents vaccinated +
-	   Number of Women vaccinated with Td 1 + Td 2 + Td-Booster +
-	   Number of Adolescents vaccinated with td10 + td16
-	   equals 0 (at least one of these columns must have a reported value for that month). */
-	$benZeroIdxList = [];
-	foreach([$iBenPW,$iBenInf,$iBenChild,$iBenAdol,$iBenTd1,$iBenTd2,$iBenTdB,$iBenTd10,$iBenTd16] as $biTmp){
-		if($biTmp!==null) $benZeroIdxList[] = $biTmp;
-	}
-	$t9=[]; $t9_facilities=[]; $t9_any_facilities=[]; $t9_all_facilities=[];
-	$t9[] = array_merge(dqa_id_head(), array_values($selMonthLabelsOrdered));
-	if(!empty($benZeroIdxList)){
-		$totalMonthsSel = count($selMonthKeysOrdered);
-		foreach($facFiltered as $key=>$fd){
-			$row = dqa_id_row(display_block_label($fd['block']),$fd['facility'],$fd['sessionsite']);
-			$hitCount = 0;
-			foreach($selMonthKeysOrdered as $mk){
-				$md = isset($fd['months'][$mk]) ? $fd['months'][$mk] : null;
-				$isZero = false;
-				if($md){
-					/* (changed 2026-10) every beneficiary count must be reported (a blank count is
-					   never read as 0) and their total must be 0 */
-					$sumBen = 0.0; $allRep = true;
-					foreach($benZeroIdxList as $bi){
-						$v = isset($md['vals'][$bi]) ? $md['vals'][$bi] : null;
-						if($v === null){ $allRep = false; break; }
-						$sumBen += (float)$v;
-					}
-					if($allRep && $sumBen == 0.0) $isZero = true;
-				}
-				$row[] = $isZero ? 'N' : 'Y'; /* (changed) N = issue, Y = no issue */
-				if($isZero){ $hitCount++; $hlCells('t9', $md, $benZeroIdxList); }
-			}
-			if($hitCount > 0){
-				$t9_facilities[$key]=true;
-				$t9[]=$row;
-				if($totalMonthsSel>0 && $hitCount === $totalMonthsSel){
-					$t9_all_facilities[$key]=true;
-				} else {
-					$t9_any_facilities[$key]=true;
-				}
-			}
-		}
-	}
-
-	/* Missing Indicator */
-	$t2Title='Key Missing Indicators';
-	$selVaxList = array_values(array_unique(array_merge(
-		isset($filters['outliers_vax']) ? (array)$filters['outliers_vax'] : [],
-		isset($filters['add_vax']) ? (array)$filters['add_vax'] : []
-	)));
-	if(empty($selVaxList)){ $selVaxList = $BASE_VAX; }
-
-	$idxByShortLocal = $idxByShortAll;
-	$tmp = [];
-	foreach($selVaxList as $vx){ if(isset($idxByShortLocal[$vx])) $tmp[] = $vx; }
-	$selVaxList = !empty($tmp) ? $tmp : $BASE_VAX;
-
-	$t2=[]; $t2_facilities=[];
-	$flatHeader = dqa_id_head();
-	foreach($selVaxList as $vx){
-		foreach($selMonthKeysOrdered as $mk){
-			$flatHeader[] = $vx.' '.(isset($allMonths[$mk]) ? $allMonths[$mk] : $mk);
-		}
-	}
-	$t2[] = $flatHeader;
-
-	$t2_matrix_cache = [];
-	$blankCountsByVax = [];
-	$blankAllCountsByVax = [];
-	foreach($selVaxList as $vx){ $blankCountsByVax[$vx]=0; $blankAllCountsByVax[$vx]=0; }
-
-	foreach($facFiltered as $key=>$fd){
-		$row = dqa_id_row(display_block_label($fd['block']),$fd['facility'],$fd['sessionsite']);
-		$anyBlank=false;
-		$allMonthsHaveBlank=true;
-		$cellMap = [];
-		foreach($selVaxList as $vx){
-			$ci = isset($idxByShortLocal[$vx]) ? $idxByShortLocal[$vx] : null;
-			$hasBlankForVx = false;
-			$vxAllBlank = true;
-			foreach($selMonthKeysOrdered as $mk){
-				$md = isset($fd['months'][$mk]) ? $fd['months'][$mk] : null;
-				$isBlank = false;
-				if($md && $ci!==null){
-					$v = isset($md['vals'][$ci]) ? $md['vals'][$ci] : null;
-					$isBlank = ($v===null);
-				}
-				$cellMap[$vx][$mk] = $isBlank ? 'N' : 'Y'; /* (changed) N = issue, Y = no issue */
-				if($isBlank){ $anyBlank=true; $hasBlankForVx=true; $hlCells('t2', $md, [$ci]); } else { $vxAllBlank = false; }
-				$row[] = $cellMap[$vx][$mk];
-			}
-			if($hasBlankForVx) $blankCountsByVax[$vx] = $blankCountsByVax[$vx] + 1;
-			if($vxAllBlank) $blankAllCountsByVax[$vx] = $blankAllCountsByVax[$vx] + 1;
-		}
-		if($anyBlank){
-			// all-month: each selected month has at least one blank among selected indicators
-			foreach($selMonthKeysOrdered as $mk){
-				$has=false;
-				foreach($selVaxList as $vx){ if(isset($cellMap[$vx][$mk]) && $cellMap[$vx][$mk]==='N'){ $has=true; break; } /* (changed) N = blank */ }
-				if(!$has){ $allMonthsHaveBlank=false; break; }
-			}
-			if($allMonthsHaveBlank){ if(!isset($t2_all_facilities)) $t2_all_facilities=[]; $t2_all_facilities[$key]=true; }
-			$t2_facilities[$key]=true;
-			$t2[] = $row;
-			$t2_matrix_cache[$key] = [
-				'block'=>display_block_label($fd['block']),
-				'facility'=>$fd['facility'],
-				'sessionsite'=>$fd['sessionsite'],
-				'cells'=>$cellMap
-			];
-		}
-	}
-
-	arsort($blankCountsByVax);
-	arsort($blankAllCountsByVax);
-	// Any-month (only) counts exclude facilities that are blank in ALL months for that indicator
-	$blankAnyOnlyCountsByVax = [];
-	foreach($selVaxList as $vx){
-		$blankAnyOnlyCountsByVax[$vx] = max(0, (int)$blankCountsByVax[$vx] - (int)$blankAllCountsByVax[$vx]);
-	}
-	arsort($blankAnyOnlyCountsByVax);
-	$top3BlankAny = [];
-
-	foreach($blankAnyOnlyCountsByVax as $vx=>$cnt){ if($cnt<=0) continue; $top3BlankAny[] = $vx.' ('.$cnt.')'; if(count($top3BlankAny)===3) break; }
-	$top3BlankAll = [];
-	foreach($blankAllCountsByVax as $vx=>$cnt){ if($cnt<=0) continue; $top3BlankAll[] = $vx.' ('.$cnt.')'; if(count($top3BlankAll)===3) break; }
-	$top3BlankOverall = [];
-	foreach($blankCountsByVax as $vx=>$cnt){ if($cnt<=0) continue; $top3BlankOverall[] = $vx.' ('.$cnt.')'; if(count($top3BlankOverall)===3) break; }
-
-	$top3Blank = $top3BlankAny;
-	
-	foreach($blankCountsByVax as $vx=>$cnt){
-		if($cnt<=0) continue;
-		$top3Blank[] = $vx.' ('.$cnt.')';
-		if(count($top3Blank)===3) break;
-	}
-
-	/* CHANGED: "Planned but not held" (Sessions Planned > Sessions Held).
-	   CHANGED (format only): table mirrors the Outliers-style two-level layout —
-	   per month (and All months): Sessions Planned | Sessions Held | % not held,
-	   filled only for the months that violate (Held < Planned). Flagging logic unchanged. */
-	$t6_facilities=[]; $t6_any_facilities=[]; $t6_all_facilities=[];
-	$t6_web = ['months'=>$selMonthKeysOrdered, 'monthLabels'=>$selMonthLabelsOrdered, 'rows'=>[]];
 	$t6_export = [];
-	$t6_head1 = dqa_id_head();
-	foreach($selMonthKeysOrdered as $mk){
-		$lbl = isset($selMonthLabelsOrdered[$mk]) ? $selMonthLabelsOrdered[$mk] : $mk;
-		$t6_head1[] = $lbl; $t6_head1[] = ''; $t6_head1[] = '';
+	$h1 = dqa_id_head(); $h2 = dqa_id_blank();
+	foreach(array_merge($selMonthKeysOrdered, ['__ALL__']) as $mk){
+		$h1[] = ($mk === '__ALL__') ? 'All months' : $selMonthLabelsOrdered[$mk]; $h1[] = ''; $h1[] = '';
+		$h2[] = 'Sessions Planned'; $h2[] = 'Sessions Held'; $h2[] = '% not held';
 	}
-	$t6_head1[] = 'All months'; $t6_head1[] = ''; $t6_head1[] = '';
-	$t6_head2 = dqa_id_blank();
-	for($gi6=0; $gi6 < count($selMonthKeysOrdered)+1; $gi6++){
-		$t6_head2[] = 'Sessions Planned'; $t6_head2[] = 'Sessions Held'; $t6_head2[] = '% not held';
-	}
-	$t6_export[] = $t6_head1;
-	$t6_export[] = $t6_head2;
-	if($iSessP!==null && $iSessH!==null){
-		$totalMonthsSel = count($selMonthKeysOrdered);
-		foreach($facFiltered as $key=>$fd){
-			$cells=[]; $sumP=0; $sumH=0; $hitCount=0; $anyHit=false;
-			foreach($selMonthKeysOrdered as $mk){
-				$md = isset($fd['months'][$mk]) ? $fd['months'][$mk] : null;
-				$P = ($md && isset($md['vals'][$iSessP])) ? $md['vals'][$iSessP] : null;
-				$H = ($md && isset($md['vals'][$iSessH])) ? $md['vals'][$iSessH] : null;
-				/* (changed 2026-10) reference totals only from months where both are reported */
-				if($P!==null && $H!==null){ $sumP+=$P; $sumH+=$H; }
-				$hit=false; $pct=null;
-				if($P!==null && $P>0 && $H!==null && $H<$P){
-					$hit=true; $anyHit=true; $hitCount++;
-					$pct=($P-$H)/$P*100;
-					$hlCells('t6', $md, [$iSessP, $iSessH]);
-				}
-				$cells[$mk]=['p'=>$P,'h'=>$H,'pct'=>$pct,'hit'=>$hit];
-			}
-			/* (changed 2026-10) judged month by month: the totals no longer add a site (a
-			   blank month read as 0 could do that); they are shown for reference only. */
-			$totHit=false; $totPct=null;
-			if($sumP>0 && $sumH<$sumP){
-				$totHit=true;
-				$totPct=($sumP-$sumH)/$sumP*100;
-			}
-			if($anyHit){
-				$t6_facilities[$key]=true;
-				if($totalMonthsSel>0 && $hitCount === $totalMonthsSel){
-					$t6_all_facilities[$key]=true;
-				} else {
-					// includes cases where only totals violates
-					$t6_any_facilities[$key]=true;
-				}
-				$t6_web['rows'][$key]=[
-					'block'=>display_block_label($fd['block']),
-					'facility'=>$fd['facility'],
-					'sessionsite'=>$fd['sessionsite'],
-					'cells'=>$cells,
-					'totals'=>['p'=>$sumP,'h'=>$sumH,'pct'=>$totPct,'hit'=>$totHit]
-				];
-				$line=dqa_id_row(display_block_label($fd['block']),$fd['facility'],$fd['sessionsite']);
-				foreach($selMonthKeysOrdered as $mk){
-					$c=$cells[$mk];
-					if($c['hit']){ $line[]=round($c['p']); $line[]=round($c['h']); $line[]=round($c['pct'],1).'%'; }
-					else { $line[]=''; $line[]=''; $line[]=''; }
-				}
-				if($totHit){ $line[]=round($sumP); $line[]=round($sumH); $line[]=round($totPct,1).'%'; }
-				else { $line[]=''; $line[]=''; $line[]=''; }
-				$t6_export[]=$line;
-			}
+	$t6_export[] = $h1; $t6_export[] = $h2;
+	foreach($t6_web['rows'] as $r6){
+		$line = dqa_id_row($r6['block'], $r6['facility'], $r6['sessionsite']);
+		foreach($selMonthKeysOrdered as $mk){
+			$c6 = $r6['cells'][$mk];
+			if($c6['hit']){ $line[] = round($c6['p']); $line[] = round($c6['h']); $line[] = round($c6['pct'], 1).'%'; } else { $line[] = ''; $line[] = ''; $line[] = ''; }
 		}
+		$tt = $r6['totals'];
+		if($tt['hit']){ $line[] = round($tt['p']); $line[] = round($tt['h']); $line[] = round($tt['pct'], 1).'%'; } else { $line[] = ''; $line[] = ''; $line[] = ''; }
+		$t6_export[] = $line;
 	}
-
-		/* NEW KPI: Avg Beneficiaries per session < 5 (Beneficiaries = Pregnant Women + Infants (0-1y) + Children (>1y) + Adolescents)
-	   Table format requested:
-	   - Header row 1: Month groups (plus "All months")
-	   - Header row 2: Session Held / Beneficiaries / Average
-	   - Rows: values per facility, shown only for facilities that violate in any month and/or in totals
-	*/
-	$t8_facilities=[]; $t8_any_facilities=[]; $t8_all_facilities=[];
-	$t8_web = ['months'=>$selMonthKeysOrdered, 'monthLabels'=>$selMonthLabelsOrdered, 'rows'=>[]];
 	$t8_export = [];
-
-	$exportMonths = $selMonthKeysOrdered;
-	$exportMonths[] = '__ALL__';
-	$exportMonthLabels = $selMonthLabelsOrdered;
-	$exportMonthLabels['__ALL__'] = 'All months';
-
-	$head1 = dqa_id_head();
-	foreach($exportMonths as $mk){
-		$lbl = isset($exportMonthLabels[$mk]) ? $exportMonthLabels[$mk] : $mk;
-		$head1[] = $lbl; $head1[] = ''; $head1[] = '';
+	$h1 = dqa_id_head(); $h2 = dqa_id_blank();
+	foreach(array_merge($selMonthKeysOrdered, ['__ALL__']) as $mk){
+		$h1[] = ($mk === '__ALL__') ? 'All months' : $selMonthLabelsOrdered[$mk]; $h1[] = ''; $h1[] = '';
+		$h2[] = 'Session Held'; $h2[] = 'Beneficiaries'; $h2[] = 'Average';
 	}
-	$head2 = dqa_id_blank();
-	foreach($exportMonths as $mk){
-		$head2[] = 'Session Held';
-		$head2[] = 'Beneficiaries';
-		$head2[] = 'Average';
-	}
-	$t8_export[] = $head1;
-	$t8_export[] = $head2;
-
-	if($iSessH!==null && $iBenPW!==null && $iBenInf!==null && $iBenChild!==null && $iBenAdol!==null){
-		$totalMonthsSel = count($selMonthKeysOrdered);
-		foreach($facFiltered as $key=>$fd){
-			$cells = [];
-			$sumBen=0; $sumHeld=0;
-			$hitCount=0;
-
-			foreach($selMonthKeysOrdered as $mk){
-				$md = isset($fd['months'][$mk]) ? $fd['months'][$mk] : null;
-				$H = ($md && isset($md['vals'][$iSessH])) ? $md['vals'][$iSessH] : null;
-				$bPW = ($md && isset($md['vals'][$iBenPW])) ? $md['vals'][$iBenPW] : null;
-				$bInf = ($md && isset($md['vals'][$iBenInf])) ? $md['vals'][$iBenInf] : null;
-				$bChild = ($md && isset($md['vals'][$iBenChild])) ? $md['vals'][$iBenChild] : null;
-				$bAdol = ($md && isset($md['vals'][$iBenAdol])) ? $md['vals'][$iBenAdol] : null;
-
-				/* (changed 2026-10) a month is judged only when Sessions Held and all four
-				   beneficiary counts are reported (a blank is never read as 0) */
-				$benSum = 0; $hasBen=true;
-				foreach([$bPW,$bInf,$bChild,$bAdol] as $bv){
-					if($bv===null){ $hasBen=false; break; }
-					$benSum += $bv;
-				}
-				if($H!==null && $hasBen){ $sumHeld += $H; $sumBen += $benSum; }
-
-				$avg = null; $flag=false;
-				if($H!==null && $H>0 && $hasBen){
-					$avg = $benSum / $H;
-					if($avg < 5){
-						$flag = true;
-						$hitCount++;
-						$hlCells('t8', $md, [$iSessH, $iBenPW, $iBenInf, $iBenChild, $iBenAdol]);
-					}
-				}
-
-				$cells[$mk] = [
-					'held'=>$H,
-					'ben'=> $hasBen ? $benSum : null,
-					'avg'=> $avg,
-					'flag'=>$flag
-				];
-			}
-
-			$avgTot = null; $totFlag=false;
-			if($sumHeld>0){
-				$avgTot = $sumBen / $sumHeld;
-				if($avgTot < 5) $totFlag=true;
-			}
-
-			/* (changed 2026-10) judged month by month; the totals are shown for reference only */
-			$anyFlag = false;
-			foreach($cells as $mk=>$cinfo){
-				if(!empty($cinfo['flag'])){ $anyFlag=true; break; }
-			}
-
-			if($anyFlag){
-				$t8_facilities[$key]=true;
-
-				if($totalMonthsSel>0 && $hitCount === $totalMonthsSel){
-					$t8_all_facilities[$key]=true;
-				} else {
-					$t8_any_facilities[$key]=true;
-				}
-
-				// Web rows (two-level header rendering)
-				$t8_web['rows'][$key] = [
-					'block'=>display_block_label($fd['block']),
-					'facility'=>$fd['facility'],
-					'sessionsite'=>$fd['sessionsite'],
-					'cells'=>$cells,
-					'totals'=>['held'=>$sumHeld,'ben'=>$sumBen,'avg'=>$avgTot,'flag'=>$totFlag]
-				];
-
-				// Export rows (Excel uses simple table: month labels repeated across 3 columns + a subheader row as row 2)
-				$line = dqa_id_row(display_block_label($fd['block']),$fd['facility'],$fd['sessionsite']);
-				foreach($selMonthKeysOrdered as $mk){
-				$ci = $cells[$mk];
-				if(!empty($ci['flag'])){
-					$line[] = ($ci['held']===null?'':round($ci['held']));
-					$line[] = ($ci['ben']===null?'':round($ci['ben']));
-					$line[] = ($ci['avg']===null?'':round($ci['avg'],1));
-				} else {
-					$line[] = '';
-					$line[] = '';
-					$line[] = '';
-				}
-			}
-				if($totFlag){
-				$line[] = round($sumHeld);
-				$line[] = round($sumBen);
-				$line[] = ($avgTot===null?'':round($avgTot,1));
-				} else {
-				$line[] = '';
-				$line[] = '';
-				$line[] = '';
-				}
-
-				$t8_export[] = $line;
-			}
+	$t8_export[] = $h1; $t8_export[] = $h2;
+	foreach($t8_web['rows'] as $r8){
+		$line = dqa_id_row($r8['block'], $r8['facility'], $r8['sessionsite']);
+		foreach($selMonthKeysOrdered as $mk){
+			$c8 = $r8['cells'][$mk];
+			if(!empty($c8['flag'])){ $line[] = ($c8['held'] === null ? '' : round($c8['held'])); $line[] = ($c8['ben'] === null ? '' : round($c8['ben'])); $line[] = ($c8['avg'] === null ? '' : round($c8['avg'], 1)); }
+			else { $line[] = ''; $line[] = ''; $line[] = ''; }
 		}
+		$tt = $r8['totals'];
+		if(!empty($tt['flag'])){ $line[] = round((float)$tt['held']); $line[] = round((float)$tt['ben']); $line[] = ($tt['avg'] === null ? '' : round($tt['avg'], 1)); } else { $line[] = ''; $line[] = ''; $line[] = ''; }
+		$t8_export[] = $line;
 	}
-
-	/* (added) Public facilities reporting Typhoid — Accuracy. Y/N matrix per selected
-	   month for units of PUBLIC facilities only: N = Typhoid vaccination reported (> 0)
-	   in that month (issue), Y = not reported (no issue). Only units with at least one N
-	   are listed (same convention as the Availability matrices). */
-	$typ=[]; $typ_facilities=[]; $typ_any_facilities=[]; $typ_all_facilities=[];
-	$typ[] = array_merge(dqa_id_head(), array_values($selMonthLabelsOrdered));
-	if($typAvailable){
-		$totalMonthsSel = count($selMonthKeysOrdered);
-		foreach($facFiltered as $key=>$fd){
-			if(!$typIsPublic($key,$fd)) continue;
-			$row = dqa_id_row(display_block_label($fd['block']),$fd['facility'],$fd['sessionsite']);
-			$hitCount = 0;
-			foreach($selMonthKeysOrdered as $mk){
-				$md = isset($fd['months'][$mk]) ? $fd['months'][$mk] : null;
-				$reported = false;
-				if($md){
-					foreach($iTyphList as $ci){
-						$v = isset($md['vals'][$ci]) ? $md['vals'][$ci] : null;
-						if($v !== null && (float)$v > 0.0){
-							$reported = true;
-							foreach($md['ris'] as $dqa_tr){
-								$dqa_tv = as_num_or_null(isset($rows[$dqa_tr][$ci]) ? $rows[$dqa_tr][$ci] : null);
-								if($dqa_tv !== null && $dqa_tv > 0) $hlCells('typ', ['ris'=>[$dqa_tr]], [$ci]);
-							}
-						}
-					}
-				}
-				$row[] = $reported ? 'N' : 'Y';
-				if($reported) $hitCount++;
-			}
-			if($hitCount > 0){
-				$typ_facilities[$key]=true;
-				$typ[] = $row;
-				if($totalMonthsSel>0 && $hitCount === $totalMonthsSel){
-					$typ_all_facilities[$key]=true;
-				} else {
-					$typ_any_facilities[$key]=true;
-				}
-			}
-		}
-	}
-
-	/* Outliers */
-	$incBucketsSel = array_fill_keys((array)$filters['outliers_inc'], true);
-	$dropBucketsSel= array_fill_keys((array)$filters['outliers_drop'], true);
-
-	$pairList = [];
-	for($i=0;$i<count($selMonthKeysOrdered)-1;$i++){
-		$m1 = $selMonthKeysOrdered[$i];
-		$m2 = $selMonthKeysOrdered[$i+1];
-		$pairKey = $m1.'|'.$m2;
-		$pairList[] = [
-			'k'=>$pairKey,
-			'm1'=>$m1,'m2'=>$m2,
-			'm1lbl'=> isset($selMonthLabelsOrdered[$m1]) ? $selMonthLabelsOrdered[$m1] : $m1,
-			'm2lbl'=> isset($selMonthLabelsOrdered[$m2]) ? $selMonthLabelsOrdered[$m2] : $m2,
-		];
-	}
-
-	$bucketHit = function($p) use ($incBucketsSel,$dropBucketsSel){
-		if($p>0){
-			if(isset($incBucketsSel['INC_LOW']) && $p>=25 && $p<=50.49) return true;
-			if(isset($incBucketsSel['INC_MOD']) && $p>=50.50 && $p<=100) return true;
-			if(isset($incBucketsSel['INC_EXT']) && $p>100) return true;
-		}
-		elseif($p<0){
-			if(isset($dropBucketsSel['DROP_LOW']) && $p<=-25 && $p>=-50.49) return true;
-			if(isset($dropBucketsSel['DROP_MOD']) && $p<=-50.50 && $p>=-100) return true;
-			if(isset($dropBucketsSel['DROP_EXT']) && $p<-100) return true;
-		}
-		return false;
-	};
-
-	$t3_facilities=[]; $t3_rows_map=[]; $t3_hit_map=[];
-	foreach($facFiltered as $key=>$fd){
-		$any=false; $cells=[];
-		foreach($selVaxList as $vx){
-			if(!isset($idxByShortLocal[$vx])) continue;
-			$ci = $idxByShortLocal[$vx];
-			foreach($pairList as $p){
-				$m1=$p['m1']; $m2=$p['m2']; $pk=$p['k'];
-				$v1 = (isset($fd['months'][$m1]) && isset($fd['months'][$m1]['vals'][$ci])) ? $fd['months'][$m1]['vals'][$ci] : null;
-				$v2 = (isset($fd['months'][$m2]) && isset($fd['months'][$m2]['vals'][$ci])) ? $fd['months'][$m2]['vals'][$ci] : null;
-				$pc = pct_change($v1,$v2);
-				$hit = false; $pctVal = null;
-				if($pc!==null){
-					$pctVal = $pc*100;
-					if($bucketHit($pctVal)){
-						$hit = true; $any = true;
-						$t3_hit_map[$key][$m1][$vx]=true;
-						$t3_hit_map[$key][$m2][$vx]=true;
-						$hlCells('t3', $fd['months'][$m1], [$ci]);
-						$hlCells('t3', $fd['months'][$m2], [$ci]);
-					}
-				}
-				if($hit) $cells[$vx][$pk] = ['a'=>$v1,'b'=>$v2,'pct'=>$pctVal,'hit'=>$hit]; /* (changed 2026-10) only hit cells are kept (all readers treat a missing cell as not hit) - saves memory on large files */
-			}
-		}
-		if($any){
-			$t3_facilities[$key]=true;
-			$t3_rows_map[$key]=[
-				'block'=>display_block_label($fd['block']),
-				'facility'=>$fd['facility'],
-				'sessionsite'=>$fd['sessionsite'],
-				'cells'=>$cells
-			];
-		}
-	}
-	
-	/* Any month-pair vs All month-pairs for Outliers (facility-level) */
-	$t3_any_facilities = [];
-	$t3_all_facilities = [];
-	$totalPairs = count($pairList);
-	if($totalPairs > 0){
-		foreach($t3_rows_map as $fkey=>$row){
-			$pairHits = 0;
-			foreach($pairList as $p){
-				$pk = $p['k'];
-				$hit=false;
-				// hit if any selected vaccine hits this pair
-				foreach($selVaxList as $vx){
-					if(isset($row['cells'][$vx]) && isset($row['cells'][$vx][$pk]) && !empty($row['cells'][$vx][$pk]['hit'])){
-						$hit=true; break;
-					}
-				}
-				if($hit) $pairHits++;
-			}
-			if($pairHits === $totalPairs) $t3_all_facilities[$fkey]=true;
-			else $t3_any_facilities[$fkey]=true;
-		}
-	} else {
-		// If only one month selected, treat any hits as "Any month"
-		foreach($t3_rows_map as $fkey=>$row){ $t3_any_facilities[$fkey]=true; }
-	}
-
-$_SESSION['pink_outlier_hits'] = $t3_hit_map;
-
-	/* Top-3 indicators for Outliers (Any month-pair vs All month-pairs) */
-	$top3OutAny = [];
-	$top3OutAll = [];
-	$outAnyCounts = [];
-	$outAllCounts = [];
-	foreach($selVaxList as $vx){ $outAnyCounts[$vx]=0; $outAllCounts[$vx]=0; }
-	foreach($t3_rows_map as $row){
-		foreach($selVaxList as $vx){
-			$anyHit=false; $allHit=true; $hasPair=false;
-			foreach($pairList as $p){
-				$pk = $p['k'];
-				$hasPair=true;
-				$cell = (isset($row['cells'][$vx]) && isset($row['cells'][$vx][$pk])) ? $row['cells'][$vx][$pk] : null;
-				$hit = ($cell && !empty($cell['hit']));
-				if($hit) $anyHit=true; else $allHit=false;
-			}
-			if($hasPair && $anyHit) $outAnyCounts[$vx] = $outAnyCounts[$vx] + 1;
-			if($hasPair && $allHit) $outAllCounts[$vx] = $outAllCounts[$vx] + 1;
-		}
-	}
-	arsort($outAnyCounts);
-	arsort($outAllCounts);
-	// Any-month-pair (only) counts exclude facilities that hit ALL month-pairs for that indicator
-	$outAnyOnlyCounts = [];
-	foreach($selVaxList as $vx){
-		$outAnyOnlyCounts[$vx] = max(0, (int)$outAnyCounts[$vx] - (int)$outAllCounts[$vx]);
-	}
-	arsort($outAnyOnlyCounts);
-	foreach($outAnyOnlyCounts as $vx=>$cnt){ if($cnt<=0) continue; $top3OutAny[] = $vx.' ('.$cnt.')'; if(count($top3OutAny)===3) break; }
-	foreach($outAllCounts as $vx=>$cnt){ if($cnt<=0) continue; $top3OutAll[] = $vx.' ('.$cnt.')'; if(count($top3OutAll)===3) break; }
-	$outOverallCounts = $outAnyCounts;
-	arsort($outOverallCounts);
-	$top3OutOverall = [];
-	foreach($outOverallCounts as $vx=>$cnt){ if($cnt<=0) continue; $top3OutOverall[] = $vx.' ('.$cnt.')'; if(count($top3OutOverall)===3) break; }
-
-	/* UPDATED export to match Outliers table */
+	$t3_rows_map = $R['t3Rows'];
 	$t3_export = [];
-	$t3_export_header = dqa_id_head();
-	foreach($selVaxList as $vx){
-		foreach($pairList as $p){
-			$t3_export_header[] = $vx.' '.$p['m1lbl'];
-			$t3_export_header[] = $vx.' '.$p['m2lbl'];
-			$t3_export_header[] = $vx.' % Change ('.$p['m1lbl'].'–'.$p['m2lbl'].')';
-		}
-	}
-	$t3_export[] = $t3_export_header;
-	foreach($t3_rows_map as $row){
-		$line = dqa_id_row($row['block'],$row['facility'],isset($row['sessionsite'])?$row['sessionsite']:'');
-		foreach($selVaxList as $vx){
+	$t3h = dqa_id_head();
+	foreach($R['accVax'] as $vx){ foreach($pairList as $p){ $t3h[] = $vx.' '.$p['m1lbl']; $t3h[] = $vx.' '.$p['m2lbl']; $t3h[] = $vx.' % Change ('.$p['m1lbl'].'–'.$p['m2lbl'].')'; } }
+	$t3_export[] = $t3h;
+	foreach($t3_rows_map as $r3){
+		$line = dqa_id_row($r3['block'], $r3['facility'], $r3['sessionsite']);
+		foreach($R['accVax'] as $vx){
 			foreach($pairList as $p){
-				$pk = $p['k'];
-				$cell = (isset($row['cells'][$vx]) && isset($row['cells'][$vx][$pk])) ? $row['cells'][$vx][$pk] : null;
-				if(!$cell || empty($cell['hit'])){
-					$line[] = ''; $line[] = ''; $line[] = '';
-				} else {
-					$a = $cell['a']; $b = $cell['b']; $pct = $cell['pct'];
-					$pctStr = ($pct===null) ? '' : (($pct>0?'+':'').round($pct,1).'%');
-					$line[] = ($a===null?'':round($a));
-					$line[] = ($b===null?'':round($b));
-					$line[] = $pctStr;
-				}
+				$c3 = isset($r3['cells'][$vx][$p['k']]) ? $r3['cells'][$vx][$p['k']] : null;
+				if(!$c3 || empty($c3['hit'])){ $line[] = ''; $line[] = ''; $line[] = ''; continue; }
+				$line[] = ($c3['a'] === null ? '' : round($c3['a'])); $line[] = ($c3['b'] === null ? '' : round($c3['b']));
+				$line[] = !empty($c3['fromZero']) ? 'from 0' : (($c3['pct'] > 0 ? '+' : '').round($c3['pct'], 1).'%');
 			}
 		}
 		$t3_export[] = $line;
 	}
-
-	/* Dropouts */
-	$selDropRanges = array_fill_keys((array)$filters['drop_ranges'], true);
-	/* updated ranges per request */
-	$dropMatch = function($pct) use ($selDropRanges){
-		if(isset($selDropRanges['R5_10']) && $pct>=5 && $pct<=10.99) return true;
-		if(isset($selDropRanges['R11_20']) && $pct>=11 && $pct<=19.99) return true;
-		if(isset($selDropRanges['R20P']) && $pct>=20) return true;
-		return false;
-	};
-
-	$selectedPairs = [];
-	foreach((array)$filters['drop_pairs'] as $pr){
-		$pr = trim((string)$pr);
-		if($pr!=='') $selectedPairs[$pr]=true;
-	}
-	/* build pairs from pair-builder rows (index-wise pairing) */
-	$fromList = isset($filters['drop_from']) ? (array)$filters['drop_from'] : [];
-	$toList = isset($filters['drop_to']) ? (array)$filters['drop_to'] : [];
-	$maxN = max(count($fromList), count($toList));
-	for($ii=0;$ii<$maxN;$ii++){
-		$f = isset($fromList[$ii]) ? trim((string)$fromList[$ii]) : '';
-		$t = isset($toList[$ii]) ? trim((string)$toList[$ii]) : '';
-		if($f==='' || $t==='') continue;
-		if($f === $t) continue;
-		$selectedPairs[$f.'→'.$t] = true;
-	}
-	$selectedPairs = array_keys($selectedPairs);
-
-	$drop_pair_map = [];
-	$drop_tables = [];
-	$drop_exports = [];
-	$drop_fac_sets = [];
-	$drop_hit_map = [];
-
-	foreach($selectedPairs as $pairLabel){
-		$parts = explode('→',$pairLabel);
-		if(count($parts)!=2) continue;
-		$from = trim($parts[0]);
-		$to = trim($parts[1]);
-		if($from==='' || $to==='') continue;
-		if(!isset($idxByShortLocal[$from]) || !isset($idxByShortLocal[$to])) continue;
-
-		$pairKey = 'drop_'.safe_key($from.'_'.$to);
-		$drop_pair_map[$pairKey] = ['label'=>$pairLabel,'from'=>$from,'to'=>$to];
-
-		$web = [
-			'pairLabel'=>$pairLabel,
-			'from'=>$from,'to'=>$to,
-			'months'=>$selMonthKeysOrdered,
-			'monthLabels'=>$selMonthLabelsOrdered,
-			'rows'=>[]
-		];
-
-		$exp = [];
-		$expHeader = dqa_id_head();
-		foreach($selMonthKeysOrdered as $mk){
-			$ml = isset($selMonthLabelsOrdered[$mk]) ? $selMonthLabelsOrdered[$mk] : $mk;
-			$expHeader[] = $ml.' '.$from;
-			$expHeader[] = $ml.' '.$to;
-			$expHeader[] = $ml.' % change';
+	$drop_pair_map = []; $drop_tables = []; $drop_exports = [];
+	foreach($R['drops'] as $dk=>$d){
+		$drop_pair_map[$dk] = ['label'=>$d['label'], 'from'=>$d['from'], 'to'=>$d['to']];
+		$drop_tables[$dk] = $d['web'];
+		$exp = []; $eh = dqa_id_head();
+		foreach($selMonthKeysOrdered as $mk){ $eh[] = $selMonthLabelsOrdered[$mk].' '.$d['from']; $eh[] = $selMonthLabelsOrdered[$mk].' '.$d['to']; $eh[] = $selMonthLabelsOrdered[$mk].' % dropout'; }
+		$eh[] = 'All months '.$d['from']; $eh[] = 'All months '.$d['to']; $eh[] = 'All months % dropout';
+		$exp[] = $eh;
+		foreach($d['web']['rows'] as $rd){
+			$line = dqa_id_row($rd['block'], $rd['facility'], $rd['sessionsite']);
+			foreach($selMonthKeysOrdered as $mk){ $cd = $rd['cells'][$mk]; $line[] = ($cd['from'] === null ? '' : round($cd['from'])); $line[] = ($cd['to'] === null ? '' : round($cd['to'])); $line[] = ($cd['pct'] === null ? '' : round($cd['pct'], 1).'%'); }
+			$line[] = round($rd['all']['from']); $line[] = round($rd['all']['to']); $line[] = ($rd['all']['pct'] === null ? '' : round($rd['all']['pct'], 1).'%');
+			$exp[] = $line;
 		}
-		$expHeader[] = 'All months '.$from;
-		$expHeader[] = 'All months '.$to;
-		$expHeader[] = 'All months % change';
-		$exp[] = $expHeader;
-
-		$facSet = [];
-		$hitSet = [];
-		$iFrom = $idxByShortLocal[$from];
-		$iTo = $idxByShortLocal[$to];
-
-		foreach($facFiltered as $fkey=>$fd){
-			$cells = [];
-			$sumA=0; $sumB=0;
-			$anyHit=false;
-
-			foreach($selMonthKeysOrdered as $mk){
-				$A = (isset($fd['months'][$mk]) && isset($fd['months'][$mk]['vals'][$iFrom])) ? $fd['months'][$mk]['vals'][$iFrom] : null;
-				$B = (isset($fd['months'][$mk]) && isset($fd['months'][$mk]['vals'][$iTo])) ? $fd['months'][$mk]['vals'][$iTo] : null;
-
-				/* (changed 2026-10) reference totals use only months where both are reported */
-				if($A!==null && $B!==null){ $sumA += $A; $sumB += $B; }
-
-				$cell = ['from'=>null,'to'=>null,'pct'=>null];
-				if($A!==null && $B!==null && $A>0 && $B < $A){
-					$drop = ($A-$B)/$A*100;
-					if($dropMatch($drop)){
-						$anyHit=true;
-						$hitSet[$fkey][$mk]=true;
-						$cell = ['from'=>$A,'to'=>$B,'pct'=>$drop];
-						$hlCells($pairKey, $fd['months'][$mk], [$iFrom, $iTo]);
-					}
-				}
-				$cells[$mk] = $cell;
-			}
-
-			$all = ['from'=>null,'to'=>null,'pct'=>null];
-			if($sumA>0 && $sumB < $sumA){
-				$dropAll = ($sumA-$sumB)/$sumA*100;
-				if($dropMatch($dropAll)){
-					// NOTE: "All months" for Dropouts is based on each month individually,
-					// not on totals. Totals are shown for reference only and do not affect inclusion/counting.
-					$all = ['from'=>$sumA,'to'=>$sumB,'pct'=>$dropAll];
-				}
-			}
-if($anyHit){
-				$facSet[$fkey]=true;
-				$web['rows'][$fkey]=[
-					'block'=>display_block_label($fd['block']),
-					'facility'=>$fd['facility'],
-					'sessionsite'=>$fd['sessionsite'],
-					'cells'=>$cells,
-					'all'=>$all
-				];
-
-				$line = dqa_id_row(display_block_label($fd['block']),$fd['facility'],$fd['sessionsite']);
-				foreach($selMonthKeysOrdered as $mk){
-					$cell = $cells[$mk];
-					$line[] = ($cell['from']===null?'':round($cell['from']));
-					$line[] = ($cell['to']===null?'':round($cell['to']));
-					$line[] = ($cell['pct']===null?'':round($cell['pct'],1).'%');
-				}
-				$line[] = ($all['from']===null?'':round($all['from']));
-				$line[] = ($all['to']===null?'':round($all['to']));
-				$line[] = ($all['pct']===null?'':round($all['pct'],1).'%');
-				$exp[] = $line;
-			}
-		}
-
-		$drop_tables[$pairKey] = $web;
-		$drop_exports[$pairKey]= $exp;
-		$drop_fac_sets[$pairKey]= $facSet;
-		$drop_hit_map[$pairKey]= $hitSet;
+		$drop_exports[$dk] = $exp;
 	}
-
 	$_SESSION['drop_pair_map'] = $drop_pair_map;
-	$_SESSION['pink_dropout_hits'] = $drop_hit_map;
-
-	/* Inconsistencies (existing) */
-	$t5_sets=['p3gtp1'=>[],'opv3gtopv1'=>[]];
-	$t5_p3gtp1=[array_merge(dqa_id_head(), ['Penta3 (total)','Penta1 (total)','% change'])];
-	$t5_opv3gtopv1=[array_merge(dqa_id_head(), ['OPV3 (total)','OPV1 (total)','% change'])];
-
-	/* (changed 2026-10) Totals over the selected months in which BOTH doses are
-	   reported: a month with a blank value is left out of both totals. The highlighted
-	   download marks the cells of exactly those months (their sums = the table totals). */
-	foreach($facFiltered as $key=>$fd){
-		$sumP1=0; $sumP3=0; $sumO1=0; $sumO3=0;
-		$mdP = []; $mdO = [];
-		foreach($fd['months'] as $mk=>$md){
-			$p1 = ($iP1!==null && isset($md['vals'][$iP1])) ? $md['vals'][$iP1] : null;
-			$p3 = ($iP3!==null && isset($md['vals'][$iP3])) ? $md['vals'][$iP3] : null;
-			if($p1!==null && $p3!==null){ $sumP1 += $p1; $sumP3 += $p3; $mdP[] = $md; }
-			$o1 = ($iO1!==null && isset($md['vals'][$iO1])) ? $md['vals'][$iO1] : null;
-			$o3 = ($iO3!==null && isset($md['vals'][$iO3])) ? $md['vals'][$iO3] : null;
-			if($o1!==null && $o3!==null){ $sumO1 += $o1; $sumO3 += $o3; $mdO[] = $md; }
-		}
-
-		if($iP1!==null && $iP3!==null && !empty($mdP) && $sumP3 > $sumP1){
-			$t5_sets['p3gtp1'][$key]=true;
-			foreach($mdP as $md){ $hlCells('t5_p3gtp1', $md, [$iP1, $iP3]); }
-			$pct = ($sumP1>0) ? (($sumP3-$sumP1)/$sumP1*100) : null;
-			$t5_p3gtp1[] = array_merge(
-				dqa_id_row(display_block_label($fd['block']),$fd['facility'],$fd['sessionsite']),
-				[round($sumP3), round($sumP1), ($pct===null?'':('+'.round($pct,1).'%'))]
-			);
-		}
-		if($iO1!==null && $iO3!==null && !empty($mdO) && $sumO3 > $sumO1){
-			$t5_sets['opv3gtopv1'][$key]=true;
-			foreach($mdO as $md){ $hlCells('t5_opv3gtopv1', $md, [$iO1, $iO3]); }
-			$pct = ($sumO1>0) ? (($sumO3-$sumO1)/$sumO1*100) : null;
-			$t5_opv3gtopv1[] = array_merge(
-				dqa_id_row(display_block_label($fd['block']),$fd['facility'],$fd['sessionsite']),
-				[round($sumO3), round($sumO1), ($pct===null?'':('+'.round($pct,1).'%'))]
-			);
-		}
+	$incons_pair_map = []; $incons_tables = []; $incons_export_map = [];
+	foreach($R['incons'] as $dl=>$m){
+		$incons_pair_map[$dl] = ['from'=>$m['from'], 'to'=>$m['to'], 'label'=>$m['label'], 'pid'=>$m['pid']];
+		$incons_tables[$m['pid']] = $m['rows'];
+		$incons_export_map[$dl] = $m['rows'];
 	}
-
-	/* NEW: dynamic additional Inconsistencies pairs */
-	$incons_pair_map = [];            // downloadKey => ['from'=>..,'to'=>..,'label'=>..,'pid'=>..]
-	$incons_tables = [];              // pid => rows
-	$incons_fac_sets = [];            // pid => facilitySet
-	$incons_export_map = [];          // downloadKey => rows
-
-	$existingPairSet = [];
-	$existingPairSet['Penta1→Penta3'] = true; // maps to Penta3>Penta1
-	$existingPairSet['OPV1→OPV3'] = true;     // maps to OPV3>OPV1
-
-	$fromIn = isset($filters['incons_from']) ? (array)$filters['incons_from'] : [];
-	$toIn   = isset($filters['incons_to']) ? (array)$filters['incons_to'] : [];
-	$maxI = max(count($fromIn), count($toIn));
-
-	$addedPairs = [];
-	for($ii=0;$ii<$maxI;$ii++){
-		$f = isset($fromIn[$ii]) ? trim((string)$fromIn[$ii]) : '';
-		$t = isset($toIn[$ii]) ? trim((string)$toIn[$ii]) : '';
-		if($f==='' || $t==='') continue;
-		if($f === $t) continue;
-		$pairKeyText = $f.'→'.$t;
-		if(isset($existingPairSet[$pairKeyText])) continue;
-		$addedPairs[$pairKeyText] = true;
-	}
-
-	foreach(array_keys($addedPairs) as $pairKeyText){
-		$parts = explode('→', $pairKeyText);
-		if(count($parts)!==2) continue;
-		$from = trim($parts[0]);
-		$to = trim($parts[1]);
-		if($from==='' || $to==='') continue;
-		if(!isset($idxByShortLocal[$from]) || !isset($idxByShortLocal[$to])) continue;
-
-		$pid = 'iadd_'.safe_key($to.'_gt_'.$from);
-		$downloadKey = 't5_'.safe_key($to.'_gt_'.$from);
-		$labelName = 'Inconsistencies — '.display_vax_label($to).'>'.display_vax_label($from);
-
-		$tbl = [array_merge(dqa_id_head(), [display_vax_label($to).' (total)', display_vax_label($from).' (total)', '% change'])];
-		$facSet = [];
-
-		$iFrom = $idxByShortLocal[$from];
-		$iTo = $idxByShortLocal[$to];
-
-		foreach($facFiltered as $fkey=>$fd){
-			$sumFrom = 0; $sumTo = 0; $mdU = [];
-			foreach($fd['months'] as $mk=>$md){
-				/* (changed 2026-10) only months where both vaccines are reported */
-				$vf = isset($md['vals'][$iFrom]) ? $md['vals'][$iFrom] : null;
-				$vt = isset($md['vals'][$iTo]) ? $md['vals'][$iTo] : null;
-				if($vf!==null && $vt!==null){ $sumFrom += $vf; $sumTo += $vt; $mdU[] = $md; }
-			}
-			if(!empty($mdU) && $sumTo > $sumFrom){
-				$facSet[$fkey] = true;
-				foreach($mdU as $md){ $hlCells($downloadKey, $md, [$iFrom, $iTo]); }
-				$pct = ($sumFrom>0) ? (($sumTo-$sumFrom)/$sumFrom*100) : null;
-				$tbl[] = array_merge(
-					dqa_id_row(display_block_label($fd['block']), $fd['facility'], $fd['sessionsite']),
-					[round($sumTo), round($sumFrom), ($pct===null?'':('+'.round($pct,1).'%'))]
-				);
-			}
-		}
-
-		$incons_tables[$pid] = $tbl;
-		$incons_fac_sets[$pid] = $facSet;
-		$incons_export_map[$downloadKey] = $tbl;
-
-		$incons_pair_map[$downloadKey] = [
-			'from'=>$from,
-			'to'=>$to,
-			'label'=>$labelName,
-			'pid'=>$pid
-		];
-	}
-
 	$_SESSION['incons_pair_map'] = $incons_pair_map;
-
-	/* Co-admin */
-	$coSpecs = [
-		'co1'=>['OPV1'=>$iO1,'Penta1'=>$iP1,'RVV1'=>$iRVV1,'PCV1'=>$iPCV1,'IPV1'=>$iIPV1],
-		'co2'=>['OPV2'=>$iO2,'Penta2'=>$iP2,'RVV2'=>$iRVV2],
-		'co3'=>['OPV3'=>$iO3,'Penta3'=>$iP3,'RVV3'=>$iRVV3,'PCV2'=>$iPCV2,'IPV2'=>$iIPV2],
-		'co4'=>['MR1'=>$iMR1,'PCV Booster'=>$iPCVB,'IPV3'=>$iIPV3],
-		'co5'=>['MR2'=>$iMR2,'DPT 1st Booster'=>$iDPTB],
-	];
-
-	$coTables = [];
-	$coExports = [];
-	$coFacilities = [];
-	$coAnySets = [];
-	$coAllSets = [];
-	foreach($coSpecs as $coKey=>$spec){
-		$vaxList = array_keys($spec);
-		$web = ['key'=>$coKey, 'vaccines'=>$vaxList, 'months'=>$selMonthKeysOrdered, 'monthLabels'=>$selMonthLabelsOrdered, 'rows'=>[]];
-		$exp = [];
-		$expHeader = dqa_id_head();
-		foreach($selMonthKeysOrdered as $mk){
-			foreach($vaxList as $vx){ $expHeader[] = (isset($selMonthLabelsOrdered[$mk])?$selMonthLabelsOrdered[$mk]:$mk).' '.display_vax_label($vx); }
+	$coTables = []; $coExports = [];
+	foreach($R['co'] as $ck=>$x){
+		$coTables[$ck] = $x['web'];
+		$vl = $x['web']['vaccines'];
+		$exp = []; $eh = dqa_id_head();
+		foreach($selMonthKeysOrdered as $mk){ foreach($vl as $vx){ $eh[] = $selMonthLabelsOrdered[$mk].' '.display_vax_label($vx); } }
+		foreach($vl as $vx){ $eh[] = 'All months '.display_vax_label($vx); }
+		$exp[] = $eh;
+		foreach($x['web']['rows'] as $rc){
+			$line = dqa_id_row($rc['block'], $rc['facility'], $rc['sessionsite']);
+			foreach($selMonthKeysOrdered as $mk){ foreach($vl as $vx){ $v = $rc['vals'][$mk][$vx]; $line[] = ($v === null ? '' : round($v)); } }
+			foreach($vl as $vx){ $line[] = ($rc['totals'][$vx] === null ? '' : round($rc['totals'][$vx])); }
+			$exp[] = $line;
 		}
-		foreach($vaxList as $vx){ $expHeader[] = 'All months '.display_vax_label($vx); }
-		$exp[] = $expHeader;
-
-		/* (changed 2026-10) judged month by month only: a month counts when 2 or more
-		   REPORTED values of the group are not all equal (a 3-2 split counts). Blank cells
-		   and vaccines missing from the file are not compared and never read as 0. The
-		   red cells of each such month (rule unchanged: values differing from Penta; in
-		   groups without Penta, values differing from the most frequent value, all of them
-		   when there is no single most frequent value) are also the dark-pink cells of the
-		   highlighted download (other group cells of that month light pink). "All months"
-		   totals = reference only. */
-		$set = [];
-		foreach($facFiltered as $fkey=>$fd){
-			$rowVals = [];
-			$rowRed = [];
-			$totals = [];
-			foreach($vaxList as $vx){ $totals[$vx]=null; }
-			$viol = false; $monthViolCount = 0;
-
-			foreach($selMonthKeysOrdered as $mk){
-				$valsMonth = [];
-				$keysMonth = [];
-				foreach($spec as $vx=>$idx){
-					$val = null;
-					if($idx!==null && isset($fd['months'][$mk]) && isset($fd['months'][$mk]['vals'][$idx])){ $val = $fd['months'][$mk]['vals'][$idx]; }
-					$rowVals[$mk][$vx] = $val;
-					if($val!==null){ $totals[$vx] = (($totals[$vx]===null) ? 0 : $totals[$vx]) + $val; $keysMonth[$vx] = sprintf('%.10F', (float)$val); }
-					$valsMonth[$vx] = $val;
-				}
-				if(coadmin_has_highlighted_difference($valsMonth)) {
-					$viol = true; $monthViolCount++;
-					$red = coadmin_red_cells($keysMonth);
-					$dqa_mask = 0; /* red vaccines of the month as a bit mask (position in the group) */
-					foreach($vaxList as $dqa_vi=>$dqa_vx){ if(isset($red[$dqa_vx])) $dqa_mask |= (1 << $dqa_vi); }
-					$rowRed[$mk] = $dqa_mask;
-					$grpCols = []; $redCols = [];
-					foreach($spec as $vx=>$idx){
-						if($idx===null || $rowVals[$mk][$vx]===null) continue;
-						if(isset($red[$vx])) $redCols[] = $idx; else $grpCols[] = $idx;
-					}
-					$hlCells($coKey, $fd['months'][$mk], $grpCols, 1);
-					$hlCells($coKey, $fd['months'][$mk], $redCols, 2);
-				}
-			}
-
-			if($viol){
-				$set[$fkey]=true;
-				// Any month vs All months classification for this co-admin KPI
-				if(!isset($coAnySets)) $coAnySets = [];
-				if(!isset($coAllSets)) $coAllSets = [];
-				$totalMonthsSel = count($selMonthKeysOrdered);
-				if($totalMonthsSel>0 && $monthViolCount === $totalMonthsSel){
-					$coAllSets[$coKey][$fkey]=true;
-				} else {
-					$coAnySets[$coKey][$fkey]=true;
-				}
-				$web['rows'][$fkey]=['block'=>display_block_label($fd['block']), 'facility'=>$fd['facility'], 'sessionsite'=>$fd['sessionsite'], 'vals'=>$rowVals, 'red'=>$rowRed, 'totals'=>$totals];
-				$line = dqa_id_row(display_block_label($fd['block']),$fd['facility'],$fd['sessionsite']);
-				foreach($selMonthKeysOrdered as $mk){
-					foreach($vaxList as $vx){
-						$v = $rowVals[$mk][$vx];
-						$line[] = ($v===null?'':round($v));
-					}
-				}
-				foreach($vaxList as $vx){ $line[] = ($totals[$vx]===null ? '' : round($totals[$vx])); }
-				$exp[]=$line;
-			}
-		}
-
-		$coTables[$coKey]=$web;
-		$coExports[$coKey]=$exp;
-		$coFacilities[$coKey]=$set;
+		$coExports[$ck] = $exp;
 	}
 
-	/* Charts counts */
-	$chartCounts = function($facSet) use($facFiltered){
-		$counts=[];
-		foreach($facSet as $key=>$_){
-			$blockRaw = isset($facFiltered[$key]) ? $facFiltered[$key]['block'] : '';
-			$block = display_block_label($blockRaw);
-			$counts[$block]=isset($counts[$block]) ? $counts[$block]+1 : 1;
-		}
-		ksort($counts, SORT_NATURAL|SORT_FLAG_CASE);
-		return $counts;
-	};
-	$cT0 = $chartCounts($t0_facilities);
-	$cT7 = $chartCounts($t7_facilities);
-	$cT9 = $chartCounts($t9_facilities);
-	$cT2 = $chartCounts($t2_facilities);
-	$cS6 = $chartCounts($t6_facilities);
-	$cT8 = $chartCounts($t8_facilities);
-	$cT3 = $chartCounts($t3_facilities);
-	$cI1 = $chartCounts($t5_sets['p3gtp1']);
-	$cI2 = $chartCounts($t5_sets['opv3gtopv1']);
-	$cTyp = $chartCounts($typ_facilities); /* (added) Typhoid */
+	/* Top-3 lists of the Key Missing Indicators and Outliers cards */
+	$topN = function($counts){ arsort($counts); $o = []; foreach($counts as $vx=>$n){ if($n <= 0) continue; $o[] = display_vax_label($vx).' ('.$n.')'; if(count($o) === 3) break; } return $o; };
+	$blankAnyOnly = []; foreach($R['blankCnt'] as $vx=>$n){ $blankAnyOnly[$vx] = max(0, $n - $R['blankAll'][$vx]); }
+	$top3BlankAny = $topN($blankAnyOnly); $top3BlankAll = $topN($R['blankAll']); $top3BlankOverall = $topN($R['blankCnt']);
+	$top3OutOverall = $topN($R['outAny']);
 
-	$cInconsExtra = []; // pid => counts
-	foreach($incons_fac_sets as $pid=>$set){ $cInconsExtra[$pid] = $chartCounts($set); }
-
-	$cCo = [];
-	foreach($coFacilities as $k=>$set){ $cCo[$k] = $chartCounts($set); }
-
-	$cDrop = [];
-	foreach($drop_fac_sets as $k=>$set){ $cDrop[$k] = $chartCounts($set); }
-
-	/* KPI counts */
-	$kpiCount = function($facSet, $anySet=null, $allSet=null){
-		$any = ($anySet===null) ? count($facSet) : count($anySet);
-		$all = ($allSet===null) ? 0 : count($allSet);
-		return ['total'=>count($facSet),'any'=>$any,'all'=>$all];
-	};
-
-	$kpi = [
-		't0' => $kpiCount($t0_facilities, $t0_any_facilities, $t0_all_facilities),
-		't7' => $kpiCount($t7_facilities, isset($t7_any_facilities)?$t7_any_facilities:array_diff_key($t7_facilities, isset($t7_all_facilities)?$t7_all_facilities:[]), isset($t7_all_facilities)?$t7_all_facilities:[]),
-		't9' => $kpiCount($t9_facilities, $t9_any_facilities, $t9_all_facilities),
-		't2' => $kpiCount($t2_facilities, isset($t2_any_facilities)?$t2_any_facilities:array_diff_key($t2_facilities, isset($t2_all_facilities)?$t2_all_facilities:[]), isset($t2_all_facilities)?$t2_all_facilities:[]),
-		't6' => $kpiCount($t6_facilities, isset($t6_any_facilities)?$t6_any_facilities:[], isset($t6_all_facilities)?$t6_all_facilities:[]),
-		't8' => $kpiCount($t8_facilities, isset($t8_any_facilities)?$t8_any_facilities:[], isset($t8_all_facilities)?$t8_all_facilities:[]),
-		't3' => $kpiCount($t3_facilities, isset($t3_any_facilities)?$t3_any_facilities:[], isset($t3_all_facilities)?$t3_all_facilities:[]),
-		'typ' => $kpiCount($typ_facilities, $typ_any_facilities, $typ_all_facilities), /* (added) Typhoid */
-
-		// Inconsistencies between doses (NO Any/All split requested)
-		'i1' => $kpiCount($t5_sets['p3gtp1']),
-		'i2' => $kpiCount($t5_sets['opv3gtopv1']),
-
-		// Co-admin (Any/All split requested)
-		'co1'=> $kpiCount($coFacilities['co1'], isset($coAnySets['co1'])?$coAnySets['co1']:[], isset($coAllSets['co1'])?$coAllSets['co1']:[]),
-		'co2'=> $kpiCount($coFacilities['co2'], isset($coAnySets['co2'])?$coAnySets['co2']:[], isset($coAllSets['co2'])?$coAllSets['co2']:[]),
-		'co3'=> $kpiCount($coFacilities['co3'], isset($coAnySets['co3'])?$coAnySets['co3']:[], isset($coAllSets['co3'])?$coAllSets['co3']:[]),
-		'co4'=> $kpiCount($coFacilities['co4'], isset($coAnySets['co4'])?$coAnySets['co4']:[], isset($coAllSets['co4'])?$coAllSets['co4']:[]),
-		'co5'=> $kpiCount($coFacilities['co5'], isset($coAnySets['co5'])?$coAnySets['co5']:[], isset($coAllSets['co5'])?$coAllSets['co5']:[]),
-	];
-
-	foreach($drop_fac_sets as $k=>$set){
-		$anySet = [];
-		$allSet = [];
-		$totalMonthsSel = count($selMonthKeysOrdered);
-		if(isset($drop_hit_map[$k])){
-			foreach($drop_hit_map[$k] as $fkey=>$mm){
-				$hitCount = 0;
-				foreach($selMonthKeysOrdered as $mk){
-					if(isset($mm[$mk])) $hitCount++;
-				}
-				if($hitCount > 0){
-					if($totalMonthsSel>0 && $hitCount === $totalMonthsSel) $allSet[$fkey]=true;
-					else $anySet[$fkey]=true;
-				}
-			}
-		}
-		$kpi[$k] = $kpiCount($set, $anySet, $allSet);
-	}
-
-	foreach($incons_fac_sets as $pid=>$set){ $kpi[$pid] = $kpiCount($set); }
-
-	/* Summary tables (Indicator / Facilities / %) for each KPI) */
+	/* Summary tables (Indicator / units / %), as the web application builds them */
 	$summaryByPid = [];
-	/* CHANGED: denominator is session-site-wise (distinct Block+Facility+Session Site), matching session-site-wise KPIs */
-	$summaryTotalDen = (int)$selDen; /* (changed 2026-10) session sites under the current selection */
-
-	$mkRow = function($name,$cnt) use ($summaryTotalDen){
-		$cnt = (int)$cnt;
-		$pct = ($summaryTotalDen>0) ? round(($cnt/$summaryTotalDen)*100, 2) : 0;
-		return ['name'=>$name,'count'=>$cnt,'pct'=>$pct];
+	$summaryTotalDen = max(1, $selDen);
+	$mkRow = function($name, $cnt) use ($summaryTotalDen){ $cnt = (int)$cnt; return ['name'=>$name, 'count'=>$cnt, 'pct'=>round($cnt / $summaryTotalDen * 100, 2)]; };
+	$stOf = []; foreach($cardsList as $c){ $stOf[$c['id']] = $c['stat']; }
+	$s1 = function($id, $name, $overall = false) use ($stOf, $mkRow){
+		$s = isset($stOf[$id]) ? $stOf[$id] : ['total'=>0,'any'=>0,'all'=>0];
+		$o = ['any'=>[$mkRow($name, $s['any'])], 'all'=>[$mkRow($name, $s['all'])]];
+		if($overall) $o['overall'] = [$mkRow($name, $s['total'])];
+		return $o;
 	};
+	$summaryByPid['t0'] = $s1('t0', 'Indicators having 0 values');
+	$summaryByPid['t7'] = $s1('t7', 'Indicators with same values');
+	$summaryByPid['t9'] = $s1('t9', 'Zero coverage session');
+	$sortPct = function($rows){ usort($rows, function($a, $b){ return $b['pct'] <=> $a['pct']; }); return $rows; };
+	$anyRows = []; $allRows = []; $ovRows = [];
+	foreach($selVaxList as $vx){ $anyRows[] = $mkRow($vx, max(0, $R['blankCnt'][$vx] - $R['blankAll'][$vx])); $allRows[] = $mkRow($vx, $R['blankAll'][$vx]); $ovRows[] = $mkRow($vx, $R['blankCnt'][$vx]); }
+	$summaryByPid['t2'] = ['any'=>$sortPct($anyRows), 'all'=>$sortPct($allRows), 'overall'=>$sortPct($ovRows)];
+	$ovRows = []; foreach($R['accVax'] as $vx){ $ovRows[] = $mkRow($vx, $R['outAny'][$vx]); }
+	$summaryByPid['t3'] = ['any'=>[], 'all'=>[], 'overall'=>$sortPct($ovRows)];
+	$summaryByPid['t6'] = $s1('t6', 'Planned but not held', true);
+	$summaryByPid['t8'] = $s1('t8', 'Avg Beneficiaries / Session < 5', true);
+	foreach($drop_pair_map as $dk=>$pm){ $summaryByPid[$dk] = $s1($dk, $pm['label'], true); }
+	$summaryByPid['i1'] = ['any'=>[$mkRow('Penta3>Penta1', isset($stOf['i1']) ? $stOf['i1']['total'] : 0)], 'all'=>[]];
+	$summaryByPid['i2'] = ['any'=>[$mkRow('MR2>MR1', isset($stOf['i2']) ? $stOf['i2']['total'] : 0)], 'all'=>[]];
 
-	// Availability KPIs (single row)
-	$summaryByPid['t0'] = ['any'=>[$mkRow('All Indicators having 0 values but not blank', (isset($kpi['t0']['any'])?$kpi['t0']['any']:0))], 'all'=>[$mkRow('All Indicators having 0 values but not blank', (isset($kpi['t0']['all'])?$kpi['t0']['all']:0))]];
-	$summaryByPid['t7'] = ['any'=>[$mkRow('Indicators with repeating values', (isset($kpi['t7']['any'])?$kpi['t7']['any']:0))], 'all'=>[$mkRow('Indicators with repeating values', (isset($kpi['t7']['all'])?$kpi['t7']['all']:0))]];
-	$summaryByPid['t9'] = ['any'=>[$mkRow('Zero coverage session', (isset($kpi['t9']['any'])?$kpi['t9']['any']:0))], 'all'=>[$mkRow('Zero coverage session', (isset($kpi['t9']['all'])?$kpi['t9']['all']:0))]];
-
-	// Completeness summary per indicator
-	if(isset($blankCountsByVax) && is_array($blankCountsByVax)){
-		$anyRows=[]; $allRows=[]; $overallRows=[];
-		foreach($blankCountsByVax as $vx=>$cnt){
-			$allCnt = isset($blankAllCountsByVax[$vx]) ? (int)$blankAllCountsByVax[$vx] : 0;
-			$overallCnt = (int)$cnt;
-			$anyCnt = max(0, $overallCnt - $allCnt);
-			$anyRows[] = $mkRow($vx,$anyCnt);
-			$allRows[] = $mkRow($vx,$allCnt);
-			$overallRows[] = $mkRow($vx,$overallCnt);
-		}
-		usort($anyRows, function($a,$b){ return ($b['pct']<=>$a['pct']); });
-		usort($allRows, function($a,$b){ return ($b['pct']<=>$a['pct']); });
-		usort($overallRows, function($a,$b){ return ($b['pct']<=>$a['pct']); });
-		$summaryByPid['t2'] = ['any'=>$anyRows,'all'=>$allRows,'overall'=>$overallRows];
-	}
-
-	// Outliers summary per indicator
-	if(isset($outAnyCounts) && is_array($outAnyCounts)){
-		$anyRows=[]; $allRows=[]; $overallRows=[];
-		foreach($outAnyCounts as $vx=>$cnt){
-			$allCnt = isset($outAllCounts[$vx]) ? (int)$outAllCounts[$vx] : 0;
-			$overallCnt = (int)$cnt;
-			$anyCnt = max(0, $overallCnt - $allCnt);
-			$anyRows[] = $mkRow($vx,$anyCnt);
-			$allRows[] = $mkRow($vx,$allCnt);
-			$overallRows[] = $mkRow($vx,$overallCnt);
-		}
-		usort($anyRows, function($a,$b){ return ($b['pct']<=>$a['pct']); });
-		usort($allRows, function($a,$b){ return ($b['pct']<=>$a['pct']); });
-		usort($overallRows, function($a,$b){ return ($b['pct']<=>$a['pct']); });
-		$summaryByPid['t3'] = ['overall'=>$overallRows];
-	}
-
-	// Planned but not held summary (single row)
-	$summaryByPid['t6'] = ['any'=>[$mkRow('Planned but not held', (isset($kpi['t6']['any'])?$kpi['t6']['any']:0))], 'all'=>[$mkRow('Planned but not held', (isset($kpi['t6']['all'])?$kpi['t6']['all']:0))], 'overall'=>[$mkRow('Planned but not held', (isset($kpi['t6']['total'])?$kpi['t6']['total']:0))]];
-
-	// Avg Beneficiaries per session < 5 summary (single row)
-	$summaryByPid['t8'] = ['any'=>[$mkRow('Avg Beneficiaries per session < 5', (isset($kpi['t8']['any'])?$kpi['t8']['any']:0))], 'all'=>[$mkRow('Avg Beneficiaries per session < 5', (isset($kpi['t8']['all'])?$kpi['t8']['all']:0))], 'overall'=>[$mkRow('Avg Beneficiaries per session < 5', (isset($kpi['t8']['total'])?$kpi['t8']['total']:0))]];
-
-	// Dropouts and Inconsistencies (single row per KPI)
-	foreach($drop_fac_sets as $k=>$set){
-		$pairName = isset($drop_pair_map[$k]) ? $drop_pair_map[$k]['label'] : $k; /* (fixed) e.g. Penta1→Penta3 */
-		$summaryByPid[$k] = ['any'=>[$mkRow($pairName, isset($kpi[$k]['any'])?$kpi[$k]['any']:0)], 'all'=>[$mkRow($pairName, isset($kpi[$k]['all'])?$kpi[$k]['all']:0)], 'overall'=>[$mkRow($pairName, isset($kpi[$k]['total'])?$kpi[$k]['total']:0)]];
-	}
-	$summaryByPid['i1'] = ['any'=>[$mkRow('Penta3>Penta1', isset($kpi['i1']['total'])?$kpi['i1']['total']:0)], 'all'=>[]];
-	$summaryByPid['i2'] = ['any'=>[$mkRow('OPV3>OPV1', isset($kpi['i2']['total'])?$kpi['i2']['total']:0)], 'all'=>[]];
-	$summaryByPid['typ'] = ['any'=>[$mkRow('Public facilities reporting Typhoid', isset($kpi['typ']['any'])?$kpi['typ']['any']:0)], 'all'=>[$mkRow('Public facilities reporting Typhoid', isset($kpi['typ']['all'])?$kpi['typ']['all']:0)], 'overall'=>[$mkRow('Public facilities reporting Typhoid', isset($kpi['typ']['total'])?$kpi['typ']['total']:0)]]; /* (added) */
-
-	/* Cards list */
-	$cardsList = [];
-	$cardsList[] = ['id'=>'t0','name'=>'All Indicators having 0 values but not blank','stat'=>$kpi['t0'],'group'=>'availability','downloadKey'=>'t0'];
-	$cardsList[] = ['id'=>'t7','name'=>'All Indicators with same values','stat'=>$kpi['t7'],'group'=>'availability','downloadKey'=>'t7'];
-	$cardsList[] = ['id'=>'t9','name'=>'Zero coverage session','stat'=>$kpi['t9'],'group'=>'availability','downloadKey'=>'t9'];
-	$cardsList[] = ['id'=>'t2','name'=>'Key Missing Indicators','stat'=>$kpi['t2'],'group'=>'completeness','downloadKey'=>'t2'];
-	$cardsList[] = ['id'=>'t6','name'=>'Planned but not held','stat'=>$kpi['t6'],'group'=>'accuracy','downloadKey'=>'t6'];
-	if($typAvailable){ $cardsList[] = ['id'=>'typ','name'=>'Public facilities reporting Typhoid','stat'=>$kpi['typ'],'group'=>'accuracy','downloadKey'=>'typ']; } /* (added) only when Typhoid + ownership can be read */
-	$cardsList[] = ['id'=>'t8','name'=>'Avg Beneficiaries per session < 5','stat'=>$kpi['t8'],'group'=>'accuracy','downloadKey'=>'t8'];
-	$cardsList[] = ['id'=>'t3','name'=>'Outliers','stat'=>$kpi['t3'],'group'=>'accuracy','downloadKey'=>'t3'];
-
-	foreach($drop_pair_map as $dk=>$pm){
-		$cardsList[] = ['id'=>$dk,'name'=>'Dropouts — '.$pm['label'],'stat'=>$kpi[$dk],'group'=>'accuracy','downloadKey'=>$dk];
-	}
-
-    
-	$cardsList[] = ['id'=>'i1','name'=>'Inconsistencies — Penta3>Penta1','stat'=>$kpi['i1'],'group'=>'consistency','downloadKey'=>'t5_p3gtp1'];
-	$cardsList[] = ['id'=>'i2','name'=>'Inconsistencies — OPV3>OPV1','stat'=>$kpi['i2'],'group'=>'consistency','downloadKey'=>'t5_opv3gtopv1'];
-
-	/* NEW: add dynamic inconsistencies KPI cards */
-	foreach($incons_pair_map as $dlKey=>$meta){
-		$pid = $meta['pid'];
-		$cardsList[] = ['id'=>$pid,'name'=>$meta['label'],'stat'=>$kpi[$pid],'group'=>'consistency','downloadKey'=>$dlKey];
-	}
-
-	$cardsList[] = ['id'=>'co1','name'=>'6 weeks — OPV1, Penta1, RVV1, PCV1, fIPV1','stat'=>$kpi['co1'],'group'=>'consistency','downloadKey'=>'co1'];
-	$cardsList[] = ['id'=>'co2','name'=>'10 weeks — OPV2, Penta2, RVV2','stat'=>$kpi['co2'],'group'=>'consistency','downloadKey'=>'co2'];
-	$cardsList[] = ['id'=>'co3','name'=>'14 weeks — OPV3, Penta3, RVV3, PCV2, fIPV2','stat'=>$kpi['co3'],'group'=>'consistency','downloadKey'=>'co3'];
-	$cardsList[] = ['id'=>'co4','name'=>'9 months — MR1, PCV Booster, fIPV3','stat'=>$kpi['co4'],'group'=>'consistency','downloadKey'=>'co4'];
-	$cardsList[] = ['id'=>'co5','name'=>'2 years — MR2, DPT 1st Booster','stat'=>$kpi['co5'],'group'=>'consistency','downloadKey'=>'co5'];
-
-	/* Charts payload */
-	$groupColor = [
-		'availability'=>'#0ea5e9',
-		'completeness'=>'#6366f1',
-		'accuracy'=>'#f97316',
-		'consistency'=>'#22c55e'
-	];
-	/* NEW: light green for inconsistencies charts (matches KPI card light green) */
+	/* Charts payload: units flagged per block */
+	$groupColor = ['availability'=>'#0ea5e9', 'completeness'=>'#6366f1', 'accuracy'=>'#f97316', 'consistency'=>'#22c55e'];
 	$inconsLight = '#86efac';
-
-	$charts = [
-		't0'=>['labels'=>array_keys($cT0),'values'=>array_values($cT0),'color'=>$groupColor['availability']],
-		't7'=>['labels'=>array_keys($cT7),'values'=>array_values($cT7),'color'=>$groupColor['availability']],
-		't9'=>['labels'=>array_keys($cT9),'values'=>array_values($cT9),'color'=>$groupColor['availability']],
-		't2'=>['labels'=>array_keys($cT2),'values'=>array_values($cT2),'color'=>$groupColor['completeness']],
-		't6'=>['labels'=>array_keys($cS6),'values'=>array_values($cS6),'color'=>$groupColor['accuracy']],
-		't8'=>['labels'=>array_keys($cT8),'values'=>array_values($cT8),'color'=>$groupColor['accuracy']],
-		't3'=>['labels'=>array_keys($cT3),'values'=>array_values($cT3),'color'=>$groupColor['accuracy']],
-		/* CHANGED: i1/i2 charts light green */
-		'i1'=>['labels'=>array_keys($cI1),'values'=>array_values($cI1),'color'=>$inconsLight],
-		'i2'=>['labels'=>array_keys($cI2),'values'=>array_values($cI2),'color'=>$inconsLight],
-		'typ'=>['labels'=>array_keys($cTyp),'values'=>array_values($cTyp),'color'=>$groupColor['accuracy']], /* (added) */
-		'co1'=>['labels'=>array_keys($cCo['co1']),'values'=>array_values($cCo['co1']),'color'=>$groupColor['consistency']],
-		'co2'=>['labels'=>array_keys($cCo['co2']),'values'=>array_values($cCo['co2']),'color'=>$groupColor['consistency']],
-		'co3'=>['labels'=>array_keys($cCo['co3']),'values'=>array_values($cCo['co3']),'color'=>$groupColor['consistency']],
-		'co4'=>['labels'=>array_keys($cCo['co4']),'values'=>array_values($cCo['co4']),'color'=>$groupColor['consistency']],
-		'co5'=>['labels'=>array_keys($cCo['co5']),'values'=>array_values($cCo['co5']),'color'=>$groupColor['consistency']],
-	];
-
-	foreach($drop_pair_map as $dk=>$pm){
-		$charts[$dk] = ['labels'=>array_keys($cDrop[$dk]),'values'=>array_values($cDrop[$dk]),'color'=>$groupColor['accuracy']];
-	}
-
-	/* NEW: charts for dynamic inconsistencies (light green) */
-	foreach($incons_pair_map as $dlKey=>$meta){
-		$pid = $meta['pid'];
-		$counts = isset($cInconsExtra[$pid]) ? $cInconsExtra[$pid] : [];
-		$charts[$pid] = ['labels'=>array_keys($counts),'values'=>array_values($counts),'color'=>$inconsLight];
+	$charts = [];
+	foreach($cardsList as $c){
+		$counts = [];
+		foreach($c['stat']['keys'] as $k){ $b = uwx_display_block(isset($facFiltered[$k]) ? $facFiltered[$k]['block'] : ''); $counts[$b] = isset($counts[$b]) ? $counts[$b] + 1 : 1; }
+		ksort($counts, SORT_NATURAL|SORT_FLAG_CASE);
+		$col = ($c['group'] === 'consistency' && ($c['id'] === 'i1' || $c['id'] === 'i2' || str_starts_with($c['id'], 'iadd_'))) ? $inconsLight : $groupColor[$c['group']];
+		$charts[$c['id']] = ['labels'=>array_keys($counts), 'values'=>array_values($counts), 'color'=>$col];
 	}
 
 	/* Export store */
-	$_SESSION['dqa_hl'] = $HL; /* (added 2026-10) cells for "Actual data with highlighted cells" */
-	$_SESSION['dqa_render_id'] = dqa_new_upload_id(); /* (added 2026-10) this page's id: its highlighted-download links carry it */
+	$_SESSION['dqa_hl'] = $R['HL']; /* cells for "Actual data with highlighted cells" */
+	$_SESSION['dqa_render_id'] = dqa_new_upload_id(); /* this page's id: its highlighted-download links carry it */
 	$_SESSION['exports'] = [];
 	$_SESSION['exports']['t0'] = ['label'=>'Indicators_0_not_blank_matrix','rows'=>$t0];
 	$_SESSION['exports']['t7'] = ['label'=>'Indicators_with_same_values','rows'=>$t7];
@@ -4882,77 +3943,44 @@ if($anyHit){
 	$_SESSION['exports']['t8'] = ['label'=>'Avg_Beneficiaries_per_session_lt_5','rows'=>$t8_export];
 	$_SESSION['exports']['t3'] = ['label'=>'Outliers_matrix','rows'=>$t3_export];
 	$_SESSION['exports']['t5_p3gtp1'] = ['label'=>'Inconsistencies_Penta3_gt_Penta1','rows'=>$t5_p3gtp1];
-	$_SESSION['exports']['t5_opv3gtopv1'] = ['label'=>'Inconsistencies_OPV3_gt_OPV1','rows'=>$t5_opv3gtopv1];
-	$_SESSION['exports']['typ'] = ['label'=>'Public_facilities_reporting_Typhoid','rows'=>$typ]; /* (added) */
-
-	/* NEW: dynamic inconsistencies exports */
-	foreach($incons_export_map as $dlKey=>$rowsExp){
-		$_SESSION['exports'][$dlKey] = ['label'=>$dlKey,'rows'=>$rowsExp];
-	}
-
-	foreach($coExports as $ck=>$rowsExp){
-		$_SESSION['exports'][$ck] = ['label'=>strtoupper($ck).'_CoAdmin_matrix','rows'=>$rowsExp];
-	}
-	foreach($drop_exports as $dk=>$rowsExp){
-		$_SESSION['exports'][$dk] = ['label'=>'Dropouts_'.$drop_pair_map[$dk]['from'].'_to_'.$drop_pair_map[$dk]['to'],'rows'=>$rowsExp];
-	}
-
-	/* Pink facility sets for FULL-FILE export */
-	$_SESSION['pink_fac_sets'] = [
-		't0' => array_keys($t0_facilities),
-		't7' => array_keys($t7_facilities),
-		't9' => array_keys($t9_facilities),
-		't2' => array_keys($t2_facilities),
-		't6' => array_keys($t6_facilities),
-		't8' => array_keys($t8_facilities),
-		't3' => array_keys($t3_facilities),
-		't5_p3gtp1'=> array_keys($t5_sets['p3gtp1']),
-		't5_opv3gtopv1'=> array_keys($t5_sets['opv3gtopv1']),
-		'typ' => array_keys($typ_facilities), /* (added) */
-		'co1'=> array_keys($coFacilities['co1']),
-		'co2'=> array_keys($coFacilities['co2']),
-		'co3'=> array_keys($coFacilities['co3']),
-		'co4'=> array_keys($coFacilities['co4']),
-		'co5'=> array_keys($coFacilities['co5']),
-	];
-	foreach($drop_fac_sets as $dk=>$set){ $_SESSION['pink_fac_sets'][$dk] = array_keys($set); }
-
-	/* NEW: dynamic inconsistencies full-file facility sets */
-	foreach($incons_pair_map as $dlKey=>$meta){
-		$pid = $meta['pid'];
-		$_SESSION['pink_fac_sets'][$dlKey] = array_keys(isset($incons_fac_sets[$pid]) ? $incons_fac_sets[$pid] : []);
-	}
+	$_SESSION['exports']['t5_mr2gtmr1'] = ['label'=>'Inconsistencies_MR2_gt_MR1','rows'=>$t5_mr2gtmr1];
+	foreach($incons_export_map as $dlKey=>$rowsExp){ $_SESSION['exports'][$dlKey] = ['label'=>$dlKey,'rows'=>$rowsExp]; }
+	foreach($coExports as $ck=>$rowsExp){ $_SESSION['exports'][$ck] = ['label'=>strtoupper($ck).'_CoAdmin_matrix','rows'=>$rowsExp]; }
+	foreach($drop_exports as $dk=>$rowsExp){ $_SESSION['exports'][$dk] = ['label'=>'Dropouts_'.$drop_pair_map[$dk]['from'].'_to_'.$drop_pair_map[$dk]['to'],'rows'=>$rowsExp]; }
+	/* units of every card, for the full-file export */
+	$_SESSION['pink_fac_sets'] = [];
+	foreach($cardsList as $c){ $_SESSION['pink_fac_sets'][$c['downloadKey']] = $c['stat']['keys']; }
 
 	$initGroup = $filters['active_group'];
 
-	/* (added) Y/N legend texts (Y = no issue, N = issue) shown under each Y/N matrix and its panel box */
+	/* Y/N legend texts (Y = no issue, N = issue) under each Y/N matrix, and the rule notes */
 	$dqaYnNotes = [
-		't0' => "N marks a month in which a session-site row reports a numeric 0 (not blank) in every indicator column after Session Held (beneficiary counts, Td and all vaccine columns).",
-		't7' => "N marks a month in which every indicator of the facility carries the same non-zero value.",
-		't2' => "N marks a key indicator left blank for that month.",
-		'typ' => "N marks a month in which a public facility reported Typhoid vaccination (Typhoid is not given at public facilities).",
-		't9' => "N marks a month with zero coverage (no beneficiary vaccinated) at the session site: every beneficiary count is reported and is 0 (a blank count is not read as 0).",
+		't0' => "N marks a period in which every vaccine-dose column is reported and is 0 (a blank is not 0). A period already counted as a zero coverage session shows –.",
+		't7' => "N marks a period in which every column after Month is reported, is not 0 and carries the same value.",
+		't2' => "N marks a key indicator left blank for that period.",
+		't9' => "N marks a period with a session held and no beneficiary vaccinated (beneficiary and Td counts reported and adding up to 0).",
 	];
-	/* (added 2026-10) short rule notes under the panels whose rule is not a Y/N matrix */
-	$dqaInconsNote = "Totals add the selected months in which both values are reported; a month with a blank value is left out of both totals. The highlighted download marks the cells of exactly those months.";
-	$dqaCoNote = "A month is counted when two or more reported values of the group differ (blank cells are not compared). Red = value differing from Penta (Penta is the reference); in groups without Penta, red = value differing from the most frequent value, or every value when no single value is the most frequent. \"All months\" totals are for reference only.";
+	$dqaInconsNote = "Totals add the selected periods in which both doses are reported. Flagged when the later dose is higher by more than 25% (50% when both totals are under 10; from 0, when it reaches 10).";
+	$dqaCoNote = "A period is counted when a reported value of the group is more than 25% away from the group's reference value (50% when the reference is under 10): the value repeated most often, otherwise Penta, otherwise MR, otherwise the median. Blank cells are not compared. Red = out of range. \"All months\" totals = periods where every reported vaccine is present, for reference only.";
 	$dqaPanelNotes = [
-		't6' => "A month is counted when Sessions Planned is more than 0, Sessions Held is reported and Held is less than Planned (a blank month is not counted). All-months totals are for reference only.",
-		't8' => "A month is counted when Sessions Held is more than 0, all four beneficiary counts are reported and beneficiaries per session held are fewer than 5. All-months totals are for reference only.",
+		't6' => "A period is counted when Sessions Planned is more than 0, Sessions Held is reported and Held is less than Planned. All-months totals use the periods where both are reported, for reference only.",
+		't8' => "A period is counted when Sessions Held is more than 0 and the beneficiaries per session held are fewer than 5 (a zero coverage session is counted there instead). All-months totals are for reference only.",
+		't3' => "Consecutive periods only; a period with every vaccine dose 0 is not compared. Both values under 10: increases need twice the %, decreases are not flagged; a rise from 0 to 10 or more is extreme.",
 		'i1' => $dqaInconsNote, 'i2' => $dqaInconsNote,
 		'co1' => $dqaCoNote, 'co2' => $dqaCoNote, 'co3' => $dqaCoNote, 'co4' => $dqaCoNote, 'co5' => $dqaCoNote,
 	];
+	foreach($drop_pair_map as $dk=>$pm){ $dqaPanelNotes[$dk] = "Dropout over all selected periods in which both doses are reported (first dose above 0)."; }
 	foreach($incons_pair_map as $dqa_dk=>$dqa_meta){ $dqaPanelNotes[$dqa_meta['pid']] = $dqaInconsNote; }
 	$t2_web = [
 		'title' => $t2Title,
 		'vaccines' => $selVaxList,
 		'months' => $selMonthKeysOrdered,
 		'monthLabels' => $selMonthLabelsOrdered,
-		'rows' => $t2_matrix_cache,
+		'rows' => $R['t2Matrix'],
 		'highlightN' => true,
-		'ynNote' => $dqaYnNotes['t2'] /* (added) legend */
+		'ynNote' => $dqaYnNotes['t2']
 	];
-	$t3_web = ['vaccines'=>$selVaxList, 'pairs'=>$pairList, 'rows'=>$t3_rows_map, 'highlightN'=>false];
+	$t3_web = ['vaccines'=>$R['accVax'], 'pairs'=>$pairList, 'rows'=>$t3_rows_map, 'highlightN'=>false];
 
 	/* Build panels HTML blocks */
 	$panelBlocks = ['main'=>[], 'cons_incons'=>[], 'cons_missed'=>[]];
@@ -4970,7 +3998,7 @@ if($anyHit){
 		?>
 		<div class="panel" data-group="<?=h($grp)?>" data-total="<?=$totalVal?>" data-dlkey="<?=h($dlKey)?>" id="panel-<?=h($pid)?>"<?=$panelZeroStyle?>>
 			<div class="panelHeader">
-				<div><div class="panelTitle"><?=h($c['name'])?></div></div>
+				<div><div class="panelTitle"><?=h(display_text_with_fipv($c['name']))?></div></div>
 				<div class="panelControls">
 					<div class="toggleGroup">
 					<button type="button" class="toggleBtn active" data-target="<?=h($pid)?>" data-view="chart">Chart</button>
@@ -4997,8 +4025,6 @@ if($anyHit){
 							render_table($t7, true, $dqaYnNotes['t7']);
 						} elseif($pid==='t9'){
 							render_table($t9, true, $dqaYnNotes['t9']);
-						} elseif($pid==='typ'){ /* (added) */
-							render_table($typ, true, $dqaYnNotes['typ']);
 						} elseif($pid==='t2'){
 							render_missing_indicator_two_level($t2_web);
 						} elseif($pid==='t6'){
@@ -5013,7 +4039,7 @@ if($anyHit){
 						} elseif($pid==='i1'){
 							render_table($t5_p3gtp1, false);
 						} elseif($pid==='i2'){
-							render_table($t5_opv3gtopv1, false);
+							render_table($t5_mr2gtmr1, false);
 						} elseif(str_starts_with($pid,'iadd_')){
 							if(isset($incons_tables[$pid])) render_table($incons_tables[$pid], false);
 							else echo "<div style='padding:12px'>No records.</div>";
@@ -5030,7 +4056,7 @@ if($anyHit){
 						<?php
 						$sum = isset($summaryByPid[$pid]) ? $summaryByPid[$pid] : ['any'=>[],'all'=>[],'overall'=>[]];
 						$renderSum = function($rows){
-							echo '<table class="dataTable"><thead><tr><th>Indicator</th><th>Session Sites</th><th>%</th></tr></thead><tbody>';
+							echo '<table class="dataTable"><thead><tr><th>Indicator</th><th>'.h($unitTitle).'</th><th>%</th></tr></thead><tbody>';
 							foreach($rows as $r){
 								echo '<tr><td>'.h(display_text_with_fipv($r['name'])).'</td><td>'.h((string)$r['count']).'</td><td>'.h((string)$r['pct']).'%</td></tr>';
 							}
@@ -5089,7 +4115,7 @@ if($anyHit){
 
 		$cls = "kpi kpiCard group-".$grp.$kind;
 		$cardHtml = '<div class="'.h($cls).'" data-group="'.h($grp).'" data-target="'.h($pid).'" data-total="'.h((string)$totalVal).'">';
-		$cardHtml .= '<h3>'.h($c['name']).'</h3>';
+		$cardHtml .= '<h3>'.h(display_text_with_fipv($c['name'])).'</h3>';
 		$showSplit = (isset($c['stat']['any']) && isset($c['stat']['all']) && (
 			$grp==='availability' || $pid==='t2' || $pid==='t6' || $pid==='typ' || $pid==='t8' || str_starts_with($pid,'drop_') || str_starts_with($pid,'co')
 		));
@@ -5097,8 +4123,8 @@ if($anyHit){
 		if($showSplit){
 			$anyCnt = (int)$c['stat']['any'];
 			$allCnt = (int)$c['stat']['all'];
-			$cardHtml .= '<div class="splitTotal"><span class="splitTotalNum">'.h((string)$totalVal).'</span><span class="unit"> session sites</span></div>';
-			$cardHtml .= '<div class="split"><div class="splitCol"><div class="splitLbl">Any month</div><div class="splitVal"><span class="splitValNum">'.h((string)$anyCnt).'</span><span class="unit"> session sites</span></div></div><div class="splitCol"><div class="splitLbl">All months</div><div class="splitVal"><span class="splitValNum">'.h((string)$allCnt).'</span><span class="unit"> session sites</span></div></div></div>';
+			$cardHtml .= '<div class="splitTotal"><span class="splitTotalNum">'.h((string)$totalVal).'</span><span class="unit"> '.h($unitPlural).'</span></div>';
+			$cardHtml .= '<div class="split"><div class="splitCol"><div class="splitLbl">Any month</div><div class="splitVal"><span class="splitValNum">'.h((string)$anyCnt).'</span><span class="unit"> '.h($unitPlural).'</span></div></div><div class="splitCol"><div class="splitLbl">All months</div><div class="splitVal"><span class="splitValNum">'.h((string)$allCnt).'</span><span class="unit"> '.h($unitPlural).'</span></div></div></div>';
 
 			// add top-3 lists for Completeness and Outliers (kept as-is)
 			if($pid==='t2'){
@@ -5109,7 +4135,7 @@ if($anyHit){
 			}
 		} else {
 			// Single-number KPI card (no "facilities" text)
-			$cardHtml .= '<div class="num">'.h((string)$totalVal).' <span class="unit">session sites</span></div>';
+			$cardHtml .= '<div class="num">'.h((string)$totalVal).' <span class="unit">'.h($unitPlural).'</span></div>';
 			if($pid==='t3'){
 				$cardHtml .= '<div class="top3"><div class="top3Row">'.h(!empty($top3OutOverall)?implode(', ', $top3OutOverall):'-').'</div></div>';
 			}
@@ -5146,69 +4172,61 @@ if($anyHit){
 	$inconsPairRowCount = max(count($inconsFromSel), count($inconsToSel));
 	if($inconsPairRowCount < 1) $inconsPairRowCount = 1;
 
-	/* -------------------- Overall Score data -------------------- */
-	/* CHANGED: denominator is session-site-wise (distinct Block+Facility+Session Site), matching session-site-wise KPIs */
-	$osDen = (int)$selDen; /* (changed 2026-10) session sites under the current selection */
+	/* -------------------- Overall Score data --------------------
+	   (changed 2026-11, web parity) scoring method v8 of the DQA web application, U-WIN weights
+	   (uwx_weight_table): Availability 33.3 (t0, t7, t9); Accuracy 33.3 (1 period: Planned but not
+	   held and Avg beneficiaries per session < 5; 2 or more periods: those, Outliers and the 3
+	   standard dropouts); Consistency 33.3 (Penta3>Penta1 and MR2>MR1; the 5 co-administration
+	   groups). Completeness is not scored for U-WIN. Check score = 100 - % of the units under the
+	   selection it flags; the weight of a check that cannot run passes to the other checks of its
+	   group, then its component, then the other components. The score always uses the standard
+	   checks (standard outlier vaccines and bands, the 3 dropout pairs at 20% or more, no custom
+	   pairs), whatever is ticked, so the same data always gets the same score. */
+	$osDen = $selDen; /* units under the current selection, at the level on screen */
+	$scorePeriodCount = count($selMonthKeysOrdered);
+	$wScore = uwx_score_of($R);
 	$osComponents = [
 		'availability'=>['name'=>'Availability','kpis'=>[]],
-'accuracy'=>['name'=>'Accuracy','kpis'=>[]],
+		'accuracy'=>['name'=>'Accuracy','kpis'=>[]],
 		'consistency'=>['name'=>'Consistency','kpis'=>[]],
 	];
-
-	foreach($cardsList as $c){
+	foreach($scoreCardsList as $c){
 		$g = $c['group'];
 		if(!isset($osComponents[$g])) continue;
-		$stat = isset($c['stat']) ? $c['stat'] : ['total'=>0,'any'=>0,'all'=>0];
-		$tot = isset($stat['total']) ? (int)$stat['total'] : 0;
-		$any = isset($stat['any']) ? (int)$stat['any'] : $tot;
-		$all = isset($stat['all']) ? (int)$stat['all'] : 0;
-		$pct = ($osDen>0) ? ($tot*100.0/$osDen) : 0.0;
-		$pctAny = ($osDen>0) ? ($any*100.0/$osDen) : 0.0;
-		$pctAll = ($osDen>0) ? ($all*100.0/$osDen) : 0.0;
-
-		$osComponents[$g]['kpis'][] = [
-			'name'=>$c['name'],
-			'total'=>$tot,
-			'any'=>$any,
-			'all'=>$all,
-			'pct'=>$pct,
-			'pctAny'=>$pctAny,
-			'pctAll'=>$pctAll
-		];
+		$stat = $c['stat'];
+		if($osDen <= 0 || (int)$stat['eligible'] <= 0) continue; /* a check that could not be run is not listed */
+		$tot = (int)$stat['total']; $any = (int)$stat['any']; $all = (int)$stat['all'];
+		$osComponents[$g]['kpis'][] = ['name'=>display_text_with_fipv($c['name']), 'total'=>$tot, 'any'=>$any, 'all'=>$all,
+			'pct'=>$tot * 100.0 / $osDen, 'pctAny'=>$any * 100.0 / $osDen, 'pctAll'=>$all * 100.0 / $osDen];
 	}
-
-	$osMini = [];
-	$osScores = [];
+	$osMini = []; $osScores = [];
 	foreach($osComponents as $gid=>$g){
 		$kpis = $g['kpis'];
-		usort($kpis, function($a,$b){
-			if($a['pct']===$b['pct']) return 0;
-			return ($a['pct']<$b['pct']) ? 1 : -1;
-		});
-		$top = ($gid==='consistency') ? array_slice($kpis, 0, 7) : array_slice($kpis, 0, 5);
+		usort($kpis, function($a, $b){ return $b['pct'] <=> $a['pct']; });
+		$top = ($gid === 'consistency') ? array_slice($kpis, 0, 7) : array_slice($kpis, 0, 5);
 		$maxAny = 0.0; $maxAll = 0.0; $maxTot = 0.0;
-		foreach($kpis as $r){
-			if($r['pctAny']>$maxAny) $maxAny=$r['pctAny'];
-			if($r['pctAll']>$maxAll) $maxAll=$r['pctAll'];
-			if($r['pct']>$maxTot) $maxTot=$r['pct'];
-		}
-		/* (changed 2026-10) no session site under the selection -> no score ('—'), never 100 */
-		$score = ($osDen>0) ? max(0.0, 100.0 - $maxTot) : null; // conservative score based on worst KPI %
+		foreach($kpis as $r){ if($r['pctAny'] > $maxAny) $maxAny = $r['pctAny']; if($r['pctAll'] > $maxAll) $maxAll = $r['pctAll']; if($r['pct'] > $maxTot) $maxTot = $r['pct']; }
+		$score = isset($wScore['components'][$gid]) ? $wScore['components'][$gid] : null; /* null = N/A */
 		$osScores[$gid] = $score;
-
 		$osComponents[$gid]['top'] = $top;
 		$osComponents[$gid]['maxAny'] = $maxAny;
 		$osComponents[$gid]['maxAll'] = $maxAll;
 		$osComponents[$gid]['score'] = $score;
-
-		$osMini[] = ['id'=>$gid,'name'=>$g['name'],'score'=>$score,'maxTot'=>$maxTot];
+		$osComponents[$gid]['weight'] = isset($wScore['componentWeights'][$gid]) ? $wScore['componentWeights'][$gid] : 0;
+		$osMini[] = ['id'=>$gid, 'name'=>$g['name'], 'score'=>$score, 'maxTot'=>$maxTot];
 	}
+	$overallScore = $wScore['overall']; /* null = nothing could be scored */
 
-	$overallScore = ($osDen>0) ? 0.0 : null;
-	if($osDen>0 && count($osScores)>0){
-		$sum = 0.0; $n = 0;
-		foreach($osScores as $s){ $sum += (float)$s; $n++; }
-		$overallScore = ($n>0) ? ($sum/$n) : 0.0;
+	/* the score recorded in the database is always the Sub Center-wise one (Facility-wise when the
+	   file has no Sub Center column), as the web application saves every review, whatever level
+	   is on screen; same scope, standard checks */
+	if($uwxMode === $stdMode){
+		$recScores = $osScores; $recOverall = $overallScore; $recCards = $scoreCardsList; $recDen = $osDen;
+	} else {
+		$R2 = uwx_compute_with_score($uwxC, array_merge($uwxF, ['analysisMode'=>$stdMode]));
+		$w2 = uwx_score_of($R2);
+		$recScores = $w2['components']; $recOverall = $w2['overall']; $recCards = $R2['scoreCards']; $recDen = (int)$R2['den'];
+		unset($R2);
 	}
 
 	/* ==================================================================
@@ -5235,16 +4253,8 @@ if($anyHit){
 			sort($s, SORT_STRING); sort($a, SORT_STRING);
 			return $s === $a;
 		};
-		$dqa_sc_unfiltered =
-			$dqa_sc_same($filters['blocks'], array_keys($allBlocks)) &&
-			$dqa_sc_same($filters['months'], array_keys($allMonths)) &&
-			$dqa_sc_same($filters['outliers_vax'], array('BCG','Penta1','Penta3','OPV1','OPV3','MR1','MR2')) &&
-			empty($filters['add_vax']) &&
-			$dqa_sc_same($filters['outliers_inc'], array('INC_EXT')) &&
-			$dqa_sc_same($filters['outliers_drop'], array('DROP_EXT')) &&
-			$dqa_sc_same($filters['drop_ranges'], array('R20P')) &&
-			$dqa_sc_same($filters['drop_pairs'], array('Penta1→Penta3','MR1→MR2','BCG→MR1','Penta3→MR1')) &&
-			empty($filters['drop_from']) && empty($filters['incons_from']);
+		/* (changed 2026-11) scope only (all blocks, all periods): the score always uses the standard checks */
+		$dqa_sc_unfiltered = empty($bSel) && (empty($mSel) || $dqa_sc_same($mSel, $monthKeys));
 		if ($dqa_sc_unfiltered) {
 			/* Same database as dqa.php (where dqa_usage_log lives). */
 			$DQA_SC_DB_HOST = 'localhost';
@@ -5253,14 +4263,18 @@ if($anyHit){
 			$DQA_SC_DB_PASS = 'Ramkrishna$1210';
 			try {
 				/* Period of the uploaded data (ALL uploaded months). */
-				$dqa_sc_mkeys = array_values($monthKeys);
+				/* (changed 2026-11) the calendar months the periods cover (a week maps to its month) */
+				$dqa_sc_mkeys = array(); foreach($monthKeys as $dqa_sc_pk){ foreach(uwx_period_months($dqa_sc_pk) as $dqa_sc_pm){ $dqa_sc_mkeys[$dqa_sc_pm] = true; } }
+				$dqa_sc_mkeys = array_keys($dqa_sc_mkeys);
 				sort($dqa_sc_mkeys, SORT_STRING);
 				$dqa_sc_mcount = count($dqa_sc_mkeys);
 				$dqa_sc_min = $dqa_sc_mkeys[0];
 				$dqa_sc_max = $dqa_sc_mkeys[$dqa_sc_mcount - 1];
 				$dqa_sc_span = months_span_inclusive($dqa_sc_min, $dqa_sc_max);
 				$dqa_sc_contig = ($dqa_sc_span !== null && (int)$dqa_sc_span === $dqa_sc_mcount) ? 1 : 0;
-				if ($dqa_sc_mcount === 1) {
+				if ($uwxDur === 'WEEKLY' && $uwxDatesLabel !== '') {
+					$dqa_sc_period = $uwxDatesLabel; /* (added 2026-11) weekly files: the declared dates */
+				} elseif ($dqa_sc_mcount === 1) {
 					$dqa_sc_period = month_label_from_key_my($dqa_sc_min);
 				} elseif ($dqa_sc_contig === 1) {
 					$dqa_sc_period = month_label_from_key_my($dqa_sc_min) . ' to ' . month_label_from_key_my($dqa_sc_max);
@@ -5457,12 +4471,12 @@ if($anyHit){
 					':used_on' => $dqa_sc_used_on,
 					':designation' => $dqa_sc_designation,
 					':purpose' => $dqa_sc_purpose,
-					':denominator' => (int)$osDen,
-					':s_av' => isset($osScores['availability']) ? round((float)$osScores['availability'], 2) : null,
-					':s_co' => isset($osScores['completeness']) ? round((float)$osScores['completeness'], 2) : null,
-					':s_ac' => isset($osScores['accuracy']) ? round((float)$osScores['accuracy'], 2) : null,
-					':s_cn' => isset($osScores['consistency']) ? round((float)$osScores['consistency'], 2) : null,
-					':s_ov' => round((float)$overallScore, 2),
+					':denominator' => (int)$recDen, /* (changed 2026-11) Sub Center-wise score */
+					':s_av' => isset($recScores['availability']) ? round((float)$recScores['availability'], 2) : null,
+					':s_co' => null, /* Completeness is not scored for U-WIN */
+					':s_ac' => isset($recScores['accuracy']) ? round((float)$recScores['accuracy'], 2) : null,
+					':s_cn' => isset($recScores['consistency']) ? round((float)$recScores['consistency'], 2) : null,
+					':s_ov' => ($recOverall === null ? null : round((float)$recOverall, 2)),
 				));
 				$dqa_sc_runid = (int)$dqa_sc_pdo->lastInsertId();
 				if ($dqa_sc_runid > 0) {
@@ -5471,12 +4485,12 @@ if($anyHit){
 					$dqa_sc_ins = $dqa_sc_pdo->prepare('INSERT INTO dqa_score_kpi
 						(run_id, component, kpi_code, kpi_label, numerator, num_any, num_all, denominator, pct, pct_any, pct_all)
 						VALUES (:rid, :component, :kpi_code, :kpi_label, :numerator, :num_any, :num_all, :denominator, :pct, :pct_any, :pct_all)');
-					foreach ($cardsList as $dqa_sc_c) {
+					foreach ($recCards as $dqa_sc_c) { /* (changed 2026-11) the checks the recorded score is computed from */
 						$dqa_sc_stat = isset($dqa_sc_c['stat']) ? $dqa_sc_c['stat'] : array('total' => 0, 'any' => 0, 'all' => 0);
 						$dqa_sc_tot = isset($dqa_sc_stat['total']) ? (int)$dqa_sc_stat['total'] : 0;
 						$dqa_sc_any = isset($dqa_sc_stat['any']) ? (int)$dqa_sc_stat['any'] : $dqa_sc_tot;
 						$dqa_sc_all = isset($dqa_sc_stat['all']) ? (int)$dqa_sc_stat['all'] : 0;
-						$dqa_sc_den = (int)$osDen;
+						$dqa_sc_den = (int)$recDen;
 						$dqa_sc_ins->execute(array(
 							':rid' => $dqa_sc_runid,
 							':component' => substr((string)$dqa_sc_c['group'], 0, 20),
@@ -5501,28 +4515,40 @@ if($anyHit){
 	$overallSummaryHtml = '';
 	$overallSummaryHtml .= '<div id="osOverlay" aria-hidden="true">';
 	$overallSummaryHtml .=   '<div class="osTopbar"><div class="osWrap"><div class="osTopbarInner">';
-	$overallSummaryHtml .=     '<div><div class="osTitle">Overall Score</div><div class="osMeta">'.h($stateName).' · '.h($distName).' · '.h(strip_tags($durationStrHtml)).'</div></div>';
-	$overallSummaryHtml .=     '<div class="osBack"><button type="button" class="btn" id="osWordBtn">Download Word</button><button type="button" class="btn" id="osBackBtn">Back</button></div>';
+	$overallSummaryHtml .=     '<div><div class="osTitle">Overall Score</div><div class="osMeta">'.h($stateName).' · '.h($distName).' · '.h(strip_tags($durationStrHtml)).' · '.h($uwxModes[$uwxMode]).'</div></div>';
+	$overallSummaryHtml .=     '<div class="osBack"><button type="button" class="btn" id="osBackBtn">Back</button></div>';
 	$overallSummaryHtml .=   '</div></div></div>';
 
 	$overallSummaryHtml .=   '<div class="osWrap">';
 	$overallSummaryHtml .=     '<div class="osGrid3">';
-	/* (changed 2026-10) cards describe the current selection (same denominator as every %) */
+	/* cards describe the current selection (same denominator as every %) */
 	$overallSummaryHtml .=       '<div class="osCard"><div class="t">Coverage</div><div class="k">'.h((string)$selBlocksCount).'</div><div class="s">blocks</div></div>';
-	$overallSummaryHtml .=       '<div class="osCard"><div class="t">Session Sites</div><div class="k">'.h((string)$osDen).' <span class="sm">session sites</span></div></div>';
-	$overallSummaryHtml .=       '<div class="osCard"><div class="t">Period</div><div class="k">'.h((string)count($selMonthKeysOrdered)).'</div><div class="s">months analysed</div></div>';
+	$overallSummaryHtml .=       '<div class="osCard"><div class="t">'.h($unitTitle).'</div><div class="k">'.h((string)$osDen).' <span class="sm">'.h($unitPlural).'</span></div><div class="m">'.h($uwxModes[$uwxMode]).' analysis</div></div>';
+	$overallSummaryHtml .=       '<div class="osCard"><div class="t">Period</div><div class="k">'.h((string)count($selMonthKeysOrdered)).'</div><div class="s">'.h($uwxDur === 'WEEKLY' ? 'weeks analysed' : 'months analysed').($uwxDatesLabel !== '' ? ' · '.h($uwxDatesLabel) : '').'</div></div>';
 	$overallSummaryHtml .=     '</div>';
 
 	$overallSummaryHtml .=     '<div class="osHero">';
 	$overallSummaryHtml .=       '<div class="osScore">';
-	$overallSummaryHtml .=         '<div class="osScoreRing"><canvas id="osScoreRing"></canvas><div class="osScoreText"><div class="n" id="osScoreNum">'.h($overallScore===null ? '—' : (string)round($overallScore)).'</div><div class="l">Overall score (0–100)</div></div></div>';
-	$overallSummaryHtml .=         '<div class="osScoreNote">Denominator: '.h((string)$osDen).' session sites under current selection.<br>Method: Component score = 100 − (worst KPI %); Overall score = average of the 3 component scores.</div>';
+	$overallSummaryHtml .=         '<div class="osScoreRing"><canvas id="osScoreRing"></canvas><div class="osScoreText"><div class="n" id="osScoreNum">'.h($overallScore===null ? '—' : number_format((float)$overallScore, 1)).'</div><div class="l">Overall score (0–100)</div></div></div>';
+	$overallSummaryHtml .=         '<div class="osScoreNote">Denominator: '.h((string)$osDen).' '.h($unitPlural).' under current selection.<br>Method: weighted score (DQA scoring method v8, same as the web application). Every standard check has a fixed weight ('.h($scorePeriodCount >= 2 ? 'multi-period weights: 2 or more periods selected' : '1-period weights: 1 month or 1 week selected').'); check score = 100 − % of '.h($unitPlural).' flagged; the weight of a check that cannot be run passes to the other checks. Completeness is not scored for U-WIN. The score always uses the standard checks, whatever is ticked in the filters.</div>';
 	$overallSummaryHtml .=       '</div>';
 	$overallSummaryHtml .=       '<div class="osMiniGrid" id="osComponentMini">';
 	foreach($osMini as $mi){
-		$overallSummaryHtml .= '<div class="osMini"><div class="h">'.h($mi['name']).'</div><div class="row"><div class="pct">'.h($mi['score']===null ? '—' : (string)round($mi['score'])).'</div><div class="sub">score</div></div><div class="sub">Worst KPI: '.h($mi['score']===null ? '—' : number_format((float)$mi['maxTot'],1).'%').'</div></div>';
+		$dqa_ms = ($mi['score']===null) ? 'No check could be run' : 'Top issue: '.number_format((float)$mi['maxTot'],1).'%';
+		$overallSummaryHtml .= '<div class="osMini"><div class="h">'.h($mi['name']).'</div><div class="row"><div class="pct">'.h($mi['score']===null ? 'N/A' : number_format((float)$mi['score'],1)).'</div><div class="sub">score</div></div><div class="sub">'.h($dqa_ms).'</div></div>';
 	}
 	$overallSummaryHtml .=       '</div>';
+	$overallSummaryHtml .=     '</div>';
+	/* the score working, check by check (as in the web application's score breakdown) */
+	$overallSummaryHtml .=     '<div class="osSection" data-comp="working">';
+	$overallSummaryHtml .=       '<div class="osSectionHead"><div class="h">Score working</div><div class="sub">Weight used × check score ÷ 100 = points; the points add up to the overall score</div></div>';
+	$overallSummaryHtml .=       '<div class="osTableWrap" style="max-height:none"><table class="osTbl"><thead><tr><th>Component</th><th>Check</th><th>Weight</th><th>Weight used</th><th>'.h($unitTitle).' flagged</th><th>Check score</th><th>Points</th></tr></thead><tbody>';
+	foreach($wScore['checks'] as $dqa_wc){
+		$dqa_cn = isset($osComponents[$dqa_wc['comp']]) ? $osComponents[$dqa_wc['comp']]['name'] : $dqa_wc['comp'];
+		$overallSummaryHtml .= '<tr><td>'.h($dqa_cn).'</td><td>'.h(display_text_with_fipv($dqa_wc['name'])).'</td><td>'.h(number_format($dqa_wc['w'],2)).'</td><td>'.h($dqa_wc['run'] ? number_format($dqa_wc['used'],2) : '0 (cannot run)').'</td><td>'.h($dqa_wc['run'] ? $dqa_wc['flagged'].' of '.$osDen : '—').'</td><td>'.h($dqa_wc['run'] ? number_format($dqa_wc['score'],1) : '—').'</td><td>'.h($dqa_wc['run'] ? number_format($dqa_wc['points'],2) : '—').'</td></tr>';
+	}
+	$overallSummaryHtml .=       '<tr><td colspan="6"><b>Overall score</b></td><td><b>'.h($overallScore===null ? '—' : number_format((float)$overallScore,1)).'</b></td></tr>';
+	$overallSummaryHtml .=       '</tbody></table></div>';
 	$overallSummaryHtml .=     '</div>';
 
 	foreach($osComponents as $gid=>$g){
@@ -5534,12 +4560,12 @@ if($anyHit){
 		$anyW = min(100.0, max(0.0, (float)$g['maxAny']));
 		$allW = min(100.0, max(0.0, (float)$g['maxAll']));
 		$overallSummaryHtml .=       '<div class="osImpactBar" id="osImpact_'.h($gid).'"><div class="seg any" style="width:'.h(number_format($anyW,2)).'%"></div><div class="seg all" style="width:'.h(number_format($allW,2)).'%"></div></div>';
-		$overallSummaryHtml .=       '<div class="osImpactLegend"><div class="osLegRow"><span class="dot any"></span>Any month <span class="v" id="osImpactAny_'.h($gid).'">'.h(number_format($anyW,1)).'%</span></div><div class="osLegRow"><span class="dot all"></span>All&nbsp;months<br><span class="v" id="osImpactAll_'.h($gid).'">'.h(number_format($allW,1)).'%</span></div></div>';
+		$overallSummaryHtml .=       '<div class="osImpactLegend"><div class="osLegRow"><span class="dot any"></span>Any period <span class="v" id="osImpactAny_'.h($gid).'">'.h(number_format($anyW,1)).'%</span></div><div class="osLegRow"><span class="dot all"></span>All&nbsp;periods<br><span class="v" id="osImpactAll_'.h($gid).'">'.h(number_format($allW,1)).'%</span></div></div>';
 		$overallSummaryHtml .=     '</div>';
 
 		$overallSummaryHtml .=     '<div class="osPanel">';
 		$overallSummaryHtml .=       '<div class="osPanelTitle">Top KPIs</div>';
-		$overallSummaryHtml .=       '<div class="osTableWrap"><table class="osTbl" id="osTbl_'.h($gid).'"><thead><tr><th>KPI</th><th>Session Sites</th><th>%</th></tr></thead><tbody>';
+		$overallSummaryHtml .=       '<div class="osTableWrap"><table class="osTbl" id="osTbl_'.h($gid).'"><thead><tr><th>KPI</th><th>'.h($unitTitle).'</th><th>%</th></tr></thead><tbody>';
 		foreach($g['top'] as $r){
 			$overallSummaryHtml .= '<tr><td>'.h($r['name']).'</td><td>'.h((string)$r['total']).'</td><td>'.h(number_format((float)$r['pct'],1)).'%</td></tr>';
 		}
@@ -5549,7 +4575,7 @@ if($anyHit){
 		$overallSummaryHtml .=       '</tbody></table></div>';
 		$overallSummaryHtml .=     '</div>';
 
-			$overallSummaryHtml .=     '<div class="osPanel osPanelHL">';
+		$overallSummaryHtml .=     '<div class="osPanel osPanelHL">';
 		$overallSummaryHtml .=       '<div class="osPanelTitle">Highlights</div>';
 		$overallSummaryHtml .=       '<canvas class="osBar" id="osBar_'.h($gid).'"></canvas>';
 		$overallSummaryHtml .=     '</div>';
@@ -5558,32 +4584,48 @@ if($anyHit){
 		$overallSummaryHtml .= '</div>';
 	}
 
-	$overallSummaryHtml .=     '<div class="osFoot">Tip: Percentages use denominator of total session sites under current selection.</div>';
+	$overallSummaryHtml .=     '<div class="osFoot">Tip: Percentages use the '.h($unitPlural).' under the current selection as the denominator.</div>';
 	$overallSummaryHtml .=   '</div>';
 	$overallSummaryHtml .= '</div>';
 
-	/* (added 2026-10) data of the DQA 2-pager report (small unlabelled button, top left); see dqa2p_build() */
-	$dqa2pSel = array();
-	$dqa2pSelSet = array_fill_keys(array_map('strval', (array)$filters['blocks']), true);
-	$dqa2pBlk = array();
-	foreach($allBlocks as $dqa2p_b => $dqa2p_x){
-		$dqa2p_l = display_block_label((string)$dqa2p_b);
-		if(isset($dqa2pSelSet[(string)$dqa2p_b]) || isset($dqa2pSelSet[$dqa2p_l])) $dqa2pBlk[] = $dqa2p_l;
+	/* (added 2026-11) data of "Download Report" = the two-page DQA brief of the DQA web
+	   application (U-WIN portal). assets/report/dqa_brief_report.js runs the web application's
+	   own report code on it, so the report says and shows what the web application would for the
+	   same files and selection: the units under the selection at the level on screen (named, and
+	   grouped by block, as the web application names them), the standard score cards with the
+	   units each flags, the selected periods and the declared From - To dates of the files. The
+	   web application's "vs previous period" line needs its saved reviews, so it is left out. */
+	$dqaBriefJson = 'null';
+	$dqaBriefSrc = 'assets/report/dqa_brief_report.js';
+	$dqaBriefSrc .= '?v='.(is_file(__DIR__.'/'.$dqaBriefSrc) ? (string)filemtime(__DIR__.'/'.$dqaBriefSrc) : '1');
+	if($hasApplied){
+		$dqaBriefIdx = []; $dqaBriefUnits = [];
+		foreach($facFiltered as $dqa_k=>$dqa_u){
+			$dqaBriefIdx[(string)$dqa_k] = count($dqaBriefUnits);
+			$dqaBriefUnits[] = [(string)$dqa_u['facility'], ($dqa_u['subcenter'] === null ? null : (string)$dqa_u['subcenter']), ($dqa_u['sessionsite'] === null ? null : (string)$dqa_u['sessionsite']), (string)$dqa_u['block'], (string)$dqa_u['district']];
+		}
+		$dqaBriefCards = [];
+		foreach($scoreCardsList as $c){
+			$idx = []; foreach($c['stat']['keys'] as $k){ if(isset($dqaBriefIdx[(string)$k])) $idx[] = $dqaBriefIdx[(string)$k]; }
+			$dqaBriefCards[] = ['id'=>(string)$c['id'], 'name'=>(string)$c['name'], 'group'=>(string)$c['group'], 'eligible'=>(int)$c['stat']['eligible'],
+				'total'=>(int)$c['stat']['total'], 'any'=>(int)$c['stat']['any'], 'all'=>(int)$c['stat']['all'], 'units'=>$idx];
+		}
+		$dqaBriefData = [
+			'v'=>1, 'portal'=>'UWIN',
+			'state'=>(string)$stateName, 'district'=>(string)$distName,
+			'mode'=>$uwxMode, 'months'=>array_values(array_map('strval', $selMonthKeysOrdered)),
+			'periods'=>array_values($uwxPeriods),
+			'den'=>(int)$osDen,
+			'uploaded'=>['facility'=>$globalDen, 'subcenter'=>$scDen, 'sessionsite'=>$ssDen],
+			'units'=>$dqaBriefUnits, 'cards'=>$dqaBriefCards,
+		];
+		$dqaJf = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE;
+		if(defined('JSON_INVALID_UTF8_SUBSTITUTE')) $dqaJf |= JSON_INVALID_UTF8_SUBSTITUTE;
+		$dqaBriefJson = json_encode($dqaBriefData, $dqaJf);
+		if($dqaBriefJson === false) $dqaBriefJson = 'null';
 	}
-	if(count($dqa2pBlk) < count($allBlocks)){
-		natcasesort($dqa2pBlk);
-		$dqa2pSel[] = (count($dqa2pBlk) <= 8)
-			? 'Blocks ('.count($dqa2pBlk).' of '.count($allBlocks).'): '.implode(', ', $dqa2pBlk)
-			: 'Blocks: '.count($dqa2pBlk).' of '.count($allBlocks).' selected';
-	}
-	$dqa2pJson = dqa2p_json(dqa2p_build(array(
-		'kind'=>'uw', 'tool'=>'U-WIN', 'cards'=>$cardsList, 'comps'=>$osComponents, 'overall'=>$overallScore, 'den'=>$osDen,
-		'units'=>$facFiltered, 'sets'=>(isset($_SESSION['pink_fac_sets']) ? $_SESSION['pink_fac_sets'] : array()),
-		'state'=>$stateName, 'district'=>$distName, 'months'=>$selMonthKeysOrdered, 'blocksCount'=>$selBlocksCount,
-		'selection'=>$dqa2pSel, 'filters'=>$filters
-	)));
 
-	$osData = ['overallScore'=>$overallScore,'components'=>$osComponents];
+	$osData = ['overallScore'=>$overallScore,'components'=>$osComponents,'checks'=>$wScore['checks'],'method'=>8];
 	$osDataJson = json_encode($osData);
 
 ?>
@@ -5643,7 +4685,14 @@ if($anyHit){
 		}
 		a.btn + a.btn, a.btn + button.btn, button.btn + a.btn, button.btn + button.btn{margin-left:6px;}
 
-		.infoRow{display:grid;grid-template-columns:repeat(5,minmax(160px,1fr));gap:12px;margin-bottom:12px;}
+		.infoRow{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px;}
+		.statSmall{font-size:12px;color:var(--muted);margin-top:6px;font-weight:700}
+		.uwxLevelNote{margin:0 0 12px;padding:10px 14px;border-radius:14px;border:1px solid rgba(59,130,246,.35);background:linear-gradient(90deg, rgba(239,246,255,.95), rgba(240,249,255,.95));color:#1e3a8a;font-size:13px;font-weight:600;}
+		.levelToggle{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;background:#fff;border:1px solid rgba(148,163,184,.55);border-radius:14px;padding:4px;}
+		.levelToggle .levelLbl{font-size:12px;font-weight:900;color:#334155;padding:0 6px;}
+		.levelToggle button.levelBtn{border:1px solid transparent !important;border-radius:10px !important;padding:8px 12px !important;font-weight:800 !important;font-size:12.5px !important;background:#f8fafc !important;color:#475569 !important;cursor:pointer;box-shadow:none !important;transform:none !important;}
+		.levelToggle button.levelBtn:hover{background:#eef2ff !important;color:#1e3a8a !important;}
+		.levelToggle button.levelBtn.active{background:#1d4ed8 !important;color:#ffffff !important;border-color:#1d4ed8 !important;}
 		.infoBox{
 			background:rgba(255,255,255,.94);
 			border:1px solid rgba(148,163,184,.45);
@@ -6078,7 +5127,7 @@ if($anyHit){
 			<div class="top-meta">Source file: <b><?=h($fileName)?></b></div>
 		</div>
 		<div>
-			<button class="btn btnDisabled" id="btnPdf" disabled>Download to PDF</button>
+			<button type="button" class="btn<?=($dqaBriefJson !== 'null' ? '' : ' btnDisabled')?>" id="btnPdf" data-src="<?=h($dqaBriefSrc)?>"<?=($dqaBriefJson !== 'null' ? '' : ' disabled')?> title="<?=($dqaBriefJson !== 'null' ? 'Download the DQA brief (PDF) of this analysis' : 'Press Apply Filter first')?>">Download Report</button>
 			<button type="button" onclick="window.location.href='?dqa_logout=1';" title="Return to the DQA Tools page and remove your uploaded data from the server">Logout</button>
 			<button type="button" onclick="window.location.href='https://www.datamgmt.in/dqa.php';">Main Page</button>
 			<a class="btn" href="<?=h($BASE_URL)?>">Start Over (new file)</a>
@@ -6097,39 +5146,38 @@ if($anyHit){
 		<div class="infoBox">
 			<div class="statTitle">Duration</div>
 			<div class="statValue"><?=$durationStrHtml?></div>
+			<?php if($uwxDatesLabel !== ''): ?><div class="statSmall"><?=h(($uwxDur === 'WEEKLY' ? 'Weekly' : 'Monthly').' files: '.$uwxDatesLabel)?></div><?php endif; ?>
 		</div>
 		<div class="infoBox">
 			<div class="statTitle">Number of Blocks</div>
 			<div class="statValue"><?= (int)$globalBlocksCount ?></div>
 		</div>
-		<?php if(dqa_has_fac()): ?>
 		<div class="infoBox">
 			<div class="statTitle">Number of facilities</div>
 			<div class="statValue"><?= (int)$globalDen ?></div>
 		</div>
+		<?php if($uwxC['idxSubCenter'] !== null): ?>
+		<div class="infoBox">
+			<div class="statTitle">Number of sub centers</div>
+			<div class="statValue"><?= (int)$scDen ?></div>
+		</div>
 		<?php endif; ?>
+		<?php if($uwxC['idxSessionSite'] !== null): ?>
 		<div class="infoBox">
 			<div class="statTitle">Number of session sites</div>
 			<div class="statValue"><?= (int)$ssDen ?></div>
 		</div>
+		<?php endif; ?>
 	</div>
-
-	<?php if($dqaBadMonthRows > 0): ?>
-	<div style="margin:0 0 12px;padding:10px 14px;border-radius:14px;border:1px solid #fcd34d;background:#fffbeb;color:#92400e;font-weight:700;font-size:13px;">Note: <?= (int)$dqaBadMonthRows ?> row<?= ($dqaBadMonthRows===1 ? ' was' : 's were') ?> left out because the Month could not be read (e.g. &ldquo;<?=h($dqaBadMonthExample)?>&rdquo;).</div>
-	<?php endif; ?>
-	<?php if(!dqa_has_fac()): ?>
-	<div style="margin:0 0 12px;padding:11px 14px;border-radius:14px;border:1px solid rgba(59,130,246,.35);background:linear-gradient(90deg, rgba(239,246,255,.95), rgba(240,249,255,.95));color:#1e3a8a;font-size:13px;font-weight:700;box-shadow:0 6px 14px rgba(15,23,42,.05);">
-		<b>Note:</b> The uploaded file is in the newer U-WIN format, which does not contain the <b>Health Facility Name</b> column. The analysis is therefore <b>Session Site&ndash;wise</b>: all tables and downloads identify each row by <b>LGD Block Name</b> and <b>Session Site Name</b>. Session sites that share the same name in different Sub Districts of a block are still counted separately.
-	</div>
-	<?php endif; ?>
+	<div class="uwxLevelNote">Analysis level: <b><?=h($uwxModes[$uwxMode])?></b> &mdash; every check, % and the Overall Score count <?=h($unitPlural)?> (<?= (int)$selDen ?> under the current selection). Change it with the <b>Analysis level</b> switch in the filters. Scores recorded for this upload are always <?=h($uwxModes[$stdMode])?>, as in the DQA web application.</div>
 
 	<div class="componentsBox">
 		<div class="componentsLabelBox"><div class="componentsLabelText">Components of Data Quality</div></div>
 		<div class="groupRow">
 			<div class="groupCol">
 				<button type="button" class="groupBtn availability" data-group="availability" title="All reports for the study period must be available in the portal at the time of assessment">Availability</button>
-				<ul class="kpiBullets">					<li>All Indicators having 0 values but not blank</li>
-					<li>All Indicators with same values</li>
+				<ul class="kpiBullets">					<li>Indicators having 0 values but not blank</li>
+					<li>Indicators with same values</li>
 					<li>Zero coverage session</li>
 				</ul>
 			</div>
@@ -6137,7 +5185,6 @@ if($anyHit){
 				<button type="button" class="groupBtn accuracy" data-group="accuracy" title="Identification of logical errors and outliers in immunization data of UWIN portal">Accuracy</button>
 				<ul class="kpiBullets">
 					<li>Planned but not held</li>
-					<?php if($typAvailable): ?><li>Public facilities reporting Typhoid</li><?php endif; ?>
 					<li>Avg Beneficiaries per session &lt; 5</li>
 					<li>Outliers</li>
 					<li>Dropouts (selected pairs)</li>
@@ -6149,7 +5196,7 @@ if($anyHit){
 				<ul class="kpiBullets">
 					<li class="kpiHeaderNoBullet"><b>Inconsistencies between doses</b></li>
 					<li>Inconsistencies — Penta3&gt;Penta1</li>
-					<li>Inconsistencies — OPV3&gt;OPV1</li>
+					<li>Inconsistencies — MR2&gt;MR1</li>
 					<li class="kpiHeaderNoBullet"><b>Inconsistencies between vaccines</b></li>
 					<li>6 weeks — OPV1, Penta1, RVV1, PCV1, fIPV1</li>
 					<li>10 weeks — OPV2, Penta2, RVV2</li>
@@ -6177,6 +5224,16 @@ if($anyHit){
 				<div class="filtersBoxTitle">Filters</div>
 
 				<div class="filterRow">
+					<!-- (added 2026-11, web parity) Analysis level: Facility-wise / Sub Center-wise / Session Site-wise -->
+					<div class="filterGroup">
+						<div class="levelToggle" role="group" aria-label="Analysis level">
+							<span class="levelLbl">Analysis level</span>
+							<input type="hidden" name="analysis_mode" id="analysisModeInput" value="<?=h($uwxMode)?>">
+							<?php foreach($uwxModes as $dqa_lm=>$dqa_ll): ?>
+								<button type="button" class="levelBtn<?=($dqa_lm===$uwxMode ? ' active' : '')?>" data-mode="<?=h($dqa_lm)?>" aria-pressed="<?=($dqa_lm===$uwxMode ? 'true' : 'false')?>"><?=h($dqa_ll)?></button>
+							<?php endforeach; ?>
+						</div>
+					</div>
 					<!-- Block -->
 					<div class="filterGroup">
 						<div class="filterShell">
@@ -6226,7 +5283,7 @@ if($anyHit){
 									<label class="chk"><input type="checkbox" data-role="selectall" data-target="outliers_vax[]"> Select All</label>
 									<div class="chkWrap">
 										<?php foreach($KEY_VAX as $vx): ?>
-											<?php $chk = (empty($filters['outliers_vax']) || in_array($vx,$filters['outliers_vax'],true))?'checked':''; ?>
+											<?php $chk = (in_array($vx,$filters['outliers_vax'],true))?'checked':''; ?>
 											<label class="chk"><input type="checkbox" name="outliers_vax[]" value="<?=h($vx)?>" <?=$chk?>> <?=h(display_vax_label($vx))?></label>
 										<?php endforeach; ?>
 									</div>
@@ -6245,7 +5302,7 @@ if($anyHit){
 									<div class="small"><b>Increase buckets</b></div>
 									<label class="chk"><input type="checkbox" data-role="selectall" data-target="outliers_inc[]"> Select All</label>
 									<div class="chkWrap">
-										<?php $incOpts=[['INC_LOW','25–50.49 Low'],['INC_MOD','50.50–100 Moderate'],['INC_EXT','>100 Extreme']]; foreach($incOpts as $opt): $chk = (in_array($opt[0], (array)$filters['outliers_inc'], true)) ? 'checked' : ''; ?>
+										<?php $incOpts=[['INC_LOW','25 to <50% Low'],['INC_MOD','50–100% Moderate'],['INC_EXT','>100% or from 0 Extreme']]; foreach($incOpts as $opt): $chk = (in_array($opt[0], (array)$filters['outliers_inc'], true)) ? 'checked' : ''; ?>
 											<label class="chk"><input type="checkbox" name="outliers_inc[]" value="<?=h($opt[0])?>" <?=$chk?>> <?=h($opt[1])?></label>
 										<?php endforeach; ?>
 									</div>
@@ -6254,7 +5311,7 @@ if($anyHit){
 									<div class="small" style="margin-top:6px"><b>Drop buckets</b></div>
 									<label class="chk"><input type="checkbox" data-role="selectall" data-target="outliers_drop[]"> Select All</label>
 									<div class="chkWrap">
-										<?php $dropOpts=[['DROP_LOW','−25 to −50.49 Low'],['DROP_MOD','−50.50 to −100 Moderate'],['DROP_EXT','<−100 Extreme']]; foreach($dropOpts as $opt): $chk = (in_array($opt[0], (array)$filters['outliers_drop'], true)) ? 'checked' : ''; ?>
+										<?php $dropOpts=[['DROP_LOW','−25 to >−50% Low'],['DROP_MOD','−50 to >−75% Moderate'],['DROP_EXT','−75 to −100% Extreme']]; foreach($dropOpts as $opt): $chk = (in_array($opt[0], (array)$filters['outliers_drop'], true)) ? 'checked' : ''; ?>
 											<label class="chk"><input type="checkbox" name="outliers_drop[]" value="<?=h($opt[0])?>" <?=$chk?>> <?=h($opt[1])?></label>
 										<?php endforeach; ?>
 									</div>
@@ -6272,7 +5329,7 @@ if($anyHit){
 									<div class="small"><b>Dropout % ranges</b></div>
 									<label class="chk"><input type="checkbox" data-role="selectall" data-target="drop_ranges[]"> Select All</label>
 									<div class="chkWrap">
-										<?php $drOpts=[ ['R5_10','5–10.99% (Low)'], ['R11_20','11–19.99% (Moderate)'], ['R20P','>=20% (Extreme)'] ]; foreach($drOpts as $opt): $chk = (empty($filters['drop_ranges']) || in_array($opt[0],$filters['drop_ranges'],true))?'checked':''; ?>
+										<?php $drOpts=[ ['R5_10','5 to <10% (Low)'], ['R11_20','10 to <20% (Moderate)'], ['R20P','20% or more (High)'] ]; foreach($drOpts as $opt): $chk = (in_array($opt[0],$filters['drop_ranges'],true))?'checked':''; ?>
 											<label class="chk"><input type="checkbox" name="drop_ranges[]" value="<?=h($opt[0])?>" <?=$chk?>> <?=h($opt[1])?></label>
 										<?php endforeach; ?>
 									</div>
@@ -6281,7 +5338,7 @@ if($anyHit){
 									<label class="chk"><input type="checkbox" data-role="selectall" data-target="drop_pairs[]"> Select All</label>
 									<div class="chkWrap">
 										<?php foreach($PAIR_DEFAULTS as $pr): ?>
-											<?php $chk = (empty($filters['drop_pairs']) || in_array($pr,$filters['drop_pairs'],true))?'checked':''; ?>
+											<?php $chk = (in_array($pr,$filters['drop_pairs'],true))?'checked':''; ?>
 											<label class="chk"><input type="checkbox" name="drop_pairs[]" value="<?=h($pr)?>" <?=$chk?>> <?=h($pr)?></label>
 										<?php endforeach; ?>
 									</div>
@@ -6425,16 +5482,12 @@ if($anyHit){
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 	<?=$overallSummaryHtml?>
-	<form id="osWordForm" method="post" style="display:none;">
-		<input type="hidden" name="action" value="download_word_overall">
-		<input type="hidden" name="access_code" value="<?=h($GLOBALS['ACCESS_CODE_CURRENT'])?>">
-		<textarea name="os_word_html" id="osWordHtml" style="display:none;"></textarea>
-	</form>
 
 <script>
 const BASE_URL = "<?=h($BASE_URL)?>";
 const CHARTS = <?= $chartsJson ? $chartsJson : "{}" ?>;
 window.__OS_DATA__ = <?= $osDataJson ? $osDataJson : 'null' ?>;
+window.__DQA_BRIEF__ = <?= isset($dqaBriefJson) ? $dqaBriefJson : 'null' ?>; /* (added 2026-11) Download Report data */
 const hasApplied = document.body.getAttribute('data-hasapplied') === '1';
 const showOutliers = document.body.getAttribute('data-showoutliers') === '1';
 const showDropouts = document.body.getAttribute('data-showdropouts') === '1';
@@ -6847,9 +5900,45 @@ function bindKpiClick(){
 }
 
 function bindPdf(){
+	/* (changed 2026-11) Download Report: the DQA brief of the DQA web application. Its script
+	   (assets/report/dqa_brief_report.js, with its fonts) is loaded on the first click. */
 	const btn = document.getElementById('btnPdf');
 	if(!btn) return;
-	btn.addEventListener('click', ()=>window.print());
+	let loading = null;
+	const loadReport = function(){
+		if(window.DQABriefReport) return Promise.resolve();
+		if(!loading){
+			loading = new Promise(function(resolve, reject){
+				const sc = document.createElement('script');
+				sc.src = btn.getAttribute('data-src') || 'assets/report/dqa_brief_report.js';
+				sc.onload = function(){ window.DQABriefReport ? resolve() : reject(new Error('report script')); };
+				sc.onerror = function(){ loading = null; reject(new Error('report script')); };
+				document.head.appendChild(sc);
+			});
+		}
+		return loading;
+	};
+	btn.addEventListener('click', function(){
+		if(btn.disabled) return;
+		if(!window.__DQA_BRIEF__){ alert('Press Apply Filter first, then download the report.'); return; }
+		const label = btn.textContent;
+		btn.disabled = true;
+		btn.textContent = 'Preparing report…';
+		loadReport()
+			.then(function(){ return window.DQABriefReport.download(window.__DQA_BRIEF__); })
+			.catch(function(){ alert('The report could not be generated. Please check your connection and try again.'); })
+			.then(function(){ btn.disabled = false; btn.textContent = label; });
+	});
+	/* (added 2026-11) Analysis level switch: applies the filters at the chosen level */
+	document.querySelectorAll('.levelBtn').forEach(function(b){
+		b.addEventListener('click', function(){
+			const input = document.getElementById('analysisModeInput');
+			const form = document.getElementById('filtersForm');
+			if(!input || !form || input.value === b.getAttribute('data-mode')) return;
+			input.value = b.getAttribute('data-mode');
+			form.submit();
+		});
+	});
 }
 
 function bindGroupButtons(){
@@ -6985,9 +6074,6 @@ function init(){
 	var ov = document.getElementById('osOverlay');
 	var back = document.getElementById('osBackBtn');
 	var pdf = document.getElementById('osPdfBtn');
-	var word = document.getElementById('osWordBtn');
-	var wordForm = document.getElementById('osWordForm');
-	var wordHtml = document.getElementById('osWordHtml');
 	var hasApplied = document.body.getAttribute('data-hasapplied') === '1';
 
 	function renderOsCharts(){
@@ -7095,177 +6181,6 @@ function init(){
 
 	}
 
-	function buildWordExportHtml(){
-		// Word is very limited with modern CSS (grid/flex) and canvas rendering.
-		// So we generate a Word-friendly HTML (tables + inline styles) and embed
-		// charts as PNG images from the already-rendered canvases.
-		try{
-			renderOsCharts();
-		}catch(e){}
-		if(!window.__OS_DATA__) return '';
-		var data = window.__OS_DATA__;
-		var titleEl = document.querySelector('#osOverlay .osTitle');
-		var metaEl  = document.querySelector('#osOverlay .osMeta');
-		var title = titleEl ? (titleEl.textContent||'').trim() : 'Overall Score';
-		var meta  = metaEl ? (metaEl.textContent||'').trim() : '';
-		// Ensure a readable gap between labels and values for Word export (e.g., 'State: UP' not 'State:UP').
-		meta = meta.replace(/(\b(?:State|District|Duration|Months|Blocks)\b)\s*:\s*/g, '$1: ');
-
-		function esc(s){
-			s = (s===null||typeof s==='undefined') ? '' : String(s);
-			return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-		}
-		function n1(x){
-			var v = (typeof x==='number') ? x : parseFloat(x);
-			if(isNaN(v)) v = 0;
-			return (Math.round(v*10)/10).toFixed(1);
-		}
-		function getCanvasPng(id){
-			try{
-				var c = document.getElementById(id);
-				if(c && c.toDataURL) return c.toDataURL('image/png');
-			}catch(e){}
-			return '';
-		}
-
-		var css = '';
-		css += "<style>";
-		css += "body{font-family:Calibri,Arial,sans-serif;font-size:12pt;color:#111;}";
-		css += ".osWTitle{font-size:20pt;font-weight:900;margin:0 0 4pt 0;}";
-		css += ".osWMeta{font-size:12pt;font-weight:700;color:#334155;margin:0 0 12pt 0;}";
-		css += ".box{border:1px solid #cbd5e1;border-radius:12px;padding:10pt;}";
-		css += ".muted{color:#475569;font-weight:700;}";
-		css += ".k{font-size:20pt;font-weight:900;}";
-		css += ".sm{font-size:11pt;font-weight:700;color:#475569;}";
-		css += ".tbl{border-collapse:collapse;width:100%;}";
-		css += ".tbl th,.tbl td{border:1px solid #cbd5e1;padding:6pt 7pt;vertical-align:top;}";
-		css += ".tbl th{background:#f8fafc;font-weight:900;}";
-		css += ".secHead{font-size:16pt;font-weight:900;margin:14pt 0 6pt 0;}";
-		css += ".secSub{font-size:11pt;font-weight:800;color:#64748b;margin-left:6pt;}";
-		css += ".impactRow{margin-top:8pt;}";
-		css += ".dot{display:inline-block;width:10pt;height:10pt;border-radius:50%;margin-right:6pt;vertical-align:middle;}";
-		css += ".dotAny{background:#2563eb;} .dotAll{background:#0f766e;}";
-		css += ".impactVal{font-weight:900;font-size:12pt;margin-left:6pt;}";
-		css += ".imgBox{border:1px solid #cbd5e1;border-radius:12px;padding:8pt;}";
-		css += ".osBarImg{max-width:660pt;width:660pt;height:auto;}";
-		css += "</style>";
-
-		var html = '';
-		html += css;
-		html += '<div class="osWTitle">'+esc(title)+'</div>';
-		if(meta) html += '<div class="osWMeta">'+esc(meta)+'</div>';
-
-		// Top stats cards (read from rendered page text to keep values exactly the same)
-		var cards = document.querySelectorAll('#osOverlay .osGrid4 .osCard, #osOverlay .osGrid3 .osCard');
-		html += '<table class="tbl" style="margin-bottom:12pt;"><tr>';
-		for(var ci=0; ci<cards.length; ci++){
-			var c = cards[ci];
-			var t = c.querySelector('.t');
-			var k = c.querySelector('.k');
-			var s = c.querySelector('.s');
-			var m = c.querySelector('.m');
-			html += '<td style="width:33.33%;padding:0;border:0;">';
-			html += '<div class="box" style="margin:0 6pt 0 0;">';
-			html += '<div class="muted">'+esc(t ? t.textContent : '')+'</div>';
-			html += '<div class="k">'+esc(k ? k.textContent : '')+'</div>';
-			if(m && (m.textContent||'').trim()!=='') html += '<div class="sm">'+esc(m.textContent)+'</div>';
-			if(s && (s.textContent||'').trim()!=='') html += '<div class="sm">'+esc(s.textContent)+'</div>';
-			html += '</div></td>';
-		}
-		html += '</tr></table>';
-
-		// Hero: score + mini grid
-		var scorePng = getCanvasPng('osScoreRing');
-		html += '<table class="tbl" style="border:0;margin-bottom:12pt;">';
-		html += '<tr>';
-		html += '<td style="width:42%;border:0;vertical-align:top;">';
-		html += '<div class="box">';
-		if(scorePng){
-			html += '<table style="width:100%;border-collapse:collapse;"><tr>';
-			html += '<td style="width:42%;border:0;vertical-align:middle;">';
-			html += '<img src="'+scorePng+'" style="width:180pt;height:auto;display:block;" />';
-			html += '</td><td style="border:0;vertical-align:middle;">';
-			var scoreNumEl = document.getElementById('osScoreNum');
-			html += '<div style="font-size:34pt;font-weight:900;line-height:1;">'+esc(scoreNumEl?scoreNumEl.textContent:'')+'</div>';
-			html += '<div class="sm">Overall score (0–100)</div>';
-			html += '</td></tr></table>';
-		}
-		var noteEl = document.querySelector('#osOverlay .osScoreNote');
-		if(noteEl) html += '<div class="sm" style="margin-top:8pt;">'+esc(noteEl.textContent)+'</div>';
-		html += '</div>';
-		html += '</td>';
-
-		html += '<td style="width:58%;border:0;vertical-align:top;">';
-		var minis = document.querySelectorAll('#osOverlay .osMiniGrid .osMini');
-		html += '<table class="tbl" style="border:0;">';
-		for(var mi=0; mi<minis.length; mi++){
-			if(mi % 2 === 0) html += '<tr>';
-			var mbox = minis[mi];
-			var hEl = mbox.querySelector('.h');
-			var pctEl = mbox.querySelector('.pct');
-			var subEls = mbox.querySelectorAll('.sub');
-			html += '<td style="width:50%;border:0;vertical-align:top;padding:0 0 6pt 6pt;">';
-			html += '<div class="box">';
-			html += '<div style="font-weight:900;font-size:13pt;margin-bottom:4pt;">'+esc(hEl?hEl.textContent:'')+'</div>';
-			html += '<div style="font-size:22pt;font-weight:900;">'+esc(pctEl?pctEl.textContent:'')+'</div>';
-			html += '<div class="sm">score</div>';
-			if(subEls && subEls.length>0){
-				for(var si=0; si<subEls.length; si++){
-					if((subEls[si].textContent||'').trim()!=='score') html += '<div class="sm">'+esc(subEls[si].textContent)+'</div>';
-				}
-			}
-			html += '</div></td>';
-			if(mi % 2 === 1) html += '</tr>';
-		}
-		if(minis.length % 2 === 1) html += '<td style="width:50%;border:0;"></td></tr>';
-		html += '</table>';
-		html += '</td>';
-		html += '</tr></table>';
-
-		// Component sections
-		var compOrder = ['availability','completeness','accuracy','consistency'];
-		for(var oi=0; oi<compOrder.length; oi++){
-			var gid = compOrder[oi];
-			var comp = data.components && data.components[gid] ? data.components[gid] : null;
-			if(!comp) continue;
-			html += '<div class="secHead">'+esc(comp.name||gid)+' <span class="secSub">Indicators violating expected data behaviour</span></div>';
-			html += '<table class="tbl" style="border:0;margin-bottom:10pt;">';
-			html += '<tr>';
-			html += '<td style="width:28%;border:0;vertical-align:top;padding:0 6pt 0 0;">';
-			html += '<div class="box">';
-			html += '<div style="font-weight:900;font-size:13pt;margin-bottom:8pt;">Impact</div>';
-			html += '<div class="impactRow"><span class="dot dotAny"></span><span style="font-weight:900;">Any month</span><span class="impactVal">'+n1(comp.maxAny||0)+'%</span></div>';
-			html += '<div class="impactRow"><span class="dot dotAll"></span><span style="font-weight:900;">All months</span><span class="impactVal">'+n1(comp.maxAll||0)+'%</span></div>';
-			html += '</div>';
-			html += '</td>';
-			html += '<td style="width:72%;border:0;vertical-align:top;padding:0;">';
-			html += '<div class="box">';
-			html += '<div style="font-weight:900;font-size:13pt;margin-bottom:8pt;">Top KPIs</div>';
-			html += '<table class="tbl">';
-			html += '<thead><tr><th style="width:64%;">KPI</th><th style="width:18%;">Session Sites</th><th style="width:18%;">%</th></tr></thead><tbody>';
-			var top = comp.top || [];
-			for(var ti=0; ti<top.length; ti++){
-				var r = top[ti];
-				html += '<tr><td>'+esc(r.name)+'</td><td>'+esc(r.total)+'</td><td>'+n1(r.pct||0)+'%</td></tr>';
-			}
-			if(top.length===0) html += '<tr><td colspan="3">—</td></tr>';
-			html += '</tbody></table>';
-			html += '</div>';
-			html += '</td>';
-			html += '</tr></table>';
-
-			// Highlights chart image
-			var barPng = getCanvasPng('osBar_'+gid);
-			if(barPng){
-				html += '<div class="imgBox" style="margin-bottom:10pt;">';
-				html += '<div style="font-weight:900;font-size:13pt;margin-bottom:8pt;">Highlights</div>';
-				html += '<img src="'+barPng+'" class="osBarImg" style="width:660pt;height:auto;display:block;" width="880" />';
-				html += '</div>';
-			}
-		}
-
-		return html;
-	}
 
 
 
@@ -7294,691 +6209,10 @@ function init(){
 			window.print();
 		});
 	}
-	if(word && wordForm && wordHtml){
-		word.addEventListener('click', function(){
-			try{
-				renderOsCharts();
-				var html = buildWordExportHtml();
-				wordHtml.value = html;
-				wordForm.submit();
-			}catch(e){
-				alert('Unable to generate Word file. Please try again.');
-			}
-		});
-	}
 })();
 
 
 init();
-</script>
-<script>
-window.__DQA2P__ = <?= isset($dqa2pJson) ? $dqa2pJson : 'null' ?>;
-/* (added 2026-10) DQA 2-pager report (A4 portrait, always 2 pages) of the results shown on this
-   page, opened by a very small unlabelled button at the top left of the page. It opens in a new tab
-   with the print window over it, where
-   "Save as PDF" saves it (or it can be printed). Every figure comes from window.__DQA2P__, built
-   on the server from the same data as the cards, panels and Overall Score of this page, so the
-   report always matches the page it was opened from. The layout is measured and made more
-   compact (smaller type, lower charts, tighter rows) only as much as needed to keep the whole
-   report on two pages, whatever the number of blocks or KPIs. */
-(function(){
-	'use strict';
-	var D = window.__DQA2P__;
-	if(!D || !document.body || document.body.getAttribute('data-hasapplied') !== '1') return;
-
-	var FONT = 'Calibri, Carlito, "Segoe UI", Arial, sans-serif';
-	var FONT_H = 'Cambria, Caladea, Georgia, "Times New Roman", serif';
-	var C = { brand:'#0B4F6C', brandDk:'#083A50', teal:'#0B7A75', amber:'#F59E0B', amberLt:'#FCD34D',
-		ink:'#1E293B', muted:'#64748B', line:'#D3E1E8', panel:'#EEF5F8', panel2:'#F7FAFC', track:'#E3ECF1', grid:'#E8EEF2',
-		red:'#DC2626', redBg:'#FDE8E8', redTx:'#B91C1C', amb:'#F59E0B', ambBg:'#FEF3C7', ambTx:'#92400E',
-		grn:'#16A34A', grnBg:'#DCFCE7', grnTx:'#166534', tot:'#E1EEF4' };
-	/* component colours = the tool's own Overall Score page */
-	var COMP = { availability:'#1d4ed8', completeness:'#5b21b6', accuracy:'#9a3412', consistency:'#047857' };
-	var PT_W = 595.28;                   /* A4 width (pt) */
-	var PG_H = 296.8 / 25.4 * 72;        /* page box height (pt): a hair under A4, so no blank sheet is added */
-	var ML = 34, MT = 26, MB = 30;       /* side / top / bottom margins (pt); the page line sits in the bottom margin */
-	var CW = PT_W - 2 * ML;              /* content width (pt) */
-	var CH = PG_H - MT - MB;             /* content height per page (pt) */
-	var PX = 96 / 72;                    /* CSS px per pt */
-	var NS = 'http://www.w3.org/2000/svg';
-	var unit = String(D.unit || 'facilities'), unitOne = String(D.unitOne || 'facility');
-
-	function L(a, b, c){ return a + (b - a) * c; }
-	function cap(s){ s = String(s); return s.charAt(0).toUpperCase() + s.slice(1); }
-	function titleCase(s){ return String(s).replace(/(^|\s)(\S)/g, function(m, a, b){ return a + b.toUpperCase(); }); }
-	function esc(s){ return String(s === null || s === undefined ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-	function r2(v){ return Math.round(v * 100) / 100; }
-	function pt(v){ return r2(v) + 'pt'; }
-	function joinNames(a){ a = (a || []).slice(); if(a.length <= 1) return a.join(''); return a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
-	function compColor(id){ return COMP[id] || C.brand; }
-	function E(doc, tag, cls, txt){ var e = doc.createElement(tag); if(cls) e.className = cls; if(txt !== undefined && txt !== null) e.textContent = String(txt); return e; }
-	function S(doc, tag, at){ var e = doc.createElementNS(NS, tag); if(at){ for(var k in at){ if(Object.prototype.hasOwnProperty.call(at, k)) e.setAttribute(k, String(at[k])); } } return e; }
-	function T(doc, x, y, txt, size, o){
-		o = o || {};
-		var e = S(doc, 'text', { x: r2(x), y: r2(y), 'font-size': r2(size), 'font-family': o.font || FONT, fill: o.fill || C.ink, 'text-anchor': o.anchor || 'start' });
-		if(o.bold) e.setAttribute('font-weight', 'bold');
-		if(o.rot) e.setAttribute('transform', 'rotate(' + o.rot + ' ' + r2(x) + ' ' + r2(y) + ')');
-		e.textContent = String(txt);
-		return e;
-	}
-	function svgBox(doc, w, h){ return S(doc, 'svg', { width: r2(w) + 'pt', height: r2(h) + 'pt', viewBox: '0 0 ' + r2(w) + ' ' + r2(h) }); }
-	function svgH(svg){ return parseFloat(svg.getAttribute('height')); }
-	/* text width in pt, measured with the report's own font */
-	function measurer(doc){
-		var ctx = null, cache = {};
-		try{ ctx = doc.createElement('canvas').getContext('2d'); }catch(e){ ctx = null; }
-		return function(txt, size, bold){
-			txt = String(txt);
-			var key = (bold ? 'b' : 'n') + size + '|' + txt;
-			if(cache.hasOwnProperty(key)) return cache[key];
-			var w;
-			if(ctx){ ctx.font = (bold ? 'bold ' : '') + size + 'pt ' + FONT; w = ctx.measureText(txt).width * 0.75; }
-			else w = txt.length * size * 0.55;
-			cache[key] = w;
-			return w;
-		};
-	}
-	function wrap(M, txt, maxW, size, bold, maxLines){
-		var words = String(txt === null || txt === undefined ? '' : txt).split(/\s+/).filter(function(w){ return w !== ''; });
-		var lines = [], cur = '', i, j;
-		for(i = 0; i < words.length; i++){
-			var w = words[i];
-			if(M(w, size, bold) > maxW){
-				if(cur !== ''){ lines.push(cur); cur = ''; }
-				var part = '';
-				for(j = 0; j < w.length; j++){
-					var t = part + w.charAt(j);
-					if(part !== '' && M(t, size, bold) > maxW){ lines.push(part); part = w.charAt(j); } else part = t;
-				}
-				cur = part;
-				continue;
-			}
-			var t2 = (cur === '') ? w : cur + ' ' + w;
-			if(M(t2, size, bold) <= maxW) cur = t2; else { lines.push(cur); cur = w; }
-		}
-		if(cur !== '') lines.push(cur);
-		if(!lines.length) lines.push('');
-		if(maxLines && lines.length > maxLines){
-			var keep = lines.slice(0, maxLines), last = keep[maxLines - 1] + ' ' + lines.slice(maxLines).join(' ');
-			while(last.length > 1 && M(last + '…', size, bold) > maxW) last = last.slice(0, -1);
-			keep[maxLines - 1] = last.replace(/\s+$/, '') + '…';
-			lines = keep;
-		}
-		return lines;
-	}
-	/* axis maximum and step (whole numbers), with room above the tallest bar */
-	function niceAxis(maxV){
-		if(!(maxV > 0)) return { max: 1, step: 1 };
-		var raw = maxV / 4, p = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10)), f = raw / p;
-		var s = (f <= 1) ? 1 : (f <= 2) ? 2 : (f <= 5) ? 5 : 10;
-		var step = Math.max(1, Math.round(s * p));
-		var mx = Math.ceil(maxV / step) * step;
-		if(mx <= maxV) mx += step;
-		return { max: mx, step: step };
-	}
-
-	/* ---------- look: every size follows the compactness level c (0 = roomy ... 1 = compact) ---------- */
-	function sty(c){
-		return { c: c,
-			fs: L(9.4, 7.4, c), fsS: L(7.3, 6.1, c), title: L(16, 12.6, c), h2: L(10.8, 8.8, c), ct: L(8.4, 7, c), kf: L(9.1, 7.2, c),
-			gap: L(9, 3.6, c), pad: L(8, 4.2, c), band: L(11, 6, c), chipPad: L(3.6, 1.8, c),
-			ring: L(78, 52, c), ringW: L(8.5, 6, c), tile: L(19, 13.5, c),
-			issH: L(66, 30, c), impH: L(54, 24, c), minH: L(96, 58, c),
-			kRow: L(15.5, 9.6, c), kLbl: L(6.7, 5.7, c), kVal: L(7, 5.9, c), kLW: L(112, 96, c),
-			xLbl: L(6.7, 5.7, c), xVal: L(7.2, 5.9, c), yLbl: L(7, 5.9, c),
-			tFs: L(8.9, 6.7, c), tPad: L(3.1, 0.8, c), t3Pad: L(3.3, 0.8, c)
-		};
-	}
-
-	/* ---------- charts ---------- */
-	/* vertical bars (one bar per block) */
-	function vchart(doc, M, o){
-		var n = o.labels.length, W = o.w, i, j, t;
-		var maxV = 0;
-		for(i = 0; i < n; i++){ if((+o.vals[i] || 0) > maxV) maxV = +o.vals[i] || 0; }
-		var ax = niceAxis(maxV), yW = 0;
-		if(o.yAxis){ for(t = 0; t <= ax.max; t += ax.step) yW = Math.max(yW, M(String(t), o.yLbl)); yW += 7; }
-		var x0 = o.yAxis ? yW : 3, plotW = W - x0 - 3, slot = plotW / Math.max(n, 1);
-		var lblW = Math.max(4, slot - 3), rot = false, lines = [];
-		for(i = 0; i < n; i++){
-			var Lb = String(o.labels[i]), words = Lb.split(/\s+/);
-			for(j = 0; j < words.length; j++){ if(M(words[j], o.lblSize) > lblW){ rot = true; break; } }
-			var ln = wrap(M, Lb, lblW, o.lblSize, false, 0);
-			if(ln.length > o.maxLines) rot = true;
-			lines.push(ln);
-		}
-		var ls = o.lblSize, rl = [], lblH, mw = 0, ROTMAX = 72;
-		if(rot){
-			for(i = 0; i < n; i++){
-				var s = String(o.labels[i]);
-				if(M(s, ls) > ROTMAX){ while(s.length > 1 && M(s + '…', ls) > ROTMAX) s = s.slice(0, -1); s = s + '…'; }
-				rl.push(s); mw = Math.max(mw, M(s, ls));
-			}
-			lblH = mw * 0.7071 + ls * 1.7;
-			var need = mw * 0.7071 - slot / 2 + 3;          /* the first label leans left: keep it inside the chart */
-			if(need > x0){ x0 = need; plotW = W - x0 - 3; slot = plotW / Math.max(n, 1); }
-		} else {
-			var ml = 1;
-			for(i = 0; i < n; i++) ml = Math.max(ml, lines[i].length);
-			lblH = ml * ls * 1.2 + 3;
-		}
-		var vs = Math.max(5, Math.min(o.valSize, slot * 0.75));
-		var barW = Math.min(o.barMax, slot * o.barRatio);
-		var topH = vs * 1.5, plotH = o.plotH, H = topH + plotH + lblH;
-		var svg = svgBox(doc, W, H), yB = topH + plotH;
-		if(o.yAxis){
-			for(t = 0; t <= ax.max; t += ax.step){
-				var yy = yB - t / ax.max * plotH;
-				if(t > 0) svg.appendChild(S(doc, 'line', { x1: r2(x0), y1: r2(yy), x2: r2(x0 + plotW), y2: r2(yy), stroke: C.grid, 'stroke-width': 0.6 }));
-				svg.appendChild(T(doc, x0 - 5, yy + o.yLbl * 0.35, String(t), o.yLbl, { anchor: 'end', fill: C.muted }));
-			}
-		}
-		for(i = 0; i < n; i++){
-			var v = +o.vals[i] || 0, cx = x0 + slot * i + slot / 2, h = v / ax.max * plotH;
-			if(h > 0) svg.appendChild(S(doc, 'rect', { x: r2(cx - barW / 2), y: r2(yB - h), width: r2(barW), height: r2(h), rx: r2(Math.min(2, barW / 4, h / 2)), fill: o.color }));
-			svg.appendChild(T(doc, cx, yB - h - vs * 0.45, String(v), vs, { anchor: 'middle', fill: v > 0 ? o.valFill : C.muted, bold: v > 0 && o.valBold }));
-		}
-		svg.appendChild(S(doc, 'line', { x1: r2(x0), y1: r2(yB), x2: r2(x0 + plotW), y2: r2(yB), stroke: o.baseColor, 'stroke-width': 0.8 }));
-		for(i = 0; i < n; i++){
-			var lx = x0 + slot * i + slot / 2;
-			if(rot){ svg.appendChild(T(doc, lx + ls * 0.3, yB + ls * 1.15, rl[i], ls, { anchor: 'end', rot: -45, fill: C.ink })); }
-			else { for(j = 0; j < lines[i].length; j++) svg.appendChild(T(doc, lx, yB + ls * (1.2 * j + 1.2), lines[i][j], ls, { anchor: 'middle', fill: C.ink })); }
-		}
-		return svg;
-	}
-	/* horizontal bars (the KPIs of one component); the worst KPI in amber */
-	function hchart(doc, M, o, st){
-		var items = o.items, n = items.length, W = o.w, i, j;
-		var LW = st.kLW, ls = st.kLbl, vs = st.kVal, x0 = LW + 4, texts = [], vW = 0, maxN = 0;
-		for(i = 0; i < n; i++){
-			texts.push(items[i].n + ' (' + items[i].pct + '%)');
-			vW = Math.max(vW, M(texts[i], vs, true));
-			if(items[i].n > maxN) maxN = items[i].n;
-		}
-		var maxBar = Math.max(20, W - x0 - vW - 8), lines = [], need = [], nat = 4;
-		for(i = 0; i < n; i++){
-			lines.push(wrap(M, items[i].name, LW - 2, ls, items[i].worst, 3));
-			need.push(Math.max(st.kRow, lines[i].length * ls * 1.2 + 4));
-			nat += need[i];
-		}
-		var H = Math.max(nat, o.H || 0), extra = H - nat, rows = need.slice();
-		if(extra > 0 && n > 0){ var per = extra / n; for(i = 0; i < n; i++) rows[i] = Math.max(need[i], Math.min(need[i] + per, 30)); }
-		var used = 4;
-		for(i = 0; i < n; i++) used += rows[i];
-		var top = 2 + Math.max(0, (H - used) / 2), svg = svgBox(doc, W, H), y = top;
-		for(i = 0; i < n; i++){
-			var rh = rows[i], cy = y + rh / 2, Ln = lines[i], lh = ls * 1.2, ty = cy - (Ln.length - 1) * lh / 2 + ls * 0.35, wst = items[i].worst;
-			for(j = 0; j < Ln.length; j++) svg.appendChild(T(doc, x0 - 5, ty + j * lh, Ln[j], ls, { anchor: 'end', bold: wst, fill: wst ? C.ink : '#334155' }));
-			var bw = maxN > 0 ? items[i].n / maxN * maxBar : 0, bh = Math.min(13, Math.max(5, rh * 0.62));
-			svg.appendChild(S(doc, 'rect', { x: r2(x0), y: r2(cy - bh / 2), width: r2(maxBar), height: r2(bh), rx: r2(Math.min(2, bh / 3)), fill: C.panel2 }));
-			if(bw > 0) svg.appendChild(S(doc, 'rect', { x: r2(x0), y: r2(cy - bh / 2), width: r2(Math.max(bw, 1.2)), height: r2(bh), rx: r2(Math.min(2, bh / 3, bw / 2)), fill: wst ? C.amber : o.color }));
-			svg.appendChild(T(doc, x0 + Math.max(bw, 0) + 3.5, cy + vs * 0.35, texts[i], vs, { fill: wst ? C.ambTx : '#334155', bold: wst }));
-			y += rh;
-		}
-		svg.appendChild(S(doc, 'line', { x1: r2(x0), y1: r2(top), x2: r2(x0), y2: r2(y), stroke: '#94A3B8', 'stroke-width': 0.8 }));
-		return svg;
-	}
-	/* overall score ring */
-	function ring(doc, st, val, txt){
-		var d = st.ring, sw = st.ringW, r = (d - sw) / 2 - 0.5, cx = d / 2, cy = d / 2, circ = 2 * Math.PI * r;
-		var svg = svgBox(doc, d, d), f = (val === null || isNaN(val)) ? 0 : Math.max(0, Math.min(100, val)) / 100;
-		svg.appendChild(S(doc, 'circle', { cx: r2(cx), cy: r2(cy), r: r2(r), fill: 'none', stroke: C.track, 'stroke-width': r2(sw) }));
-		if(f > 0) svg.appendChild(S(doc, 'circle', { cx: r2(cx), cy: r2(cy), r: r2(r), fill: 'none', stroke: C.teal, 'stroke-width': r2(sw), 'stroke-linecap': f < 1 ? 'round' : 'butt',
-			'stroke-dasharray': r2(circ * f) + ' ' + r2(circ), transform: 'rotate(-90 ' + r2(cx) + ' ' + r2(cy) + ')' }));
-		svg.appendChild(T(doc, cx, cy + d * 0.075, txt, d * 0.215, { anchor: 'middle', bold: true, fill: C.brandDk, font: FONT_H }));
-		return svg;
-	}
-	function sq(doc, color, cls){ var s = svgBox(doc, 8, 8); s.setAttribute('class', cls || 'sq'); s.appendChild(S(doc, 'rect', { x: 0.5, y: 1, width: 7, height: 6, rx: 1.4, fill: color })); return s; }
-	function dot(doc, color, cls){ var s = svgBox(doc, 8, 8); s.setAttribute('class', cls || 'dot'); s.appendChild(S(doc, 'circle', { cx: 4, cy: 4, r: 3.7, fill: color })); return s; }
-
-	/* ---------- sections ---------- */
-	function headSection(doc, host, st){
-		var sec = E(doc, 'div', 'sec'), band = E(doc, 'div', 'band');
-		band.appendChild(E(doc, 'div', 'eyebrow', 'DQA Desk Review · 2-pager'));
-		band.appendChild(E(doc, 'div', 'title', 'Data Template for Data Quality Assessment (DQA) Analysis – ' + D.tool));
-		var chips = E(doc, 'div', 'chips');
-		[['Name of State', D.state, ''], ['District', D.district, ''], ['Period', D.period, 'wide'], [cap(unit), D.den, 'num'], ['Blocks', D.blocks, 'num']].forEach(function(x){
-			var ch = E(doc, 'div', 'chip' + (x[2] ? ' ' + x[2] : ''));
-			ch.appendChild(E(doc, 'span', 'k', x[0])); ch.appendChild(E(doc, 'span', 'v', x[1]));
-			chips.appendChild(ch);
-		});
-		band.appendChild(chips);
-		sec.appendChild(band);
-		if(D.selection && D.selection.length) sec.appendChild(E(doc, 'div', 'sel', 'Selection: ' + D.selection.join(' · ')));
-		if(D.chk && D.chk.length) sec.appendChild(E(doc, 'div', 'chk', 'Check failed: the units counted for ' + D.chk.join(', ') + ' differ from the card. Please report this to the DQA team.'));
-		host.appendChild(sec);
-		return sec;
-	}
-	function heroSection(doc, host, st){
-		var sec = E(doc, 'div', 'sec'), row = E(doc, 'div', 'hero');
-		var ov = E(doc, 'div', 'ovr'), num = (D.overall === null) ? null : parseFloat(D.overall);
-		ov.appendChild(ring(doc, st, num, D.overall === null ? '—' : D.overall + '%'));
-		ov.appendChild(E(doc, 'div', 'ol', 'Overall Score'));
-		row.appendChild(ov);
-		var tiles = E(doc, 'div', 'tiles');
-		tiles.style.gridTemplateColumns = 'repeat(' + Math.max(1, D.comps.length) + ', minmax(0, 1fr))';
-		D.comps.forEach(function(c){
-			var col = compColor(c.id), t = E(doc, 'div', 'tile');
-			t.style.borderTopColor = col;
-			t.appendChild(E(doc, 'div', 'tn', c.name));
-			var sc = E(doc, 'div', 'ts', c.score === null ? '—' : c.score + '%'); sc.style.color = col; t.appendChild(sc);
-			var bar = E(doc, 'div', 'tbar'), fill = E(doc, 'span');
-			fill.style.width = (c.score === null ? 0 : Math.max(0, Math.min(100, parseFloat(c.score)))) + '%'; fill.style.background = col;
-			bar.appendChild(fill); t.appendChild(bar);
-			t.appendChild(E(doc, 'div', 'tw', 'Worst KPI: ' + (c.worst ? c.worst.pct : (c.score === null ? '—' : '0.0')) + '%'));
-			tiles.appendChild(t);
-		});
-		row.appendChild(tiles);
-		sec.appendChild(row);
-		host.appendChild(sec);
-		return sec;
-	}
-	function findingsSection(doc, host, st){
-		var sec = E(doc, 'div', 'sec'), kf = E(doc, 'div', 'kf'), ul = E(doc, 'ul');
-		kf.appendChild(E(doc, 'div', 'kh', 'Key Findings'));
-		D.comps.forEach(function(c){
-			var li = E(doc, 'li'), col = compColor(c.id);
-			li.appendChild(dot(doc, col, 'kdot'));
-			var nm = E(doc, 'b', 'kn', c.name + ':'); nm.style.color = col; li.appendChild(nm);
-			li.appendChild(doc.createTextNode(' '));
-			if(c.worst){
-				li.appendChild(E(doc, 'b', null, c.worst.pct + '% ' + unit + ' (' + c.worst.n + ')'));
-				li.appendChild(doc.createTextNode(' flagged for ' + joinNames(c.worst.names) + '.'));
-			} else {
-				li.appendChild(E(doc, 'b', null, '0.0% ' + unit + ' (0)'));
-				li.appendChild(doc.createTextNode(' flagged: no issue found in this component.'));
-			}
-			ul.appendChild(li);
-		});
-		kf.appendChild(ul); sec.appendChild(kf);
-		host.appendChild(sec);
-		return sec;
-	}
-	function issuesSection(doc, M, host, st, ext){
-		var sec = E(doc, 'div', 'sec'), box = E(doc, 'div', 'card'), hd = E(doc, 'div', 'chd');
-		hd.appendChild(E(doc, 'span', 'ctt', 'Number of Data Quality Issues Identified'));
-		hd.appendChild(E(doc, 'span', 'csub', 'KPIs with at least one flagged ' + unitOne + ', by block (out of ' + D.kpiCount + ' KPIs)'));
-		box.appendChild(hd); sec.appendChild(box); host.appendChild(sec);
-		var w = box.clientWidth / PX - 2 * st.pad - 1.5, rows = D.blockRows;
-		box.appendChild(vchart(doc, M, { w: w, labels: rows.map(function(r){ return r.b; }), vals: rows.map(function(r){ return r.types; }),
-			color: C.brand, yAxis: true, yLbl: st.yLbl, valSize: st.xVal + 0.8, valFill: C.brandDk, valBold: true, lblSize: st.xLbl + 0.6,
-			plotH: st.issH + (ext || 0), barMax: 20, barRatio: 0.42, baseColor: '#94A3B8', maxLines: 2 }));
-		return sec;
-	}
-	function compSection(doc, M, host, c, st, ext){
-		var col = compColor(c.id), sec = E(doc, 'div', 'sec'), card = E(doc, 'div', 'card comp');
-		card.style.borderLeftColor = col;
-		var hd = E(doc, 'div', 'compH'), nm = E(doc, 'span', 'cn', c.name + ': '), sc = E(doc, 'span', 'cs', c.score === null ? '—' : c.score + '%');
-		sc.style.color = col; nm.appendChild(sc); hd.appendChild(nm);
-		if(c.worst){ var lg = E(doc, 'span', 'leg'); lg.appendChild(sq(doc, C.amber, 'lsq')); lg.appendChild(doc.createTextNode('Worst KPI (sets the score)')); hd.appendChild(lg); }
-		card.appendChild(hd);
-		var row = E(doc, 'div', 'charts'), Lc = E(doc, 'div', 'cl'), Rc = E(doc, 'div', 'cr');
-		var lt = E(doc, 'div', 'ct', 'Number of Flagged ' + unit), rt = E(doc, 'div', 'ct');
-		rt.appendChild(doc.createTextNode('Worst KPI Impact across Block:'));
-		rt.appendChild(doc.createElement('br'));
-		var kn = E(doc, 'span', 'wk');
-		if(c.worst){ kn.appendChild(sq(doc, C.amber, 'wdot')); kn.appendChild(doc.createTextNode(c.worst.chart)); }
-		else kn.appendChild(doc.createTextNode('No ' + unitOne + ' flagged'));
-		rt.appendChild(kn);
-		Lc.appendChild(lt); Rc.appendChild(rt); row.appendChild(Lc); row.appendChild(Rc); card.appendChild(row); sec.appendChild(card);
-		host.appendChild(sec);   /* measured at its real width */
-		var ltH = lt.getBoundingClientRect().height / PX, rtH = rt.getBoundingClientRect().height / PX;
-		var lw = Lc.getBoundingClientRect().width / PX, rw = Rc.getBoundingClientRect().width / PX;
-		var items = c.kpis.map(function(k){ return { name: k.name, n: k.n, pct: k.pct, worst: !!k.worst }; });
-		var left = hchart(doc, M, { w: lw, items: items, H: 0, color: col }, st), right = null, ro = null;
-		if(c.worst){
-			ro = { w: rw, labels: c.worst.blocks.map(function(b){ return b.b; }), vals: c.worst.blocks.map(function(b){ return b.n; }),
-				color: col, yAxis: false, yLbl: st.yLbl, valSize: st.xVal, valFill: C.ink, valBold: true, lblSize: st.xLbl, plotH: st.impH, barMax: 15, barRatio: 0.56, baseColor: '#94A3B8', maxLines: 2 };
-			right = vchart(doc, M, ro);
-		}
-		var lH = ltH + svgH(left), rH = rtH + (right ? svgH(right) : 0), target = Math.max(lH, rH, st.minH) + (ext || 0);
-		if(target > lH + 0.5) left = hchart(doc, M, { w: lw, items: items, H: target - ltH, color: col }, st);
-		if(right && target > rH + 0.5){ ro.plotH += target - rH; right = vchart(doc, M, ro); }
-		if(!right){ right = E(doc, 'div', 'none', 'No ' + unitOne + ' flagged in this component.'); right.style.height = pt(target - rtH); }
-		Lc.appendChild(left); Rc.appendChild(right);
-		return sec;
-	}
-	function pill(doc, n, kind){
-		var td = E(doc, 'td', 'c');
-		if(+n > 0){ var p = E(doc, 'span', 'pill ' + kind, n); td.appendChild(p); } else td.appendChild(E(doc, 'span', 'zero', n));
-		return td;
-	}
-	function blockSpec(doc){
-		var rows = D.blockRows;
-		return { title: 'Block wise ' + unitOne + ' wise issues identified', cls: 'bt', cols: [24, 13.5, 13.5, 13.5, 13.5, 22], n: rows.length,
-			head: function(){
-				var tr = E(doc, 'tr');
-				tr.appendChild(E(doc, 'th', null, 'Block'));
-				[[C.red, '4+ Issues'], [C.amb, '1-3 Issues'], [C.grn, 'No Issues (0)']].forEach(function(x){
-					var th = E(doc, 'th', 'c'); th.appendChild(dot(doc, x[0])); th.appendChild(doc.createTextNode(x[1])); tr.appendChild(th);
-				});
-				tr.appendChild(E(doc, 'th', 'c', 'Total ' + titleCase(unit)));
-				tr.appendChild(E(doc, 'th', 'c', 'Distribution'));
-				return tr;
-			},
-			row: function(i){
-				var r = rows[i], tr = E(doc, 'tr');
-				tr.appendChild(E(doc, 'td', 'blk', r.b)); tr.appendChild(pill(doc, r.g4, 'r')); tr.appendChild(pill(doc, r.g13, 'a'));
-				tr.appendChild(pill(doc, r.g0, 'g')); tr.appendChild(E(doc, 'td', 'c b', r.tot)); tr.appendChild(shareCell(doc, r));
-				return tr;
-			},
-			total: function(){
-				var t = D.totals, tr = E(doc, 'tr', 'tot');
-				tr.appendChild(E(doc, 'td', null, 'Overall Total')); tr.appendChild(E(doc, 'td', 'c', t.g4)); tr.appendChild(E(doc, 'td', 'c', t.g13));
-				tr.appendChild(E(doc, 'td', 'c', t.g0)); tr.appendChild(E(doc, 'td', 'c', t.tot)); tr.appendChild(shareCell(doc, t));
-				return tr;
-			} };
-	}
-	/* share of 4+ / 1-3 / 0 in the block (a picture of the three counts on the left) */
-	function shareCell(doc, r){
-		var td = E(doc, 'td', 'sh'), bar = E(doc, 'div', 'sbar'), tot = (+r.g4 || 0) + (+r.g13 || 0) + (+r.g0 || 0);
-		[[r.g4, C.red], [r.g13, C.amb], [r.g0, C.grn]].forEach(function(x){
-			if(!(tot > 0) || !(+x[0] > 0)) return;
-			var s = E(doc, 'span'); s.style.width = r2(100 * (+x[0]) / tot) + '%'; s.style.background = x[1]; bar.appendChild(s);
-		});
-		td.appendChild(bar);
-		return td;
-	}
-	/* the same table in two halves side by side (many blocks): left half, then right half + Overall Total */
-	function blockSplitSection(doc, host){
-		var spec = blockSpec(doc), rows = D.blockRows, n = rows.length, half = Math.ceil(n / 2);
-		var sec = E(doc, 'div', 'sec'), hd = E(doc, 'div', 'tth');
-		hd.appendChild(E(doc, 'span', 'ttt', spec.title));
-		sec.appendChild(hd);
-		var wrapEl = E(doc, 'div', 'split');
-		[[0, half], [half, n]].forEach(function(rg, side){
-			var t = E(doc, 'table', 'bt bs'), cg = E(doc, 'colgroup'), th = E(doc, 'thead'), tb = E(doc, 'tbody');
-			[34, 16.5, 16.5, 16.5, 16.5].forEach(function(w){ var c = E(doc, 'col'); c.style.width = w + '%'; cg.appendChild(c); });
-			var tr = spec.head(); tr.removeChild(tr.lastChild); th.appendChild(tr);
-			for(var i = rg[0]; i < rg[1]; i++){ var r = spec.row(i); r.removeChild(r.lastChild); tb.appendChild(r); }
-			if(side === 1){ var tt = spec.total(); tt.removeChild(tt.lastChild); tb.appendChild(tt); }
-			t.appendChild(cg); t.appendChild(th); t.appendChild(tb);
-			wrapEl.appendChild(t);
-		});
-		sec.appendChild(wrapEl);
-		host.appendChild(sec);
-		return sec;
-	}
-	function topSpec(doc){
-		var rows = D.blockRows;
-		return { title: 'Top 3 ' + titleCase(unit) + ' to focus in each block', cls: 'bt t3', cols: [21, 26.3, 26.3, 26.4], n: rows.length,
-			head: function(){ var tr = E(doc, 'tr'); ['Block', '1st Highest', '2nd Highest', '3rd Highest'].forEach(function(h){ tr.appendChild(E(doc, 'th', null, h)); }); return tr; },
-			row: function(i){
-				var r = rows[i], tr = E(doc, 'tr');
-				tr.appendChild(E(doc, 'td', 'blk', r.b));
-				for(var j = 0; j < 3; j++){
-					var u = r.top[j], td = E(doc, 'td');
-					if(u){ td.appendChild(doc.createTextNode(u.u + ' ')); td.appendChild(E(doc, 'span', 'cnt', '(' + u.n + ')')); }
-					else td.appendChild(E(doc, 'span', 'zero', '—'));
-					tr.appendChild(td);
-				}
-				return tr;
-			},
-			total: null };
-	}
-	function tableSection(doc, host, spec){
-		var sec = E(doc, 'div', 'sec'), hd = E(doc, 'div', 'tth');
-		hd.appendChild(E(doc, 'span', 'ttt', spec.title));
-		sec.appendChild(hd);
-		var t = E(doc, 'table', spec.cls), cg = E(doc, 'colgroup'), th = E(doc, 'thead'), tb = E(doc, 'tbody');
-		spec.cols.forEach(function(w){ var c = E(doc, 'col'); c.style.width = w + '%'; cg.appendChild(c); });
-		th.appendChild(spec.head());
-		for(var i = 0; i < spec.n; i++) tb.appendChild(spec.row(i));
-		if(spec.total) tb.appendChild(spec.total());
-		t.appendChild(cg); t.appendChild(th); t.appendChild(tb);
-		sec.appendChild(t);
-		host.appendChild(sec);
-		return sec;
-	}
-
-	function stamp(){
-		var d = new Date(), m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-		function z(x){ return (x < 10 ? '0' : '') + x; }
-		return d.getDate() + ' ' + m[d.getMonth()] + ' ' + d.getFullYear() + ', ' + z(d.getHours()) + ':' + z(d.getMinutes());
-	}
-	function css(st){
-		var p = pt;
-		return '@page{size:A4 portrait;margin:0}' +
-		'*{box-sizing:border-box}html,body{margin:0;padding:0}' +
-		'body{background:#c9ced6;color:' + C.ink + ';font-family:' + FONT + ';-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
-		'.tb{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:9px 16px;background:' + C.brand + ';color:#fff;font:13px/1.4 system-ui,"Segoe UI",Arial,sans-serif}' +
-		'.tb b{font-size:14px}.tb button{font:inherit;font-weight:700;padding:6px 16px;border:0;border-radius:6px;background:' + C.amber + ';color:#111;cursor:pointer}' +
-		'#pages{padding:16px 0 2px}' +
-		'.page{position:relative;width:210mm;height:' + r2(PG_H) + 'pt;margin:0 auto 16px;padding:' + MT + 'pt ' + ML + 'pt 0;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.28);overflow:hidden}' +
-		'.page:before{content:"";position:absolute;left:0;right:0;top:0;height:5pt;background:' + C.brand + '}' +
-		'.page:after{content:"";position:absolute;left:0;top:0;width:110pt;height:5pt;background:' + C.amber + '}' +
-		'.pbody{height:' + r2(CH) + 'pt;overflow:hidden}' +
-		'.pfoot{position:absolute;left:' + ML + 'pt;right:' + ML + 'pt;bottom:11pt;display:flex;justify-content:space-between;gap:12pt;border-top:0.6pt solid ' + C.line + ';padding-top:3.5pt;font-size:7.3pt;color:' + C.muted + '}' +
-		'.pfoot span:last-child{font-weight:700;color:' + C.brand + ';white-space:nowrap}' +
-		'.measure{position:absolute;left:-30000px;top:0;visibility:hidden}' +
-		'.sec{display:flow-root;padding-bottom:' + p(st.gap) + '}' +
-		'.band{position:relative;overflow:hidden;background:' + C.brand + ';color:#fff;border-radius:7pt;padding:' + p(st.band * 0.85) + ' ' + p(st.band + 1) + ' ' + p(st.band) + '}' +
-		'.band:before{content:"";position:absolute;right:-34pt;top:-58pt;width:150pt;height:150pt;border-radius:50%;background:rgba(255,255,255,.07)}' +
-		'.band:after{content:"";position:absolute;right:58pt;bottom:-70pt;width:110pt;height:110pt;border-radius:50%;background:rgba(245,158,11,.13)}' +
-		'.eyebrow{position:relative;font-size:' + p(st.fsS) + ';letter-spacing:1.5pt;font-weight:700;color:' + C.amberLt + ';text-transform:uppercase}' +
-		'.title{position:relative;font-family:' + FONT_H + ';font-size:' + p(st.title) + ';font-weight:700;line-height:1.18;margin:' + p(st.band * 0.16) + ' 0 ' + p(st.band * 0.62) + '}' +
-		'.chips{position:relative;display:flex;gap:' + p(st.band * 0.45) + '}' +
-		'.chip{flex:1 1 0;min-width:0;background:rgba(255,255,255,.12);border:0.6pt solid rgba(255,255,255,.24);border-radius:5pt;padding:' + p(st.chipPad) + ' ' + p(st.chipPad * 1.9) + '}' +
-		'.chip.wide{flex:2.1 1 0}.chip.num{flex:0.8 1 0}' +
-		'.chip .k{display:block;font-size:' + p(st.fsS * 0.9) + ';letter-spacing:.7pt;text-transform:uppercase;color:#BFD9E5;white-space:nowrap}' +
-		'.chip .v{display:block;font-size:' + p(st.fs + 0.4) + ';font-weight:700;line-height:1.25;color:#fff;overflow-wrap:anywhere}' +
-		'.sel{margin:' + p(st.gap * 0.55) + ' 0 0;padding:' + p(st.chipPad) + ' ' + p(st.pad) + ';border-radius:5pt;background:' + C.panel + ';color:#334155;font-size:' + p(st.fsS + 0.6) + '}' +
-		'.chk{margin-top:' + p(st.gap * 0.55) + ';padding:3pt 7pt;border:0.8pt solid ' + C.redTx + ';border-radius:5pt;color:' + C.redTx + ';font-size:' + p(st.fs) + ';font-weight:700}' +
-		'.hero{display:flex;gap:' + p(st.pad * 0.8) + ';align-items:stretch}' +
-		'.ovr{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:' + p(st.pad * 0.6) + ' ' + p(st.pad * 1.3) + ';border:0.7pt solid ' + C.line + ';border-radius:7pt;background:' + C.panel2 + '}' +
-		'.ol{margin-top:' + p(st.pad * 0.35) + ';font-size:' + p(st.fsS + 0.2) + ';font-weight:700;letter-spacing:.8pt;text-transform:uppercase;color:' + C.brand + ';white-space:nowrap}' +
-		'.tiles{flex:1 1 auto;min-width:0;display:grid;gap:' + p(st.pad * 0.7) + '}' +
-		'.tile{min-width:0;border:0.7pt solid ' + C.line + ';border-top:3.2pt solid ' + C.brand + ';border-radius:6pt;padding:' + p(st.pad * 0.75) + ' ' + p(st.pad) + ';background:#fff;display:flex;flex-direction:column;justify-content:center}' +
-		'.tn{font-size:' + p(st.fsS) + ';font-weight:700;letter-spacing:.8pt;text-transform:uppercase;color:' + C.muted + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-		'.ts{font-family:' + FONT_H + ';font-size:' + p(st.tile) + ';font-weight:700;line-height:1.08;margin:' + p(st.pad * 0.2) + ' 0 ' + p(st.pad * 0.35) + '}' +
-		'.tile .tbar{height:' + p(L(4.2, 3, st.c)) + ';border-radius:3pt;background:' + C.track + ';overflow:hidden}' +
-		'.tile .tbar span{display:block;height:100%;border-radius:3pt}' +
-		'.tw{margin-top:' + p(st.pad * 0.4) + ';font-size:' + p(st.fsS) + ';color:' + C.muted + ';white-space:nowrap}' +
-		'.kf{position:relative;border-radius:7pt;background:' + C.panel + ';border-left:3.4pt solid ' + C.teal + ';padding:' + p(st.pad * 0.75) + ' ' + p(st.pad * 1.2) + ' ' + p(st.pad * 0.8) + '}' +
-		'.kh{font-family:' + FONT_H + ';font-size:' + p(st.h2) + ';font-weight:700;color:' + C.brand + ';margin-bottom:' + p(st.pad * 0.3) + '}' +
-		'.kf ul{list-style:none;margin:0;padding:0}' +
-		'.kf li{position:relative;padding-left:' + p(st.kf * 1.25) + ';margin:' + p(st.pad * 0.12) + ' 0;font-size:' + p(st.kf) + ';line-height:1.32}' +
-		'.kdot{position:absolute;left:0;top:' + p(st.kf * 0.36) + ';width:' + p(st.kf * 0.62) + ';height:' + p(st.kf * 0.62) + '}' +
-		'.card{border:0.7pt solid ' + C.line + ';border-radius:7pt;padding:' + p(st.pad * 0.8) + ' ' + p(st.pad) + ' ' + p(st.pad * 0.55) + ';background:#fff}' +
-		'.chd{display:flex;align-items:baseline;gap:8pt;flex-wrap:wrap;margin-bottom:' + p(st.pad * 0.25) + '}' +
-		'.ctt{font-family:' + FONT_H + ';font-size:' + p(st.h2) + ';font-weight:700;color:' + C.brand + '}' +
-		'.csub{font-size:' + p(st.fsS) + ';color:' + C.muted + '}' +
-		'.card.comp{border-left:4pt solid ' + C.brand + ';padding-left:' + p(st.pad * 0.9) + '}' +
-		'.compH{display:flex;align-items:baseline;justify-content:space-between;gap:8pt;margin-bottom:' + p(st.pad * 0.3) + '}' +
-		'.leg{font-size:' + p(st.fsS) + ';color:' + C.muted + ';white-space:nowrap}.lsq{display:inline-block;vertical-align:-0.6pt;margin-right:3pt;width:' + p(st.fsS + 0.6) + ';height:' + p(st.fsS + 0.6) + '}' +
-		'.cn{font-family:' + FONT_H + ';font-size:' + p(st.h2 + 0.4) + ';font-weight:700;color:' + C.ink + '}' +
-		'.charts{display:flex;gap:' + p(st.pad * 1.1) + ';align-items:flex-start}.cl{flex:0 0 48%;width:48%;min-width:0}.cr{flex:1 1 auto;min-width:0}' +
-		'.ct{text-align:center;font-size:' + p(st.ct) + ';line-height:1.25;color:#334155;font-weight:700}' +
-		'.wk{font-weight:400;color:' + C.ink + '}.wdot{display:inline-block;vertical-align:0;margin-right:3pt;width:' + p(st.ct * 0.62) + ';height:' + p(st.ct * 0.62) + '}' +
-		'.none{display:flex;align-items:center;justify-content:center;text-align:center;font-size:' + p(st.fs) + ';color:' + C.muted + '}' +
-		'svg{display:block;overflow:visible}' +
-		'.tth{margin:0 0 ' + p(st.pad * 0.45) + ';display:flex;align-items:center;gap:6pt}' +
-		'.tth:before{content:"";width:3.4pt;align-self:stretch;border-radius:2pt;background:' + C.amber + '}' +
-		'.ttt{font-family:' + FONT_H + ';font-size:' + p(st.h2) + ';font-weight:700;color:' + C.brand + '}' +
-		'table{border-collapse:separate;border-spacing:0;table-layout:fixed;width:100%}' +
-		'table.bt{font-size:' + p(st.tFs) + ';color:' + C.ink + ';border:0.7pt solid ' + C.line + ';border-radius:6pt;overflow:hidden}' +
-		'table.bt th,table.bt td{padding:' + p(st.tPad) + ' ' + p(L(5, 3.2, st.c)) + ';vertical-align:middle;overflow-wrap:anywhere;border-bottom:0.5pt solid ' + C.line + '}' +
-		'table.bt tbody tr:last-child td{border-bottom:0}' +
-		'table.bt thead th{background:' + C.brand + ';color:#fff;font-weight:700;text-align:left;border-bottom:0}' +
-		'table.bt tbody tr:nth-child(even) td{background:' + C.panel2 + '}' +
-		'table.bt .c{text-align:center}table.bt thead th.c{text-align:center}table.bt td.b{font-weight:700}' +
-		'table.bt td.blk{font-weight:700;color:' + C.brandDk + '}' +
-		'table.bt tr.tot td{background:' + C.tot + ';font-weight:700;color:' + C.brandDk + ';border-top:1pt solid ' + C.brand + '}' +
-		'.pill{display:inline-block;min-width:' + p(st.tFs * 2.1) + ';padding:0 ' + p(st.tFs * 0.45) + ';border-radius:' + p(st.tFs) + ';font-weight:700;line-height:1.45}' +
-		'.pill.r{background:' + C.redBg + ';color:' + C.redTx + '}.pill.a{background:' + C.ambBg + ';color:' + C.ambTx + '}.pill.g{background:' + C.grnBg + ';color:' + C.grnTx + '}' +
-		'.zero{color:#94A3B8}' +
-		'td.sh{padding-right:' + p(L(7, 4, st.c)) + '}.sbar{display:flex;height:' + p(L(6.5, 4.5, st.c)) + ';border-radius:3pt;overflow:hidden;background:' + C.track + '}.sbar span{display:block;height:100%}' +
-		'.split{display:flex;gap:' + p(st.pad) + ';align-items:flex-start}.split table{flex:1 1 0;min-width:0;width:auto}' +
-		'table.t3 td{padding-top:' + p(st.t3Pad) + ';padding-bottom:' + p(st.t3Pad) + '}' +
-		'table.t3 td.blk{background:' + C.panel + '}table.t3 tbody tr:nth-child(even) td.blk{background:#E4EFF4}' +
-		'.cnt{font-weight:700;color:' + C.teal + ';white-space:nowrap}' +
-		'svg.dot{display:inline-block;vertical-align:-0.4pt;margin-right:3pt;width:7pt;height:7pt}' +
-		'@media print{body{background:#fff}.tb{display:none}#pages{padding:0}.page{margin:0;box-shadow:none;break-after:page;page-break-after:always}.page:last-child{break-after:auto;page-break-after:auto}}';
-	}
-
-	/* ---------- the two pages ---------- */
-	function build(win, isFrame){
-		var doc = win.document;
-		var bar = isFrame ? '' : ('<div class="tb"><b>DQA 2-pager – ' + esc(D.tool) + '</b><button type="button" onclick="window.print()">Save as PDF / Print</button>' +
-			'<span id="tbInfo">A4 portrait</span><span>In the print window choose “Save as PDF” as the destination, then Save.</span></div>');
-		doc.open();
-		doc.write('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>' + esc(D.file) + '</title><style id="dqa2pCss"></style></head><body>' +
-			bar + '<div id="pages"></div></body></html>');
-		doc.close();
-		var M = measurer(doc), styleEl = doc.getElementById('dqa2pCss'), pagesEl = doc.getElementById('pages');
-		var cap = CH * PX - 1;
-		/* all sections built at level c in a hidden box of the given width (pt) */
-		function make(c, widthPt, ext, o){
-			var st = sty(c);
-			ext = ext || { iss: 0, comps: [] };
-			o = o || {};
-			styleEl.textContent = css(st);
-			var host = E(doc, 'div', 'measure'); host.style.width = pt(widthPt || CW); doc.body.appendChild(host);
-			var s = { c: c, st: st, host: host };
-			s.fixed = [headSection(doc, host, st), heroSection(doc, host, st), findingsSection(doc, host, st), issuesSection(doc, M, host, st, ext.iss)];
-			s.comps = D.comps.map(function(cc, j){ return compSection(doc, M, host, cc, st, ext.comps[j] || 0); });
-			s.tables = [o.split ? blockSplitSection(doc, host) : tableSection(doc, host, blockSpec(doc)), tableSection(doc, host, topSpec(doc))];
-			return s;
-		}
-		function drop(s){ if(s && s.host && s.host.parentNode) s.host.parentNode.removeChild(s.host); }
-		function hOf(el){ return el.getBoundingClientRect().height; }
-		/* which components go on page 1 (as many as fit), the rest + both tables on page 2 */
-		function plan(s){
-			var i, k, H1 = 0, hc = s.comps.map(hOf), HT = hOf(s.tables[0]) + hOf(s.tables[1]), K = hc.length;
-			for(i = 0; i < s.fixed.length; i++) H1 += hOf(s.fixed[i]);
-			function sums(k){ var a = H1, b = HT; for(i = 0; i < k; i++) a += hc[i]; for(i = k; i < K; i++) b += hc[i]; return [a, b]; }
-			for(k = K; k >= 0; k--){ var q = sums(k); if(q[0] <= cap && q[1] <= cap) return { ok: true, k: k, h: q }; }
-			for(k = K; k > 0; k--){ if(sums(k)[0] <= cap) break; }
-			return { ok: false, k: k, h: sums(k) };
-		}
-		/* the roomiest level at which everything fits on two pages */
-		function solve(o){
-			var s0 = make(0, CW, null, o), p0 = plan(s0);
-			if(p0.ok) return { s: s0, p: p0, o: o };
-			drop(s0);
-			var s1 = make(1, CW, null, o), p1 = plan(s1);
-			if(!p1.ok) return { s: s1, p: p1, o: o };
-			drop(s1);
-			var lo = 0, hi = 1;
-			for(var it = 0; it < 7; it++){
-				var mid = (lo + hi) / 2, sm = make(mid, CW, null, o), pm = plan(sm);
-				drop(sm);
-				if(pm.ok) hi = mid; else lo = mid;
-			}
-			var sh = make(hi, CW, null, o);
-			return { s: sh, p: plan(sh), o: o };
-		}
-		var R = solve({ split: false });
-		if(!R.p.ok && D.blockRows.length > 6){
-			var R2 = solve({ split: true });
-			if(R2.p.ok || R2.p.h[1] < R.p.h[1]){ drop(R.s); R = R2; } else drop(R2.s);
-		}
-		var s = R.s, p = R.p, opt = R.o;
-		/* spare room on a page goes to its charts (a little taller each), so no page ends half empty */
-		function share(amount, caps){
-			var out = caps.map(function(){ return 0; }), left = amount, open = caps.map(function(c, j){ return j; });
-			for(var g = 0; g < 8 && left > 0.5 && open.length; g++){
-				var each = left / open.length, next = [];
-				open.forEach(function(j){ var add = Math.min(each, caps[j] - out[j]); out[j] += add; left -= add; if(caps[j] - out[j] > 0.01) next.push(j); });
-				open = next;
-			}
-			return out;
-		}
-		if(p.ok){
-			var K = D.comps.length, room1 = (cap - p.h[0]) / PX - 2, room2 = (cap - p.h[1]) / PX - 2, j;
-			var caps1 = [36].concat(D.comps.slice(0, p.k).map(function(){ return 44; }));
-			var caps2 = D.comps.slice(p.k).map(function(){ return 30; });
-			var g1 = room1 > 2 ? share(room1, caps1) : caps1.map(function(){ return 0; });
-			var g2 = (room2 > 2 && caps2.length) ? share(room2, caps2) : caps2.map(function(){ return 0; });
-			var ext = { iss: g1[0], comps: [] };
-			for(j = 0; j < K; j++) ext.comps.push(j < p.k ? g1[j + 1] : g2[j - p.k]);
-			if(g1.concat(g2).some(function(v){ return v > 0.5; })){
-				var sx = make(s.c, CW, ext, opt), px2 = plan(sx);
-				if(px2.ok && px2.k === p.k){ drop(s); s = sx; p = px2; } else drop(sx);
-			}
-		}
-		var pages = [];
-		function newPage(){
-			var pg = E(doc, 'div', 'page'), body = E(doc, 'div', 'pbody'), pin = E(doc, 'div', 'pin');
-			body.appendChild(pin); pg.appendChild(body); pagesEl.appendChild(pg);
-			var o = { pg: pg, pin: pin }; pages.push(o); return o;
-		}
-		var P1 = newPage(), P2 = newPage(), i;
-		s.fixed.forEach(function(n){ P1.pin.appendChild(n); });
-		for(i = 0; i < s.comps.length; i++) (i < p.k ? P1 : P2).pin.appendChild(s.comps[i]);
-		s.tables.forEach(function(n){ P2.pin.appendChild(n); });
-		drop(s);
-		/* rare (very many blocks or KPIs): a page still too long is drawn wider and scaled down to fit */
-		function fitPage(P, which){
-			var h = hOf(P.pin);
-			if(h <= cap) return;
-			var w = CW, sc = cap / h, got = null;
-			for(var t = 0; t < 4; t++){
-				w = CW / sc;
-				if(got) drop(got);
-				got = make(s.c, w, null, opt);
-				var nodes = which === 1 ? got.fixed.concat(got.comps.slice(0, p.k)) : got.comps.slice(p.k).concat(got.tables), hh = 0;
-				for(var j = 0; j < nodes.length; j++) hh += hOf(nodes[j]);
-				var ns = Math.min(cap / hh, CW / w);
-				if(Math.abs(ns - sc) < 0.002){ sc = ns; break; }
-				sc = ns;
-			}
-			while(P.pin.firstChild) P.pin.removeChild(P.pin.firstChild);
-			var nodes2 = which === 1 ? got.fixed.concat(got.comps.slice(0, p.k)) : got.comps.slice(p.k).concat(got.tables);
-			var inner = E(doc, 'div', 'scaled');
-			inner.style.width = pt(w); inner.style.transformOrigin = '0 0'; inner.style.transform = 'scale(' + r2(sc * 1000) / 1000 + ')';
-			nodes2.forEach(function(n){ inner.appendChild(n); });
-			var box = E(doc, 'div', 'scbox');
-			box.appendChild(inner); P.pin.appendChild(box);
-			box.style.height = Math.ceil(inner.offsetHeight * sc) + 'px'; box.style.overflow = 'hidden';
-			drop(got);
-		}
-		styleEl.textContent = css(s.st);
-		fitPage(P1, 1); fitPage(P2, 2);
-		styleEl.textContent = css(s.st);
-		var st0 = stamp(), N = pages.length, dist = (D.district && D.district !== '—') ? ' · ' + D.district : '';
-		pages.forEach(function(pg, i){
-			var f = E(doc, 'div', 'pfoot');
-			f.appendChild(E(doc, 'span', null, 'DQA Desk Review – ' + D.tool + dist + ' · ' + D.periodShort + ' · Generated ' + st0));
-			f.appendChild(E(doc, 'span', null, 'Page ' + (i + 1) + ' of ' + N));
-			pg.pg.appendChild(f);
-		});
-		var info = doc.getElementById('tbInfo');
-		if(info) info.textContent = 'A4 portrait · ' + N + ' pages';
-		setTimeout(function(){ try{ win.focus(); win.print(); }catch(e){} }, 350);
-	}
-	function openReport(){
-		if(!(D.den > 0)){ alert('No ' + unitOne + ' is under the current filters, so there is nothing to report. Widen the filters and press Apply Filter.'); return; }
-		var w = null;
-		try{ w = window.open('', '_blank'); }catch(e){ w = null; }
-		if(w){
-			try{ build(w, false); return; }catch(e){ if(window.console) console.error(e); try{ w.close(); }catch(e2){} }
-		}
-		try{   /* pop-up blocked: print through a hidden frame */
-			var old = document.getElementById('dqa2pFrame');
-			if(old) old.parentNode.removeChild(old);
-			var fr = document.createElement('iframe');
-			fr.id = 'dqa2pFrame'; fr.setAttribute('aria-hidden', 'true'); fr.setAttribute('tabindex', '-1');
-			fr.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;height:1200px;border:0;visibility:hidden;';
-			document.body.appendChild(fr);
-			build(fr.contentWindow, true);
-		}catch(e3){ if(window.console) console.error(e3); alert('Unable to prepare the 2-pager. Please try again.'); }
-	}
-	/* the button: a very small unlabelled dot at the top left of the page (meant for the few users who
-	   need the report, so it is deliberately hard to notice; above the Overall Score page too) */
-	var b = document.createElement('button');
-	b.type = 'button'; b.id = 'dqa2pBtn';
-	b.setAttribute('tabindex', '-1'); b.setAttribute('aria-hidden', 'true');
-	b.style.cssText = 'position:absolute;left:3px;top:3px;z-index:100000;display:block;width:8px;height:8px;min-width:0;min-height:0;margin:0;padding:0;' +
-		'border:0;border-radius:50%;background:#64748b;opacity:.28;box-shadow:none;outline:none;transform:none;transition:none;font-size:0;line-height:0;cursor:pointer;';
-	b.addEventListener('mouseenter', function(){ b.style.opacity = '.7'; });
-	b.addEventListener('mouseleave', function(){ b.style.opacity = '.28'; });
-	b.addEventListener('click', function(ev){ ev.preventDefault(); ev.stopPropagation(); openReport(); });
-	document.body.appendChild(b);
-	var ps = document.createElement('style');
-	ps.textContent = '@media print{#dqa2pBtn{display:none !important}}';
-	(document.head || document.body).appendChild(ps);
-})();
 </script>
 <?php dqa_idle_script(); ?>
 </body>

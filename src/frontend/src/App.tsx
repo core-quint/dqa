@@ -7,6 +7,7 @@ import { LandingPage } from "./components/dqa/LandingPage";
 import { ResultsPage } from "./components/dqa/ResultsPage";
 import { TrendPage } from "./components/dqa/TrendPage";
 import { DashboardPage } from "./components/dqa/DashboardPage";
+import { InsightsPage } from "./components/dqa/InsightsPage";
 import { CoveragePage } from "./components/dqa/CoveragePage";
 import { AdminPage } from "./components/dqa/AdminPage";
 import { UwinLandingPage } from "./components/uwin/UwinLandingPage";
@@ -231,6 +232,14 @@ function AppContent() {
     return (
       <AppShell>
         <DashboardPage auth={auth} />
+      </AppShell>
+    );
+  }
+
+  if (appState === "insights") {
+    return (
+      <AppShell>
+        <InsightsPage auth={auth} />
       </AppShell>
     );
   }

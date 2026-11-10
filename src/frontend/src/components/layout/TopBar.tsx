@@ -125,6 +125,10 @@ export function TopBar({ sidebarCollapsed, onToggleSidebar }: TopBarProps) {
       items.push({ label: "Coverage", key: "coverage" });
       return items;
     }
+    if (appState === "insights") {
+      items.push({ label: "Insights", key: "insights" });
+      return items;
+    }
     if (portal) items.push({ label: portal, key: "portal-kind" });
     if (
       appState === "landing" ||

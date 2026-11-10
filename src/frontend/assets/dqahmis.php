@@ -33,7 +33,7 @@ if (empty($_SESSION['dqa_gateway'])) {
    data / redirect, so this is safe.
    ================================================================== */
 function dqa_tool_cleanup_session(){
-	$dqa_keys = array('csv_header','csv_norm','csv_rows','idxBlock','idxFac','idxMonth','idxOwner','idxRU','idxState','idxDist','idxSubCentre','file_name','file_names','filters','hasApplied','just_uploaded','exports','pink_fac_sets','pink_outlier_hits','pink_dropout_hits','pink_repeat_hits','allMonthsMap','drop_pair_map','incons_pair_map','dqa_access_granted','dqa_last_seen','dqa_log_id','dqa_log_state','dqa_launch','dqa_launch_logid','dqa_hl','dqa_upload_id','dqa_upload_tool','dqa_upload_sig','dqa_render_id');
+	$dqa_keys = array('csv_header','csv_norm','csv_rows','idxBlock','idxFac','idxMonth','idxOwner','idxRU','idxState','idxDist','idxSubCentre','file_name','file_names','filters','hasApplied','just_uploaded','exports','pink_fac_sets','pink_outlier_hits','pink_dropout_hits','pink_repeat_hits','allMonthsMap','drop_pair_map','incons_pair_map','dqa_access_granted','dqa_last_seen','dqa_log_id','dqa_log_state','dqa_launch','dqa_launch_logid','dqa_hl','dqa_upload_id','dqa_upload_tool','dqa_upload_sig','dqa_render_id','dqa_data_as_on');
 	foreach($dqa_keys as $dqa_k){ unset($_SESSION[$dqa_k]); }
 }
 function dqa_idle_script(){
@@ -125,6 +125,11 @@ $_SESSION['dqa_last_seen'] = time();
  *    Additional Inconsistencies pairs generate corresponding KPI cards + charts + tables + exports.
  *
  * EVERYTHING ELSE KEPT THE SAME.
+ *
+ * (changed 2026-11) "Download Report" (the former "Download to PDF" button) saves the
+ * two-page DQA brief of the DQA web application: assets/report/dqa_brief_report.js runs
+ * the web application's own report code on the analysis on screen. The 2-pager test
+ * button and the "Download Word" export of the Overall Score page were removed.
  */
 
 
@@ -1329,336 +1334,7 @@ if(isset($_GET['download_pink'])){
 /* -------------------- Upload / Apply Filters flow -------------------- */
 $action = isset($_POST['action']) ? $_POST['action'] : null;
 
-if($action==='download_word_overall'){
-	// Word export for Overall Score (HTML-based .doc with embedded chart images).
-	$osHtml = isset($_POST['os_word_html']) ? (string)$_POST['os_word_html'] : '';
-	if(trim($osHtml)===''){ render_page("Nothing to export."); exit; }
-
-	header("Content-Type: application/msword; charset=utf-8");
-	header('Content-Disposition: attachment; filename="Overall_Summary.doc"');
-
-	echo "\xEF\xBB\xBF"; // UTF-8 BOM helps MS Word open the file correctly
-	echo "<html xmlns:v=\"urn:schemas-microsoft-com:vml\" ".
-		"xmlns:o=\"urn:schemas-microsoft-com:office:office\" ".
-		"xmlns:w=\"urn:schemas-microsoft-com:office:word\" ".
-		"xmlns:m=\"http://schemas.microsoft.com/office/2004/12/omml\" ".
-		"xmlns=\"http://www.w3.org/TR/REC-html40\">";
-	echo "<head>";
-	echo "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">";
-	echo "<meta charset=\"utf-8\">";
-	echo "<title>Overall Score</title>";
-	echo "<style>
-<!--@page
-	{size: A4 landscape; margin:1cm;}
-#OSOVERLAY
-	{inset:auto !important;
-	position:static;}
-.OSTOPBAR
-	{position:static;}
-.OSWRAP
-	{max-width:100% !important;}
-button{display:none !important;}
-img
-	{max-width:100%;height:auto;}
-.osBarImg
-	{width:660pt !important;max-width:660pt !important;height:auto !important;}
-canvas{display:none !important;}
-.BOX
-	{border-radius:12px;}
-.DOT
-	{display:inline-block;
-	border-radius:50%;}
-.IMGBOX
-	{border-radius:12px;}
-
- /* Font Definitions */
- @font-face
-	{font-family:\"Cambria Math\";
-	panose-1:2 4 5 3 5 4 6 3 2 4;
-	mso-font-charset:0;
-	mso-generic-font-family:roman;
-	mso-font-pitch:variable;
-	mso-font-signature:-536869121 1107305727 33554432 0 415 0;}
-@font-face
-	{font-family:Calibri;
-	panose-1:2 15 5 2 2 2 4 3 2 4;
-	mso-font-charset:0;
-	mso-generic-font-family:swiss;
-	mso-font-pitch:variable;
-	mso-font-signature:-469750017 -1040178053 9 0 511 0;}
- /* Style Definitions */
- p.MsoNormal, li.MsoNormal, div.MsoNormal
-	{mso-style-unhide:no;
-	mso-style-qformat:yes;
-	mso-style-parent:\"\";
-	margin:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.msonormal0, li.msonormal0, div.msonormal0
-	{mso-style-name:msonormal;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.oswtitle, li.oswtitle, div.oswtitle
-	{mso-style-name:oswtitle;
-	mso-style-unhide:no;
-	margin-top:0cm;
-	margin-right:0cm;
-	margin-bottom:4.0pt;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:20.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	font-weight:bold;}
-p.oswmeta, li.oswmeta, div.oswmeta
-	{mso-style-name:oswmeta;
-	mso-style-unhide:no;
-	margin-top:0cm;
-	margin-right:0cm;
-	margin-bottom:12.0pt;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	color:#334155;
-	font-weight:bold;}
-p.box, li.box, div.box
-	{mso-style-name:box;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	border:none;
-	mso-border-alt:solid #CBD5E1 .75pt;
-	padding:0cm;
-	mso-padding-alt:10.0pt 10.0pt 10.0pt 10.0pt;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.muted, li.muted, div.muted
-	{mso-style-name:muted;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	color:#475569;
-	font-weight:bold;}
-p.k, li.k, div.k
-	{mso-style-name:k;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:20.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	font-weight:bold;}
-p.sm, li.sm, div.sm
-	{mso-style-name:sm;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:11.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	color:#475569;
-	font-weight:bold;}
-p.tbl, li.tbl, div.tbl
-	{mso-style-name:tbl;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.sechead, li.sechead, div.sechead
-	{mso-style-name:sechead;
-	mso-style-unhide:no;
-	margin-top:14.0pt;
-	margin-right:0cm;
-	margin-bottom:6.0pt;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:16.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	font-weight:bold;}
-p.secsub, li.secsub, div.secsub
-	{mso-style-name:secsub;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:6.0pt;
-	mso-pagination:widow-orphan;
-	font-size:11.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	color:#64748B;
-	font-weight:bold;}
-p.impactrow, li.impactrow, div.impactrow
-	{mso-style-name:impactrow;
-	mso-style-unhide:no;
-	margin-top:8.0pt;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.dot, li.dot, div.dot
-	{mso-style-name:dot;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:6.0pt;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.dotany, li.dotany, div.dotany
-	{mso-style-name:dotany;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	background:#2563EB;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.dotall, li.dotall, div.dotall
-	{mso-style-name:dotall;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	background:#0F766E;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-p.impactval, li.impactval, div.impactval
-	{mso-style-name:impactval;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:6.0pt;
-	mso-pagination:widow-orphan;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;
-	font-weight:bold;}
-p.imgbox, li.imgbox, div.imgbox
-	{mso-style-name:imgbox;
-	mso-style-unhide:no;
-	mso-margin-top-alt:auto;
-	margin-right:0cm;
-	mso-margin-bottom-alt:auto;
-	margin-left:0cm;
-	mso-pagination:widow-orphan;
-	border:none;
-	mso-border-alt:solid #CBD5E1 .75pt;
-	padding:0cm;
-	mso-padding-alt:8.0pt 8.0pt 8.0pt 8.0pt;
-	font-size:12.0pt;
-	font-family:\"Times New Roman\",serif;
-	mso-fareast-font-family:\"Times New Roman\";
-	mso-fareast-theme-font:minor-fareast;}
-span.secsub1
-	{mso-style-name:secsub1;
-	mso-style-unhide:no;
-	mso-ansi-font-size:11.0pt;
-	mso-bidi-font-size:11.0pt;
-	color:#64748B;
-	font-weight:bold;}
-span.dot1
-	{mso-style-name:dot1;
-	mso-style-unhide:no;}
-span.impactval1
-	{mso-style-name:impactval1;
-	mso-style-unhide:no;
-	mso-ansi-font-size:12.0pt;
-	mso-bidi-font-size:12.0pt;
-	font-weight:bold;}
-.MsoChpDefault
-	{mso-style-type:export-only;
-	mso-default-props:yes;
-	font-size:10.0pt;
-	mso-ansi-font-size:10.0pt;
-	mso-bidi-font-size:10.0pt;
-	mso-font-kerning:0pt;
-	mso-ligatures:none;}
-@page WordSection1
-	{size:595.3pt 841.9pt;
-	margin:72.0pt 72.0pt 72.0pt 72.0pt;
-	mso-header-margin:35.4pt;
-	mso-footer-margin:35.4pt;
-	mso-paper-source:0;}
-div.WordSection1
-	{page:WordSection1;}
--->
-
-
-#osOverlay{inset:auto !important; position:static !important; display:block !important;}
-.osTopbar{position:static !important;}
-.osWrap{max-width:100% !important;}
-.box{border-radius:12px;}
-.dot{display:inline-block; border-radius:50%;}
-.imgbox{border-radius:12px;}
-</style>";
-	echo "</head>";
-	echo "<body lang=\"EN-IN\" style=\"tab-interval:36.0pt;word-wrap:break-word\">";
-	echo $osHtml;
-	echo "</body></html>";
-	exit;
-}
+/* (removed 2026-11) "Download Word" of the Overall Score page (action download_word_overall) */
 
 if($action==='upload' && isset($_FILES['csv'])){
 	$file = $_FILES['csv'];
@@ -1724,6 +1400,7 @@ if($action==='upload' && isset($_FILES['csv'])){
 	} /* (added) end of .xlsx / .csv branch */
 
 	if(empty($allRawRows)){ render_page("Empty file or unreadable header."); exit; }
+	$dqaDataAsOn = dqa_data_as_on($allRawRows, $origName); /* (added 2026-11) for Download Report */
 
 	/* Step 1: Skip leading preamble rows until we find a row with meta headers */
 	$startIdx = null;
@@ -2031,6 +1708,7 @@ if($action==='upload' && isset($_FILES['csv'])){
 	$_SESSION['idxState']=$idxState;
 	$_SESSION['idxDist']=$idxDist;
 	$_SESSION['file_name']=$origName;
+	$_SESSION['dqa_data_as_on']=$dqaDataAsOn; /* (added 2026-11) for Download Report */
 	/* (added) identity of this upload: pages and downloads built from it carry the id,
 	   so data replaced later by another upload in this browser is detected */
 	$_SESSION['dqa_upload_id'] = dqa_new_upload_id();
@@ -2454,168 +2132,30 @@ function render_coadmin_two_level($web){
 }
 
 /* -------------------- Render: Results -------------------- */
-/* ==================================================================
-   (added 2026-10) data of the DQA 2-pager report (small unlabelled button, top left)
-   ------------------------------------------------------------------
-   The report (A4 portrait, laid out like the DQA 2-pager template) is drawn in
-   the browser and saved with the print window's "Save as PDF". Its data is built
-   here only from figures this page already shows, so every number agrees with
-   the cards, panels and Overall Score:
-   - the KPI cards of the Overall Score components (in card order) and their totals;
-   - the units each card counts = the same unit sets as its table, chart and
-     highlighted download ($_SESSION['pink_fac_sets'][downloadKey]);
-   - the component and overall scores and the denominator (units under the
-     current selection).
-   Issues of a unit = number of those KPI cards that count the unit.
-   Nothing is written to the session or to the database.
-   ================================================================== */
-function dqa2p_month_full($mk){
-	$p = explode('-', (string)$mk);
-	$y = isset($p[0]) ? (int)$p[0] : 0; $m = isset($p[1]) ? (int)$p[1] : 0;
-	if($y <= 0 || $m < 1 || $m > 12) return (string)$mk;
-	$n = array('January','February','March','April','May','June','July','August','September','October','November','December');
-	return $n[$m - 1].' '.$y;
-}
-function dqa2p_month_short($mk){
-	$p = explode('-', (string)$mk);
-	$y = isset($p[0]) ? (int)$p[0] : 0; $m = isset($p[1]) ? (int)$p[1] : 0;
-	if($y <= 0 || $m < 1 || $m > 12) return (string)$mk;
-	$n = array('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec');
-	return $n[$m - 1].'-'.substr(sprintf('%04d', $y), -2);
-}
-/* Selected months: "January 2026" / "January 2026 to March 2026" / a list when months are missing in between */
-function dqa2p_period($keys, $short){
-	$k = array_values(array_unique(array_map('strval', (array)$keys)));
-	sort($k, SORT_STRING);
-	$n = count($k);
-	if($n === 0) return '—';
-	$f = $short ? 'dqa2p_month_short' : 'dqa2p_month_full';
-	if($n === 1) return $f($k[0]);
-	$ix = array();
-	foreach($k as $mk){ $p = explode('-', $mk); $ix[] = (isset($p[0]) ? (int)$p[0] : 0) * 12 + (isset($p[1]) ? (int)$p[1] : 0); }
-	$contig = true;
-	for($i = 1; $i < $n; $i++){ if($ix[$i] !== $ix[$i - 1] + 1){ $contig = false; break; } }
-	if($contig) return $f($k[0]).' to '.$f($k[$n - 1]);
-	return implode(', ', array_map($f, $k));
-}
-function dqa2p_build($p){
-	$den = (int)$p['den'];
-	$units = is_array($p['units']) ? $p['units'] : array();
-	$sets = is_array($p['sets']) ? $p['sets'] : array();
-	$uw = ($p['kind'] === 'uw');
-	/* every unit under the selection: its block (as in the tool's tables and charts) and its name */
-	$blockOf = array(); $nameOf = array(); $issues = array();
-	foreach($units as $k => $u){
-		$blockOf[$k] = display_block_label(isset($u['block']) ? $u['block'] : '');
-		$nameOf[$k] = (string)($uw ? (isset($u['sessionsite']) ? $u['sessionsite'] : '') : (isset($u['facility']) ? $u['facility'] : ''));
-		$issues[$k] = 0;
-	}
-	if($uw){
-		/* one session-site name used by two sites of a block (under different facilities): the facility is added */
-		$grp = array();
-		foreach($nameOf as $k => $nm){ $grp[$blockOf[$k]."\x1F".$nm][] = $k; }
-		foreach($grp as $ks){
-			if(count($ks) < 2) continue;
-			foreach($ks as $k){
-				$fn = trim((string)(isset($units[$k]['facility']) ? $units[$k]['facility'] : ''));
-				if($fn !== '') $nameOf[$k] .= ' ('.$fn.')';
-			}
+/* (added 2026-11) When the HMIS export was taken, as the web application reads it
+   (csvParser findDataAsOn): the "Data Item wise report" title row says "(Data as on 16th
+   October 2026 15:57:58 PM)" and the portal names the file the same way. Looks in the
+   first 10 rows of the file, then the file name; "YYYY-MM-DD", or null. */
+function dqa_data_as_on($rawRows, $fileName){
+	$months = array('jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec');
+	$texts = array();
+	foreach(array_slice((array)$rawRows, 0, 10) as $r){ foreach((array)$r as $cv){ $texts[] = (string)$cv; } }
+	$texts[] = (string)$fileName;
+	foreach($texts as $t){
+		if(preg_match('/as\s+on\s+(\d{1,2})(?:st|nd|rd|th)?[\s-]+([a-z]{3,9})\.?[\s,-]+(\d{4})/i', $t, $m)){
+			$d = (int)$m[1]; $y = (int)$m[3];
+			$mo = array_search(strtolower(substr($m[2], 0, 3)), $months, true);
+			$mo = ($mo === false) ? 0 : $mo + 1;
+		} elseif(preg_match('/as\s+on\s+(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})/i', $t, $m)){
+			$d = (int)$m[1]; $mo = (int)$m[2]; $y = (int)$m[3];
+		} else {
+			continue;
 		}
+		if($mo < 1 || $mo > 12 || $d < 1 || $d > 31) continue;
+		return sprintf('%d-%02d-%02d', $y, $mo, $d);
 	}
-	$blocks = array();
-	foreach($blockOf as $k => $b){ $blocks[$b][] = $k; }
-	/* (changed 2026-10, web parity) the score cards are always the standard checks, so the
-	   Dropouts / Outliers names carry the standard cut-offs */
-	$qDrop = array('20% or more');
-	$qOut = array('Extreme increase or decrease');
-	/* KPI cards of the Overall Score components */
-	$comps = array(); $chk = array();
-	foreach($p['comps'] as $gid => $g){
-		$sc = isset($g['score']) ? $g['score'] : null;
-		$comps[$gid] = array('id'=>(string)$gid, 'name'=>(string)$g['name'], 'score'=>($sc === null ? null : number_format((float)$sc, 1, '.', '')), 'kpis'=>array(), 'worst'=>null);
-	}
-	$kpiBlocks = array();  /* [component][kpi index] => block => units */
-	$typeSeen = array();   /* block => KPI => true (KPIs with at least one unit in the block) */
-	foreach($p['cards'] as $c){
-		$gid = isset($c['group']) ? (string)$c['group'] : '';
-		if(!isset($comps[$gid])) continue;
-		$n = isset($c['stat']['total']) ? (int)$c['stat']['total'] : 0;
-		$dk = isset($c['downloadKey']) ? (string)$c['downloadKey'] : '';
-		$list = isset($sets[$dk]) ? (array)$sets[$dk] : array();
-		$byB = array(); $cnt = 0; $seenU = array();
-		foreach($list as $k){
-			if(!isset($units[$k]) || isset($seenU[$k])) continue;
-			$seenU[$k] = true;
-			$cnt++;
-			$issues[$k]++;
-			$b = $blockOf[$k];
-			$byB[$b] = isset($byB[$b]) ? $byB[$b] + 1 : 1;
-			$typeSeen[$b][$gid.'|'.$c['id']] = true;
-		}
-		if($cnt !== $n) $chk[] = (string)$c['name'];
-		$q = '';
-		if(strpos((string)$c['id'], 'drop_') === 0 && !empty($qDrop)) $q = ' ('.implode(', ', $qDrop).')';
-		elseif((string)$c['id'] === 't3' && !empty($qOut)) $q = ' ('.implode(', ', $qOut).')';
-		$comps[$gid]['kpis'][] = array('id'=>(string)$c['id'], 'name'=>(string)$c['name'], 'q'=>$q, 'n'=>$n,
-			'pct'=>($den > 0 ? number_format($n * 100.0 / $den, 1) : '0.0'), 'worst'=>false);
-		$kpiBlocks[$gid][] = $byB;
-	}
-	/* top issue of each component (the check flagging the most units; since 2026-10 it no longer sets the score) and its units per block */
-	foreach($comps as $gid => $g){
-		$max = 0;
-		foreach($g['kpis'] as $kp){ if($kp['n'] > $max) $max = $kp['n']; }
-		if($max <= 0 || $den <= 0) continue;
-		$names = array(); $first = null;
-		foreach($g['kpis'] as $i => $kp){
-			if($kp['n'] !== $max) continue;
-			$comps[$gid]['kpis'][$i]['worst'] = true;
-			$names[] = $kp['name'].$kp['q'];
-			if($first === null) $first = $i;
-		}
-		$byB = isset($kpiBlocks[$gid][$first]) ? $kpiBlocks[$gid][$first] : array();
-		$bl = array();
-		foreach($blocks as $b => $ks){ $bl[] = array('b'=>(string)$b, 'n'=>(isset($byB[$b]) ? (int)$byB[$b] : 0)); }
-		usort($bl, function($x, $y){ if($x['n'] !== $y['n']) return ($x['n'] > $y['n']) ? -1 : 1; return strnatcasecmp($x['b'], $y['b']); });
-		$comps[$gid]['worst'] = array('n'=>$max, 'pct'=>number_format($max * 100.0 / $den, 1), 'names'=>$names,
-			'chart'=>$g['kpis'][$first]['name'].$g['kpis'][$first]['q'], 'blocks'=>$bl);
-	}
-	/* blocks: units by number of issues, KPIs with at least one unit in the block, top 3 units */
-	$rowsB = array(); $tot = array('g4'=>0, 'g13'=>0, 'g0'=>0, 'tot'=>0);
-	foreach($blocks as $b => $ks){
-		$g4 = 0; $g13 = 0; $g0 = 0; $cand = array();
-		foreach($ks as $k){
-			$is = $issues[$k];
-			if($is >= 4) $g4++; elseif($is >= 1) $g13++; else $g0++;
-			if($is >= 1) $cand[] = array('u'=>$nameOf[$k], 'n'=>$is);
-		}
-		usort($cand, function($x, $y){ if($x['n'] !== $y['n']) return ($x['n'] > $y['n']) ? -1 : 1; return strnatcasecmp($x['u'], $y['u']); });
-		$rowsB[] = array('b'=>(string)$b, 'types'=>(isset($typeSeen[$b]) ? count($typeSeen[$b]) : 0), 'g4'=>$g4, 'g13'=>$g13, 'g0'=>$g0, 'tot'=>count($ks), 'top'=>array_slice($cand, 0, 3));
-		$tot['g4'] += $g4; $tot['g13'] += $g13; $tot['g0'] += $g0; $tot['tot'] += count($ks);
-	}
-	usort($rowsB, function($x, $y){ if($x['types'] !== $y['types']) return ($x['types'] > $y['types']) ? -1 : 1; return strnatcasecmp($x['b'], $y['b']); });
-	$nKpi = 0; foreach($comps as $g){ $nKpi += count($g['kpis']); }
-	$dist = (string)$p['district'];
-	$file = 'DQA_2-pager_'.$p['tool'].(($dist !== '' && $dist !== '—' && $dist !== 'Multiple') ? '_'.$dist : '').'_'.dqa2p_period($p['months'], true);
-	$file = trim(preg_replace('/_+/', '_', preg_replace('/[^A-Za-z0-9\-]+/', '_', $file)), '_');
-	return array(
-		'tool'=>(string)$p['tool'], 'unit'=>($uw ? 'session sites' : 'facilities'), 'unitOne'=>($uw ? 'session site' : 'facility'),
-		'state'=>(string)$p['state'], 'district'=>$dist,
-		'period'=>dqa2p_period($p['months'], false), 'periodShort'=>dqa2p_period($p['months'], true),
-		'den'=>$den, 'blocks'=>(int)$p['blocksCount'],
-		'overall'=>($p['overall'] === null ? null : number_format((float)$p['overall'], 1)),
-		'selection'=>array_values(array_map('strval', (array)$p['selection'])),
-		'comps'=>array_values($comps), 'kpiCount'=>$nKpi,
-		'blockRows'=>$rowsB, 'totals'=>$tot, 'chk'=>$chk, 'file'=>$file
-	);
+	return null;
 }
-/* JSON for a <script> block: <, >, &, quotes escaped; invalid UTF-8 replaced instead of failing */
-function dqa2p_json($data){
-	$fl = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE;
-	if(defined('JSON_INVALID_UTF8_SUBSTITUTE')) $fl |= JSON_INVALID_UTF8_SUBSTITUTE;
-	$j = json_encode($data, $fl);
-	return ($j === false) ? 'null' : $j;
-}
-/* ============== end of added DQA 2-pager data ============== */
 
 function render_results_with_data(){
 	$APP_NAME = $GLOBALS['APP_NAME'];
@@ -4454,7 +3994,7 @@ $find = function($code) use ($header){ return find_index_by_code($header,$code);
 	$overallSummaryHtml .= '<div id="osOverlay" aria-hidden="true">';
 	$overallSummaryHtml .=   '<div class="osTopbar"><div class="osWrap"><div class="osTopbarInner">';
 	$overallSummaryHtml .=     '<div><div class="osTitle">Overall Score</div><div class="osMeta">'.h($stateName).' · '.h($distName).' · '.h(strip_tags($durationStrHtml)).'</div></div>';
-	$overallSummaryHtml .=     '<div class="osBack"><button type="button" class="btn" id="osWordBtn">Download Word</button><button type="button" class="btn" id="osBackBtn">Back</button></div>';
+	$overallSummaryHtml .=     '<div class="osBack"><button type="button" class="btn" id="osBackBtn">Back</button></div>';
 	$overallSummaryHtml .=   '</div></div></div>';
 
 	$overallSummaryHtml .=   '<div class="osWrap">';
@@ -4529,25 +4069,66 @@ $find = function($code) use ($header){ return find_index_by_code($header,$code);
 	$overallSummaryHtml .=   '</div>';
 	$overallSummaryHtml .= '</div>';
 
-	/* (added 2026-10) data of the DQA 2-pager report (small unlabelled button, top left); see dqa2p_build() */
-	$dqa2pSel = array();
-	$dqa2pSelSet = array_fill_keys(array_map('strval', (array)$filters['blocks']), true);
-	$dqa2pBlk = array();
-	foreach($allBlocks as $dqa2p_b => $dqa2p_x){ if(isset($dqa2pSelSet[(string)$dqa2p_b])) $dqa2pBlk[] = display_block_label((string)$dqa2p_b); }
-	if(count($dqa2pBlk) < count($allBlocks)){
-		natcasesort($dqa2pBlk);
-		$dqa2pSel[] = (count($dqa2pBlk) <= 8)
-			? 'Blocks ('.count($dqa2pBlk).' of '.count($allBlocks).'): '.implode(', ', $dqa2pBlk)
-			: 'Blocks: '.count($dqa2pBlk).' of '.count($allBlocks).' selected';
+	/* (added 2026-11) data of "Download Report" = the two-page DQA brief of the DQA web
+	   application (HMIS portal). assets/report/dqa_brief_report.js runs the web application's
+	   own report code on it, so the report says and shows exactly what the web application
+	   would for the same file and selection:
+	   - the facilities under the selection (the score's denominator), each with its Block
+	     Name and Facility Name exactly as the facility is identified;
+	   - the standard score cards (the ones the Overall Score is computed from) with the
+	     facilities each flags; card names and the always-listed session checks (shown as
+	     "Not checked" when the file has no session columns) as in the web application;
+	   - the selected months, State / District and the export's "Data as on" date.
+	   The web application's "vs previous period" line needs its saved reviews, so it is left out. */
+	$dqaBriefJson = 'null';
+	$dqaBriefSrc = 'assets/report/dqa_brief_report.js';
+	$dqaBriefSrc .= '?v='.(is_file(__DIR__.'/'.$dqaBriefSrc) ? (string)filemtime(__DIR__.'/'.$dqaBriefSrc) : '1');
+	if($hasApplied){
+		$dqaBriefIdx = []; $dqaBriefUnits = [];
+		foreach($facFiltered as $dqa_k=>$dqa_fd){
+			$dqa_k = (string)$dqa_k;
+			$dqa_cut = strpos($dqa_k, '||');
+			$dqaBriefIdx[$dqa_k] = count($dqaBriefUnits);
+			$dqaBriefUnits[] = ($dqa_cut === false) ? [$dqa_k, ''] : [(string)substr($dqa_k, $dqa_cut + 2), (string)substr($dqa_k, 0, $dqa_cut)];
+		}
+		$dqaWebName = [
+			't1'=>'All Indicators Blank', 't0'=>'Indicators having 0 values but not blank', 't7'=>'Duplicate Monthly Record',
+			't10'=>'Session Not Held but Vaccinated', 't2'=>'Key Missing Indicators', 't6'=>'Sessions Held > Sessions Planned',
+			't3'=>'Outliers', 'i1'=>'Inconsistencies — Penta3>Penta1', 'i2'=>'Inconsistencies — MR2>MR1',
+			'co1'=>'6 weeks — OPV1, Penta1, RVV1, PCV1, IPV1', 'co2'=>'10 weeks — OPV2, Penta2, RVV2',
+			'co3'=>'14 weeks — OPV3, Penta3, RVV3, PCV2, IPV2', 'co4'=>'9 months — MR1, PCV Booster, IPV3',
+			'co5'=>'2 years — MR2, DPT 1st Booster',
+		];
+		$dqaBriefCards = [];
+		$dqaHas = [];
+		foreach($scoreCardsList as $c){ $dqaHas[$c['id']] = true; }
+		$dqaAddCard = function($id, $name, $group, $stat, $flaggedKeys) use (&$dqaBriefCards, $dqaBriefIdx){
+			$idx = [];
+			foreach((array)$flaggedKeys as $fk){ if(isset($dqaBriefIdx[(string)$fk])) $idx[] = $dqaBriefIdx[(string)$fk]; }
+			$dqaBriefCards[] = ['id'=>(string)$id, 'name'=>(string)$name, 'group'=>(string)$group,
+				'eligible'=>(int)$stat['eligible'], 'total'=>(int)$stat['total'], 'any'=>(int)$stat['any'], 'all'=>(int)$stat['all'], 'units'=>$idx];
+		};
+		$dqaNone = ['eligible'=>0, 'total'=>0, 'any'=>0, 'all'=>0];
+		foreach($scoreCardsList as $c){
+			$dk = isset($c['downloadKey']) ? (string)$c['downloadKey'] : (string)$c['id'];
+			$dqaAddCard($c['id'], isset($dqaWebName[$c['id']]) ? $dqaWebName[$c['id']] : $c['name'], $c['group'], $c['stat'], isset($scoreSets[$dk]) ? $scoreSets[$dk] : []);
+			/* the web application always lists both session checks */
+			if($c['id']==='t7' && empty($dqaHas['t10'])) $dqaAddCard('t10', $dqaWebName['t10'], 'availability', $dqaNone, []);
+			if($c['id']==='t2' && empty($dqaHas['t6'])) $dqaAddCard('t6', $dqaWebName['t6'], 'consistency', $dqaNone, []);
+		}
+		$dqaBriefData = [
+			'v'=>1,
+			'state'=>(string)$stateName, 'district'=>(string)$distName,
+			'dataAsOn'=>(isset($_SESSION['dqa_data_as_on']) && $_SESSION['dqa_data_as_on'] !== '' ? (string)$_SESSION['dqa_data_as_on'] : null),
+			'months'=>array_values(array_map('strval', $selMonthKeysOrdered)),
+			'den'=>(int)$osDen, 'uploaded'=>count($facData),
+			'units'=>$dqaBriefUnits, 'cards'=>$dqaBriefCards,
+		];
+		$dqaJf = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE;
+		if(defined('JSON_INVALID_UTF8_SUBSTITUTE')) $dqaJf |= JSON_INVALID_UTF8_SUBSTITUTE;
+		$dqaBriefJson = json_encode($dqaBriefData, $dqaJf);
+		if($dqaBriefJson === false) $dqaBriefJson = 'null';
 	}
-	if($dqaOwnOn && !$dqaOwnAll) $dqa2pSel[] = 'Ownership: '.implode(', ', array_map('strval', (array)$filters['ownership']));
-	if($dqaRuOn && !$dqaRuAll) $dqa2pSel[] = 'Rural/Urban: '.implode(', ', array_map('strval', (array)$filters['ru']));
-	$dqa2pJson = dqa2p_json(dqa2p_build(array(
-		'kind'=>'hp', 'tool'=>'HMIS', 'cards'=>$scoreCardsList, 'comps'=>$osComponents, 'overall'=>$overallScore, 'den'=>$osDen,
-		'units'=>$facFiltered, 'sets'=>$scoreSets, /* (changed 2026-10) the checks the score is computed from */
-		'state'=>$stateName, 'district'=>$distName, 'months'=>$selMonthKeysOrdered, 'blocksCount'=>$selBlocksCount,
-		'selection'=>$dqa2pSel, 'filters'=>$filters
-	)));
 
 	$osData = ['overallScore'=>$overallScore,'components'=>$osComponents,'checks'=>$wScore['checks'],'method'=>8];
 	$osDataJson = json_encode($osData);
@@ -5044,7 +4625,7 @@ $find = function($code) use ($header){ return find_index_by_code($header,$code);
 			<div class="top-meta">Source file: <b><?=h($fileName)?></b></div>
 		</div>
 		<div>
-			<button class="btn btnDisabled" id="btnPdf" disabled>Download to PDF</button>
+			<button type="button" class="btn<?=($dqaBriefJson !== 'null' ? '' : ' btnDisabled')?>" id="btnPdf" data-src="<?=h($dqaBriefSrc)?>"<?=($dqaBriefJson !== 'null' ? '' : ' disabled')?> title="<?=($dqaBriefJson !== 'null' ? 'Download the DQA brief (PDF) of this analysis' : 'Press Apply Filter first')?>">Download Report</button>
 			<button type="button" onclick="window.location.href='?dqa_logout=1';" title="Return to the DQA Tools page and remove your uploaded data from the server">Logout</button>
 			<button type="button" onclick="window.location.href='https://www.datamgmt.in/dqa.php';">Main Page</button>
 			<a class="btn" href="<?=h($BASE_URL)?>">Start Over (new file)</a>
@@ -5412,16 +4993,12 @@ $find = function($code) use ($header){ return find_index_by_code($header,$code);
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 	<?=$overallSummaryHtml?>
-	<form id="osWordForm" method="post" style="display:none;">
-		<input type="hidden" name="action" value="download_word_overall">
-		<input type="hidden" name="access_code" value="<?=h($GLOBALS['ACCESS_CODE_CURRENT'])?>">
-		<textarea name="os_word_html" id="osWordHtml" style="display:none;"></textarea>
-	</form>
 
 <script>
 const BASE_URL = "<?=h($BASE_URL)?>";
 const CHARTS = <?= $chartsJson ? $chartsJson : "{}" ?>;
 window.__OS_DATA__ = <?= $osDataJson ? $osDataJson : 'null' ?>;
+window.__DQA_BRIEF__ = <?= isset($dqaBriefJson) ? $dqaBriefJson : 'null' ?>; /* (added 2026-11) Download Report data */
 const hasApplied = document.body.getAttribute('data-hasapplied') === '1';
 const showOutliers = document.body.getAttribute('data-showoutliers') === '1';
 const showDropouts = document.body.getAttribute('data-showdropouts') === '1';
@@ -5821,9 +5398,35 @@ function bindKpiClick(){
 }
 
 function bindPdf(){
+	/* (changed 2026-11) Download Report: the DQA brief of the DQA web application. Its script
+	   (assets/report/dqa_brief_report.js, with its fonts) is loaded on the first click. */
 	const btn = document.getElementById('btnPdf');
 	if(!btn) return;
-	btn.addEventListener('click', ()=>window.print());
+	let loading = null;
+	const loadReport = function(){
+		if(window.DQABriefReport) return Promise.resolve();
+		if(!loading){
+			loading = new Promise(function(resolve, reject){
+				const sc = document.createElement('script');
+				sc.src = btn.getAttribute('data-src') || 'assets/report/dqa_brief_report.js';
+				sc.onload = function(){ window.DQABriefReport ? resolve() : reject(new Error('report script')); };
+				sc.onerror = function(){ loading = null; reject(new Error('report script')); };
+				document.head.appendChild(sc);
+			});
+		}
+		return loading;
+	};
+	btn.addEventListener('click', function(){
+		if(btn.disabled) return;
+		if(!window.__DQA_BRIEF__){ alert('Press Apply Filter first, then download the report.'); return; }
+		const label = btn.textContent;
+		btn.disabled = true;
+		btn.textContent = 'Preparing report…';
+		loadReport()
+			.then(function(){ return window.DQABriefReport.download(window.__DQA_BRIEF__); })
+			.catch(function(){ alert('The report could not be generated. Please check your connection and try again.'); })
+			.then(function(){ btn.disabled = false; btn.textContent = label; });
+	});
 }
 
 function bindGroupButtons(){
@@ -5957,9 +5560,6 @@ function init(){
 	var ov = document.getElementById('osOverlay');
 	var back = document.getElementById('osBackBtn');
 	var pdf = document.getElementById('osPdfBtn');
-	var word = document.getElementById('osWordBtn');
-	var wordForm = document.getElementById('osWordForm');
-	var wordHtml = document.getElementById('osWordHtml');
 	var hasApplied = document.body.getAttribute('data-hasapplied') === '1';
 
 	function renderOsCharts(){
@@ -6068,177 +5668,6 @@ function init(){
 
 	}
 
-	function buildWordExportHtml(){
-		// Word is very limited with modern CSS (grid/flex) and canvas rendering.
-		// So we generate a Word-friendly HTML (tables + inline styles) and embed
-		// charts as PNG images from the already-rendered canvases.
-		try{
-			renderOsCharts();
-		}catch(e){}
-		if(!window.__OS_DATA__) return '';
-		var data = window.__OS_DATA__;
-		var titleEl = document.querySelector('#osOverlay .osTitle');
-		var metaEl  = document.querySelector('#osOverlay .osMeta');
-		var title = titleEl ? (titleEl.textContent||'').trim() : 'Overall Score';
-		var meta  = metaEl ? (metaEl.textContent||'').trim() : '';
-		// Ensure a readable gap between labels and values for Word export (e.g., 'State: UP' not 'State:UP').
-		meta = meta.replace(/(\b(?:State|District|Duration|Months|Blocks|Ownership|Rural\/Urban)\b)\s*:\s*/g, '$1: ');
-
-		function esc(s){
-			s = (s===null||typeof s==='undefined') ? '' : String(s);
-			return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-		}
-		function n1(x){
-			var v = (typeof x==='number') ? x : parseFloat(x);
-			if(isNaN(v)) v = 0;
-			return (Math.round(v*10)/10).toFixed(1);
-		}
-		function getCanvasPng(id){
-			try{
-				var c = document.getElementById(id);
-				if(c && c.toDataURL) return c.toDataURL('image/png');
-			}catch(e){}
-			return '';
-		}
-
-		var css = '';
-		css += "<style>";
-		css += "body{font-family:Calibri,Arial,sans-serif;font-size:12pt;color:#111;}";
-		css += ".osWTitle{font-size:20pt;font-weight:900;margin:0 0 4pt 0;}";
-		css += ".osWMeta{font-size:12pt;font-weight:700;color:#334155;margin:0 0 12pt 0;}";
-		css += ".box{border:1px solid #cbd5e1;border-radius:12px;padding:10pt;}";
-		css += ".muted{color:#475569;font-weight:700;}";
-		css += ".k{font-size:20pt;font-weight:900;}";
-		css += ".sm{font-size:11pt;font-weight:700;color:#475569;}";
-		css += ".tbl{border-collapse:collapse;width:100%;}";
-		css += ".tbl th,.tbl td{border:1px solid #cbd5e1;padding:6pt 7pt;vertical-align:top;}";
-		css += ".tbl th{background:#f8fafc;font-weight:900;}";
-		css += ".secHead{font-size:16pt;font-weight:900;margin:14pt 0 6pt 0;}";
-		css += ".secSub{font-size:11pt;font-weight:800;color:#64748b;margin-left:6pt;}";
-		css += ".impactRow{margin-top:8pt;}";
-		css += ".dot{display:inline-block;width:10pt;height:10pt;border-radius:50%;margin-right:6pt;vertical-align:middle;}";
-		css += ".dotAny{background:#2563eb;} .dotAll{background:#0f766e;}";
-		css += ".impactVal{font-weight:900;font-size:12pt;margin-left:6pt;}";
-		css += ".imgBox{border:1px solid #cbd5e1;border-radius:12px;padding:8pt;}";
-		css += ".osBarImg{max-width:660pt;width:660pt;height:auto;}";
-		css += "</style>";
-
-		var html = '';
-		html += css;
-		html += '<div class="osWTitle">'+esc(title)+'</div>';
-		if(meta) html += '<div class="osWMeta">'+esc(meta)+'</div>';
-
-		// Top stats cards (read from rendered page text to keep values exactly the same)
-		var cards = document.querySelectorAll('#osOverlay .osGrid4 .osCard');
-		html += '<table class="tbl" style="margin-bottom:12pt;"><tr>';
-		for(var ci=0; ci<cards.length; ci++){
-			var c = cards[ci];
-			var t = c.querySelector('.t');
-			var k = c.querySelector('.k');
-			var s = c.querySelector('.s');
-			var m = c.querySelector('.m');
-			html += '<td style="width:25%;padding:0;border:0;">';
-			html += '<div class="box" style="margin:0 6pt 0 0;">';
-			html += '<div class="muted">'+esc(t ? t.textContent : '')+'</div>';
-			html += '<div class="k">'+esc(k ? k.textContent : '')+'</div>';
-			if(m && (m.textContent||'').trim()!=='') html += '<div class="sm">'+esc(m.textContent)+'</div>';
-			if(s && (s.textContent||'').trim()!=='') html += '<div class="sm">'+esc(s.textContent)+'</div>';
-			html += '</div></td>';
-		}
-		html += '</tr></table>';
-
-		// Hero: score + mini grid
-		var scorePng = getCanvasPng('osScoreRing');
-		html += '<table class="tbl" style="border:0;margin-bottom:12pt;">';
-		html += '<tr>';
-		html += '<td style="width:42%;border:0;vertical-align:top;">';
-		html += '<div class="box">';
-		if(scorePng){
-			html += '<table style="width:100%;border-collapse:collapse;"><tr>';
-			html += '<td style="width:42%;border:0;vertical-align:middle;">';
-			html += '<img src="'+scorePng+'" style="width:180pt;height:auto;display:block;" />';
-			html += '</td><td style="border:0;vertical-align:middle;">';
-			var scoreNumEl = document.getElementById('osScoreNum');
-			html += '<div style="font-size:34pt;font-weight:900;line-height:1;">'+esc(scoreNumEl?scoreNumEl.textContent:'')+'</div>';
-			html += '<div class="sm">Overall score (0–100)</div>';
-			html += '</td></tr></table>';
-		}
-		var noteEl = document.querySelector('#osOverlay .osScoreNote');
-		if(noteEl) html += '<div class="sm" style="margin-top:8pt;">'+esc(noteEl.textContent)+'</div>';
-		html += '</div>';
-		html += '</td>';
-
-		html += '<td style="width:58%;border:0;vertical-align:top;">';
-		var minis = document.querySelectorAll('#osOverlay .osMiniGrid .osMini');
-		html += '<table class="tbl" style="border:0;">';
-		for(var mi=0; mi<minis.length; mi++){
-			if(mi % 2 === 0) html += '<tr>';
-			var mbox = minis[mi];
-			var hEl = mbox.querySelector('.h');
-			var pctEl = mbox.querySelector('.pct');
-			var subEls = mbox.querySelectorAll('.sub');
-			html += '<td style="width:50%;border:0;vertical-align:top;padding:0 0 6pt 6pt;">';
-			html += '<div class="box">';
-			html += '<div style="font-weight:900;font-size:13pt;margin-bottom:4pt;">'+esc(hEl?hEl.textContent:'')+'</div>';
-			html += '<div style="font-size:22pt;font-weight:900;">'+esc(pctEl?pctEl.textContent:'')+'</div>';
-			html += '<div class="sm">score</div>';
-			if(subEls && subEls.length>0){
-				for(var si=0; si<subEls.length; si++){
-					if((subEls[si].textContent||'').trim()!=='score') html += '<div class="sm">'+esc(subEls[si].textContent)+'</div>';
-				}
-			}
-			html += '</div></td>';
-			if(mi % 2 === 1) html += '</tr>';
-		}
-		if(minis.length % 2 === 1) html += '<td style="width:50%;border:0;"></td></tr>';
-		html += '</table>';
-		html += '</td>';
-		html += '</tr></table>';
-
-		// Component sections
-		var compOrder = ['availability','completeness','accuracy','consistency'];
-		for(var oi=0; oi<compOrder.length; oi++){
-			var gid = compOrder[oi];
-			var comp = data.components && data.components[gid] ? data.components[gid] : null;
-			if(!comp) continue;
-			html += '<div class="secHead">'+esc(comp.name||gid)+' <span class="secSub">Indicators violating expected data behaviour</span></div>';
-			html += '<table class="tbl" style="border:0;margin-bottom:10pt;">';
-			html += '<tr>';
-			html += '<td style="width:28%;border:0;vertical-align:top;padding:0 6pt 0 0;">';
-			html += '<div class="box">';
-			html += '<div style="font-weight:900;font-size:13pt;margin-bottom:8pt;">Impact</div>';
-			html += '<div class="impactRow"><span class="dot dotAny"></span><span style="font-weight:900;">Any month</span><span class="impactVal">'+n1(comp.maxAny||0)+'%</span></div>';
-			html += '<div class="impactRow"><span class="dot dotAll"></span><span style="font-weight:900;">All months</span><span class="impactVal">'+n1(comp.maxAll||0)+'%</span></div>';
-			html += '</div>';
-			html += '</td>';
-			html += '<td style="width:72%;border:0;vertical-align:top;padding:0;">';
-			html += '<div class="box">';
-			html += '<div style="font-weight:900;font-size:13pt;margin-bottom:8pt;">Top KPIs</div>';
-			html += '<table class="tbl">';
-			html += '<thead><tr><th style="width:64%;">KPI</th><th style="width:18%;">Facilities</th><th style="width:18%;">%</th></tr></thead><tbody>';
-			var top = comp.top || [];
-			for(var ti=0; ti<top.length; ti++){
-				var r = top[ti];
-				html += '<tr><td>'+esc(r.name)+'</td><td>'+esc(r.total)+'</td><td>'+n1(r.pct||0)+'%</td></tr>';
-			}
-			if(top.length===0) html += '<tr><td colspan="3">—</td></tr>';
-			html += '</tbody></table>';
-			html += '</div>';
-			html += '</td>';
-			html += '</tr></table>';
-
-			// Highlights chart image
-			var barPng = getCanvasPng('osBar_'+gid);
-			if(barPng){
-				html += '<div class="imgBox" style="margin-bottom:10pt;">';
-				html += '<div style="font-weight:900;font-size:13pt;margin-bottom:8pt;">Highlights</div>';
-				html += '<img src="'+barPng+'" class="osBarImg" style="width:660pt;height:auto;display:block;" width="880" />';
-				html += '</div>';
-			}
-		}
-
-		return html;
-	}
 
 
 
@@ -6267,691 +5696,10 @@ function init(){
 			window.print();
 		});
 	}
-	if(word && wordForm && wordHtml){
-		word.addEventListener('click', function(){
-			try{
-				renderOsCharts();
-				var html = buildWordExportHtml();
-				wordHtml.value = html;
-				wordForm.submit();
-			}catch(e){
-				alert('Unable to generate Word file. Please try again.');
-			}
-		});
-	}
 })();
 
 
 init();
-</script>
-<script>
-window.__DQA2P__ = <?= isset($dqa2pJson) ? $dqa2pJson : 'null' ?>;
-/* (added 2026-10) DQA 2-pager report (A4 portrait, always 2 pages) of the results shown on this
-   page, opened by a very small unlabelled button at the top left of the page. It opens in a new tab
-   with the print window over it, where
-   "Save as PDF" saves it (or it can be printed). Every figure comes from window.__DQA2P__, built
-   on the server from the same data as the cards, panels and Overall Score of this page, so the
-   report always matches the page it was opened from. The layout is measured and made more
-   compact (smaller type, lower charts, tighter rows) only as much as needed to keep the whole
-   report on two pages, whatever the number of blocks or KPIs. */
-(function(){
-	'use strict';
-	var D = window.__DQA2P__;
-	if(!D || !document.body || document.body.getAttribute('data-hasapplied') !== '1') return;
-
-	var FONT = 'Calibri, Carlito, "Segoe UI", Arial, sans-serif';
-	var FONT_H = 'Cambria, Caladea, Georgia, "Times New Roman", serif';
-	var C = { brand:'#0B4F6C', brandDk:'#083A50', teal:'#0B7A75', amber:'#F59E0B', amberLt:'#FCD34D',
-		ink:'#1E293B', muted:'#64748B', line:'#D3E1E8', panel:'#EEF5F8', panel2:'#F7FAFC', track:'#E3ECF1', grid:'#E8EEF2',
-		red:'#DC2626', redBg:'#FDE8E8', redTx:'#B91C1C', amb:'#F59E0B', ambBg:'#FEF3C7', ambTx:'#92400E',
-		grn:'#16A34A', grnBg:'#DCFCE7', grnTx:'#166534', tot:'#E1EEF4' };
-	/* component colours = the tool's own Overall Score page */
-	var COMP = { availability:'#1d4ed8', completeness:'#5b21b6', accuracy:'#9a3412', consistency:'#047857' };
-	var PT_W = 595.28;                   /* A4 width (pt) */
-	var PG_H = 296.8 / 25.4 * 72;        /* page box height (pt): a hair under A4, so no blank sheet is added */
-	var ML = 34, MT = 26, MB = 30;       /* side / top / bottom margins (pt); the page line sits in the bottom margin */
-	var CW = PT_W - 2 * ML;              /* content width (pt) */
-	var CH = PG_H - MT - MB;             /* content height per page (pt) */
-	var PX = 96 / 72;                    /* CSS px per pt */
-	var NS = 'http://www.w3.org/2000/svg';
-	var unit = String(D.unit || 'facilities'), unitOne = String(D.unitOne || 'facility');
-
-	function L(a, b, c){ return a + (b - a) * c; }
-	function cap(s){ s = String(s); return s.charAt(0).toUpperCase() + s.slice(1); }
-	function titleCase(s){ return String(s).replace(/(^|\s)(\S)/g, function(m, a, b){ return a + b.toUpperCase(); }); }
-	function esc(s){ return String(s === null || s === undefined ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-	function r2(v){ return Math.round(v * 100) / 100; }
-	function pt(v){ return r2(v) + 'pt'; }
-	function joinNames(a){ a = (a || []).slice(); if(a.length <= 1) return a.join(''); return a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
-	function compColor(id){ return COMP[id] || C.brand; }
-	function E(doc, tag, cls, txt){ var e = doc.createElement(tag); if(cls) e.className = cls; if(txt !== undefined && txt !== null) e.textContent = String(txt); return e; }
-	function S(doc, tag, at){ var e = doc.createElementNS(NS, tag); if(at){ for(var k in at){ if(Object.prototype.hasOwnProperty.call(at, k)) e.setAttribute(k, String(at[k])); } } return e; }
-	function T(doc, x, y, txt, size, o){
-		o = o || {};
-		var e = S(doc, 'text', { x: r2(x), y: r2(y), 'font-size': r2(size), 'font-family': o.font || FONT, fill: o.fill || C.ink, 'text-anchor': o.anchor || 'start' });
-		if(o.bold) e.setAttribute('font-weight', 'bold');
-		if(o.rot) e.setAttribute('transform', 'rotate(' + o.rot + ' ' + r2(x) + ' ' + r2(y) + ')');
-		e.textContent = String(txt);
-		return e;
-	}
-	function svgBox(doc, w, h){ return S(doc, 'svg', { width: r2(w) + 'pt', height: r2(h) + 'pt', viewBox: '0 0 ' + r2(w) + ' ' + r2(h) }); }
-	function svgH(svg){ return parseFloat(svg.getAttribute('height')); }
-	/* text width in pt, measured with the report's own font */
-	function measurer(doc){
-		var ctx = null, cache = {};
-		try{ ctx = doc.createElement('canvas').getContext('2d'); }catch(e){ ctx = null; }
-		return function(txt, size, bold){
-			txt = String(txt);
-			var key = (bold ? 'b' : 'n') + size + '|' + txt;
-			if(cache.hasOwnProperty(key)) return cache[key];
-			var w;
-			if(ctx){ ctx.font = (bold ? 'bold ' : '') + size + 'pt ' + FONT; w = ctx.measureText(txt).width * 0.75; }
-			else w = txt.length * size * 0.55;
-			cache[key] = w;
-			return w;
-		};
-	}
-	function wrap(M, txt, maxW, size, bold, maxLines){
-		var words = String(txt === null || txt === undefined ? '' : txt).split(/\s+/).filter(function(w){ return w !== ''; });
-		var lines = [], cur = '', i, j;
-		for(i = 0; i < words.length; i++){
-			var w = words[i];
-			if(M(w, size, bold) > maxW){
-				if(cur !== ''){ lines.push(cur); cur = ''; }
-				var part = '';
-				for(j = 0; j < w.length; j++){
-					var t = part + w.charAt(j);
-					if(part !== '' && M(t, size, bold) > maxW){ lines.push(part); part = w.charAt(j); } else part = t;
-				}
-				cur = part;
-				continue;
-			}
-			var t2 = (cur === '') ? w : cur + ' ' + w;
-			if(M(t2, size, bold) <= maxW) cur = t2; else { lines.push(cur); cur = w; }
-		}
-		if(cur !== '') lines.push(cur);
-		if(!lines.length) lines.push('');
-		if(maxLines && lines.length > maxLines){
-			var keep = lines.slice(0, maxLines), last = keep[maxLines - 1] + ' ' + lines.slice(maxLines).join(' ');
-			while(last.length > 1 && M(last + '…', size, bold) > maxW) last = last.slice(0, -1);
-			keep[maxLines - 1] = last.replace(/\s+$/, '') + '…';
-			lines = keep;
-		}
-		return lines;
-	}
-	/* axis maximum and step (whole numbers), with room above the tallest bar */
-	function niceAxis(maxV){
-		if(!(maxV > 0)) return { max: 1, step: 1 };
-		var raw = maxV / 4, p = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10)), f = raw / p;
-		var s = (f <= 1) ? 1 : (f <= 2) ? 2 : (f <= 5) ? 5 : 10;
-		var step = Math.max(1, Math.round(s * p));
-		var mx = Math.ceil(maxV / step) * step;
-		if(mx <= maxV) mx += step;
-		return { max: mx, step: step };
-	}
-
-	/* ---------- look: every size follows the compactness level c (0 = roomy ... 1 = compact) ---------- */
-	function sty(c){
-		return { c: c,
-			fs: L(9.4, 7.4, c), fsS: L(7.3, 6.1, c), title: L(16, 12.6, c), h2: L(10.8, 8.8, c), ct: L(8.4, 7, c), kf: L(9.1, 7.2, c),
-			gap: L(9, 3.6, c), pad: L(8, 4.2, c), band: L(11, 6, c), chipPad: L(3.6, 1.8, c),
-			ring: L(78, 52, c), ringW: L(8.5, 6, c), tile: L(19, 13.5, c),
-			issH: L(66, 30, c), impH: L(54, 24, c), minH: L(96, 58, c),
-			kRow: L(15.5, 9.6, c), kLbl: L(6.7, 5.7, c), kVal: L(7, 5.9, c), kLW: L(112, 96, c),
-			xLbl: L(6.7, 5.7, c), xVal: L(7.2, 5.9, c), yLbl: L(7, 5.9, c),
-			tFs: L(8.9, 6.7, c), tPad: L(3.1, 0.8, c), t3Pad: L(3.3, 0.8, c)
-		};
-	}
-
-	/* ---------- charts ---------- */
-	/* vertical bars (one bar per block) */
-	function vchart(doc, M, o){
-		var n = o.labels.length, W = o.w, i, j, t;
-		var maxV = 0;
-		for(i = 0; i < n; i++){ if((+o.vals[i] || 0) > maxV) maxV = +o.vals[i] || 0; }
-		var ax = niceAxis(maxV), yW = 0;
-		if(o.yAxis){ for(t = 0; t <= ax.max; t += ax.step) yW = Math.max(yW, M(String(t), o.yLbl)); yW += 7; }
-		var x0 = o.yAxis ? yW : 3, plotW = W - x0 - 3, slot = plotW / Math.max(n, 1);
-		var lblW = Math.max(4, slot - 3), rot = false, lines = [];
-		for(i = 0; i < n; i++){
-			var Lb = String(o.labels[i]), words = Lb.split(/\s+/);
-			for(j = 0; j < words.length; j++){ if(M(words[j], o.lblSize) > lblW){ rot = true; break; } }
-			var ln = wrap(M, Lb, lblW, o.lblSize, false, 0);
-			if(ln.length > o.maxLines) rot = true;
-			lines.push(ln);
-		}
-		var ls = o.lblSize, rl = [], lblH, mw = 0, ROTMAX = 72;
-		if(rot){
-			for(i = 0; i < n; i++){
-				var s = String(o.labels[i]);
-				if(M(s, ls) > ROTMAX){ while(s.length > 1 && M(s + '…', ls) > ROTMAX) s = s.slice(0, -1); s = s + '…'; }
-				rl.push(s); mw = Math.max(mw, M(s, ls));
-			}
-			lblH = mw * 0.7071 + ls * 1.7;
-			var need = mw * 0.7071 - slot / 2 + 3;          /* the first label leans left: keep it inside the chart */
-			if(need > x0){ x0 = need; plotW = W - x0 - 3; slot = plotW / Math.max(n, 1); }
-		} else {
-			var ml = 1;
-			for(i = 0; i < n; i++) ml = Math.max(ml, lines[i].length);
-			lblH = ml * ls * 1.2 + 3;
-		}
-		var vs = Math.max(5, Math.min(o.valSize, slot * 0.75));
-		var barW = Math.min(o.barMax, slot * o.barRatio);
-		var topH = vs * 1.5, plotH = o.plotH, H = topH + plotH + lblH;
-		var svg = svgBox(doc, W, H), yB = topH + plotH;
-		if(o.yAxis){
-			for(t = 0; t <= ax.max; t += ax.step){
-				var yy = yB - t / ax.max * plotH;
-				if(t > 0) svg.appendChild(S(doc, 'line', { x1: r2(x0), y1: r2(yy), x2: r2(x0 + plotW), y2: r2(yy), stroke: C.grid, 'stroke-width': 0.6 }));
-				svg.appendChild(T(doc, x0 - 5, yy + o.yLbl * 0.35, String(t), o.yLbl, { anchor: 'end', fill: C.muted }));
-			}
-		}
-		for(i = 0; i < n; i++){
-			var v = +o.vals[i] || 0, cx = x0 + slot * i + slot / 2, h = v / ax.max * plotH;
-			if(h > 0) svg.appendChild(S(doc, 'rect', { x: r2(cx - barW / 2), y: r2(yB - h), width: r2(barW), height: r2(h), rx: r2(Math.min(2, barW / 4, h / 2)), fill: o.color }));
-			svg.appendChild(T(doc, cx, yB - h - vs * 0.45, String(v), vs, { anchor: 'middle', fill: v > 0 ? o.valFill : C.muted, bold: v > 0 && o.valBold }));
-		}
-		svg.appendChild(S(doc, 'line', { x1: r2(x0), y1: r2(yB), x2: r2(x0 + plotW), y2: r2(yB), stroke: o.baseColor, 'stroke-width': 0.8 }));
-		for(i = 0; i < n; i++){
-			var lx = x0 + slot * i + slot / 2;
-			if(rot){ svg.appendChild(T(doc, lx + ls * 0.3, yB + ls * 1.15, rl[i], ls, { anchor: 'end', rot: -45, fill: C.ink })); }
-			else { for(j = 0; j < lines[i].length; j++) svg.appendChild(T(doc, lx, yB + ls * (1.2 * j + 1.2), lines[i][j], ls, { anchor: 'middle', fill: C.ink })); }
-		}
-		return svg;
-	}
-	/* horizontal bars (the KPIs of one component); the worst KPI in amber */
-	function hchart(doc, M, o, st){
-		var items = o.items, n = items.length, W = o.w, i, j;
-		var LW = st.kLW, ls = st.kLbl, vs = st.kVal, x0 = LW + 4, texts = [], vW = 0, maxN = 0;
-		for(i = 0; i < n; i++){
-			texts.push(items[i].n + ' (' + items[i].pct + '%)');
-			vW = Math.max(vW, M(texts[i], vs, true));
-			if(items[i].n > maxN) maxN = items[i].n;
-		}
-		var maxBar = Math.max(20, W - x0 - vW - 8), lines = [], need = [], nat = 4;
-		for(i = 0; i < n; i++){
-			lines.push(wrap(M, items[i].name, LW - 2, ls, items[i].worst, 3));
-			need.push(Math.max(st.kRow, lines[i].length * ls * 1.2 + 4));
-			nat += need[i];
-		}
-		var H = Math.max(nat, o.H || 0), extra = H - nat, rows = need.slice();
-		if(extra > 0 && n > 0){ var per = extra / n; for(i = 0; i < n; i++) rows[i] = Math.max(need[i], Math.min(need[i] + per, 30)); }
-		var used = 4;
-		for(i = 0; i < n; i++) used += rows[i];
-		var top = 2 + Math.max(0, (H - used) / 2), svg = svgBox(doc, W, H), y = top;
-		for(i = 0; i < n; i++){
-			var rh = rows[i], cy = y + rh / 2, Ln = lines[i], lh = ls * 1.2, ty = cy - (Ln.length - 1) * lh / 2 + ls * 0.35, wst = items[i].worst;
-			for(j = 0; j < Ln.length; j++) svg.appendChild(T(doc, x0 - 5, ty + j * lh, Ln[j], ls, { anchor: 'end', bold: wst, fill: wst ? C.ink : '#334155' }));
-			var bw = maxN > 0 ? items[i].n / maxN * maxBar : 0, bh = Math.min(13, Math.max(5, rh * 0.62));
-			svg.appendChild(S(doc, 'rect', { x: r2(x0), y: r2(cy - bh / 2), width: r2(maxBar), height: r2(bh), rx: r2(Math.min(2, bh / 3)), fill: C.panel2 }));
-			if(bw > 0) svg.appendChild(S(doc, 'rect', { x: r2(x0), y: r2(cy - bh / 2), width: r2(Math.max(bw, 1.2)), height: r2(bh), rx: r2(Math.min(2, bh / 3, bw / 2)), fill: wst ? C.amber : o.color }));
-			svg.appendChild(T(doc, x0 + Math.max(bw, 0) + 3.5, cy + vs * 0.35, texts[i], vs, { fill: wst ? C.ambTx : '#334155', bold: wst }));
-			y += rh;
-		}
-		svg.appendChild(S(doc, 'line', { x1: r2(x0), y1: r2(top), x2: r2(x0), y2: r2(y), stroke: '#94A3B8', 'stroke-width': 0.8 }));
-		return svg;
-	}
-	/* overall score ring */
-	function ring(doc, st, val, txt){
-		var d = st.ring, sw = st.ringW, r = (d - sw) / 2 - 0.5, cx = d / 2, cy = d / 2, circ = 2 * Math.PI * r;
-		var svg = svgBox(doc, d, d), f = (val === null || isNaN(val)) ? 0 : Math.max(0, Math.min(100, val)) / 100;
-		svg.appendChild(S(doc, 'circle', { cx: r2(cx), cy: r2(cy), r: r2(r), fill: 'none', stroke: C.track, 'stroke-width': r2(sw) }));
-		if(f > 0) svg.appendChild(S(doc, 'circle', { cx: r2(cx), cy: r2(cy), r: r2(r), fill: 'none', stroke: C.teal, 'stroke-width': r2(sw), 'stroke-linecap': f < 1 ? 'round' : 'butt',
-			'stroke-dasharray': r2(circ * f) + ' ' + r2(circ), transform: 'rotate(-90 ' + r2(cx) + ' ' + r2(cy) + ')' }));
-		svg.appendChild(T(doc, cx, cy + d * 0.075, txt, d * 0.215, { anchor: 'middle', bold: true, fill: C.brandDk, font: FONT_H }));
-		return svg;
-	}
-	function sq(doc, color, cls){ var s = svgBox(doc, 8, 8); s.setAttribute('class', cls || 'sq'); s.appendChild(S(doc, 'rect', { x: 0.5, y: 1, width: 7, height: 6, rx: 1.4, fill: color })); return s; }
-	function dot(doc, color, cls){ var s = svgBox(doc, 8, 8); s.setAttribute('class', cls || 'dot'); s.appendChild(S(doc, 'circle', { cx: 4, cy: 4, r: 3.7, fill: color })); return s; }
-
-	/* ---------- sections ---------- */
-	function headSection(doc, host, st){
-		var sec = E(doc, 'div', 'sec'), band = E(doc, 'div', 'band');
-		band.appendChild(E(doc, 'div', 'eyebrow', 'DQA Desk Review · 2-pager'));
-		band.appendChild(E(doc, 'div', 'title', 'Data Template for Data Quality Assessment (DQA) Analysis – ' + D.tool));
-		var chips = E(doc, 'div', 'chips');
-		[['Name of State', D.state, ''], ['District', D.district, ''], ['Period', D.period, 'wide'], [cap(unit), D.den, 'num'], ['Blocks', D.blocks, 'num']].forEach(function(x){
-			var ch = E(doc, 'div', 'chip' + (x[2] ? ' ' + x[2] : ''));
-			ch.appendChild(E(doc, 'span', 'k', x[0])); ch.appendChild(E(doc, 'span', 'v', x[1]));
-			chips.appendChild(ch);
-		});
-		band.appendChild(chips);
-		sec.appendChild(band);
-		if(D.selection && D.selection.length) sec.appendChild(E(doc, 'div', 'sel', 'Selection: ' + D.selection.join(' · ')));
-		if(D.chk && D.chk.length) sec.appendChild(E(doc, 'div', 'chk', 'Check failed: the units counted for ' + D.chk.join(', ') + ' differ from the card. Please report this to the DQA team.'));
-		host.appendChild(sec);
-		return sec;
-	}
-	function heroSection(doc, host, st){
-		var sec = E(doc, 'div', 'sec'), row = E(doc, 'div', 'hero');
-		var ov = E(doc, 'div', 'ovr'), num = (D.overall === null) ? null : parseFloat(D.overall);
-		ov.appendChild(ring(doc, st, num, D.overall === null ? '—' : D.overall + '%'));
-		ov.appendChild(E(doc, 'div', 'ol', 'Overall Score'));
-		row.appendChild(ov);
-		var tiles = E(doc, 'div', 'tiles');
-		tiles.style.gridTemplateColumns = 'repeat(' + Math.max(1, D.comps.length) + ', minmax(0, 1fr))';
-		D.comps.forEach(function(c){
-			var col = compColor(c.id), t = E(doc, 'div', 'tile');
-			t.style.borderTopColor = col;
-			t.appendChild(E(doc, 'div', 'tn', c.name));
-			var sc = E(doc, 'div', 'ts', c.score === null ? '—' : c.score + '%'); sc.style.color = col; t.appendChild(sc);
-			var bar = E(doc, 'div', 'tbar'), fill = E(doc, 'span');
-			fill.style.width = (c.score === null ? 0 : Math.max(0, Math.min(100, parseFloat(c.score)))) + '%'; fill.style.background = col;
-			bar.appendChild(fill); t.appendChild(bar);
-			t.appendChild(E(doc, 'div', 'tw', 'Top issue: ' + (c.worst ? c.worst.pct : (c.score === null ? '—' : '0.0')) + '%'));
-			tiles.appendChild(t);
-		});
-		row.appendChild(tiles);
-		sec.appendChild(row);
-		host.appendChild(sec);
-		return sec;
-	}
-	function findingsSection(doc, host, st){
-		var sec = E(doc, 'div', 'sec'), kf = E(doc, 'div', 'kf'), ul = E(doc, 'ul');
-		kf.appendChild(E(doc, 'div', 'kh', 'Key Findings'));
-		D.comps.forEach(function(c){
-			var li = E(doc, 'li'), col = compColor(c.id);
-			li.appendChild(dot(doc, col, 'kdot'));
-			var nm = E(doc, 'b', 'kn', c.name + ':'); nm.style.color = col; li.appendChild(nm);
-			li.appendChild(doc.createTextNode(' '));
-			if(c.worst){
-				li.appendChild(E(doc, 'b', null, c.worst.pct + '% ' + unit + ' (' + c.worst.n + ')'));
-				li.appendChild(doc.createTextNode(' flagged for ' + joinNames(c.worst.names) + '.'));
-			} else {
-				li.appendChild(E(doc, 'b', null, '0.0% ' + unit + ' (0)'));
-				li.appendChild(doc.createTextNode(' flagged: no issue found in this component.'));
-			}
-			ul.appendChild(li);
-		});
-		kf.appendChild(ul); sec.appendChild(kf);
-		host.appendChild(sec);
-		return sec;
-	}
-	function issuesSection(doc, M, host, st, ext){
-		var sec = E(doc, 'div', 'sec'), box = E(doc, 'div', 'card'), hd = E(doc, 'div', 'chd');
-		hd.appendChild(E(doc, 'span', 'ctt', 'Number of Data Quality Issues Identified'));
-		hd.appendChild(E(doc, 'span', 'csub', 'KPIs with at least one flagged ' + unitOne + ', by block (out of ' + D.kpiCount + ' KPIs)'));
-		box.appendChild(hd); sec.appendChild(box); host.appendChild(sec);
-		var w = box.clientWidth / PX - 2 * st.pad - 1.5, rows = D.blockRows;
-		box.appendChild(vchart(doc, M, { w: w, labels: rows.map(function(r){ return r.b; }), vals: rows.map(function(r){ return r.types; }),
-			color: C.brand, yAxis: true, yLbl: st.yLbl, valSize: st.xVal + 0.8, valFill: C.brandDk, valBold: true, lblSize: st.xLbl + 0.6,
-			plotH: st.issH + (ext || 0), barMax: 20, barRatio: 0.42, baseColor: '#94A3B8', maxLines: 2 }));
-		return sec;
-	}
-	function compSection(doc, M, host, c, st, ext){
-		var col = compColor(c.id), sec = E(doc, 'div', 'sec'), card = E(doc, 'div', 'card comp');
-		card.style.borderLeftColor = col;
-		var hd = E(doc, 'div', 'compH'), nm = E(doc, 'span', 'cn', c.name + ': '), sc = E(doc, 'span', 'cs', c.score === null ? '—' : c.score + '%');
-		sc.style.color = col; nm.appendChild(sc); hd.appendChild(nm);
-		if(c.worst){ var lg = E(doc, 'span', 'leg'); lg.appendChild(sq(doc, C.amber, 'lsq')); lg.appendChild(doc.createTextNode('Top issue')); hd.appendChild(lg); }
-		card.appendChild(hd);
-		var row = E(doc, 'div', 'charts'), Lc = E(doc, 'div', 'cl'), Rc = E(doc, 'div', 'cr');
-		var lt = E(doc, 'div', 'ct', 'Number of Flagged ' + unit), rt = E(doc, 'div', 'ct');
-		rt.appendChild(doc.createTextNode('Top issue across blocks:'));
-		rt.appendChild(doc.createElement('br'));
-		var kn = E(doc, 'span', 'wk');
-		if(c.worst){ kn.appendChild(sq(doc, C.amber, 'wdot')); kn.appendChild(doc.createTextNode(c.worst.chart)); }
-		else kn.appendChild(doc.createTextNode('No ' + unitOne + ' flagged'));
-		rt.appendChild(kn);
-		Lc.appendChild(lt); Rc.appendChild(rt); row.appendChild(Lc); row.appendChild(Rc); card.appendChild(row); sec.appendChild(card);
-		host.appendChild(sec);   /* measured at its real width */
-		var ltH = lt.getBoundingClientRect().height / PX, rtH = rt.getBoundingClientRect().height / PX;
-		var lw = Lc.getBoundingClientRect().width / PX, rw = Rc.getBoundingClientRect().width / PX;
-		var items = c.kpis.map(function(k){ return { name: k.name, n: k.n, pct: k.pct, worst: !!k.worst }; });
-		var left = hchart(doc, M, { w: lw, items: items, H: 0, color: col }, st), right = null, ro = null;
-		if(c.worst){
-			ro = { w: rw, labels: c.worst.blocks.map(function(b){ return b.b; }), vals: c.worst.blocks.map(function(b){ return b.n; }),
-				color: col, yAxis: false, yLbl: st.yLbl, valSize: st.xVal, valFill: C.ink, valBold: true, lblSize: st.xLbl, plotH: st.impH, barMax: 15, barRatio: 0.56, baseColor: '#94A3B8', maxLines: 2 };
-			right = vchart(doc, M, ro);
-		}
-		var lH = ltH + svgH(left), rH = rtH + (right ? svgH(right) : 0), target = Math.max(lH, rH, st.minH) + (ext || 0);
-		if(target > lH + 0.5) left = hchart(doc, M, { w: lw, items: items, H: target - ltH, color: col }, st);
-		if(right && target > rH + 0.5){ ro.plotH += target - rH; right = vchart(doc, M, ro); }
-		if(!right){ right = E(doc, 'div', 'none', 'No ' + unitOne + ' flagged in this component.'); right.style.height = pt(target - rtH); }
-		Lc.appendChild(left); Rc.appendChild(right);
-		return sec;
-	}
-	function pill(doc, n, kind){
-		var td = E(doc, 'td', 'c');
-		if(+n > 0){ var p = E(doc, 'span', 'pill ' + kind, n); td.appendChild(p); } else td.appendChild(E(doc, 'span', 'zero', n));
-		return td;
-	}
-	function blockSpec(doc){
-		var rows = D.blockRows;
-		return { title: 'Block wise ' + unitOne + ' wise issues identified', cls: 'bt', cols: [24, 13.5, 13.5, 13.5, 13.5, 22], n: rows.length,
-			head: function(){
-				var tr = E(doc, 'tr');
-				tr.appendChild(E(doc, 'th', null, 'Block'));
-				[[C.red, '4+ Issues'], [C.amb, '1-3 Issues'], [C.grn, 'No Issues (0)']].forEach(function(x){
-					var th = E(doc, 'th', 'c'); th.appendChild(dot(doc, x[0])); th.appendChild(doc.createTextNode(x[1])); tr.appendChild(th);
-				});
-				tr.appendChild(E(doc, 'th', 'c', 'Total ' + titleCase(unit)));
-				tr.appendChild(E(doc, 'th', 'c', 'Distribution'));
-				return tr;
-			},
-			row: function(i){
-				var r = rows[i], tr = E(doc, 'tr');
-				tr.appendChild(E(doc, 'td', 'blk', r.b)); tr.appendChild(pill(doc, r.g4, 'r')); tr.appendChild(pill(doc, r.g13, 'a'));
-				tr.appendChild(pill(doc, r.g0, 'g')); tr.appendChild(E(doc, 'td', 'c b', r.tot)); tr.appendChild(shareCell(doc, r));
-				return tr;
-			},
-			total: function(){
-				var t = D.totals, tr = E(doc, 'tr', 'tot');
-				tr.appendChild(E(doc, 'td', null, 'Overall Total')); tr.appendChild(E(doc, 'td', 'c', t.g4)); tr.appendChild(E(doc, 'td', 'c', t.g13));
-				tr.appendChild(E(doc, 'td', 'c', t.g0)); tr.appendChild(E(doc, 'td', 'c', t.tot)); tr.appendChild(shareCell(doc, t));
-				return tr;
-			} };
-	}
-	/* share of 4+ / 1-3 / 0 in the block (a picture of the three counts on the left) */
-	function shareCell(doc, r){
-		var td = E(doc, 'td', 'sh'), bar = E(doc, 'div', 'sbar'), tot = (+r.g4 || 0) + (+r.g13 || 0) + (+r.g0 || 0);
-		[[r.g4, C.red], [r.g13, C.amb], [r.g0, C.grn]].forEach(function(x){
-			if(!(tot > 0) || !(+x[0] > 0)) return;
-			var s = E(doc, 'span'); s.style.width = r2(100 * (+x[0]) / tot) + '%'; s.style.background = x[1]; bar.appendChild(s);
-		});
-		td.appendChild(bar);
-		return td;
-	}
-	/* the same table in two halves side by side (many blocks): left half, then right half + Overall Total */
-	function blockSplitSection(doc, host){
-		var spec = blockSpec(doc), rows = D.blockRows, n = rows.length, half = Math.ceil(n / 2);
-		var sec = E(doc, 'div', 'sec'), hd = E(doc, 'div', 'tth');
-		hd.appendChild(E(doc, 'span', 'ttt', spec.title));
-		sec.appendChild(hd);
-		var wrapEl = E(doc, 'div', 'split');
-		[[0, half], [half, n]].forEach(function(rg, side){
-			var t = E(doc, 'table', 'bt bs'), cg = E(doc, 'colgroup'), th = E(doc, 'thead'), tb = E(doc, 'tbody');
-			[34, 16.5, 16.5, 16.5, 16.5].forEach(function(w){ var c = E(doc, 'col'); c.style.width = w + '%'; cg.appendChild(c); });
-			var tr = spec.head(); tr.removeChild(tr.lastChild); th.appendChild(tr);
-			for(var i = rg[0]; i < rg[1]; i++){ var r = spec.row(i); r.removeChild(r.lastChild); tb.appendChild(r); }
-			if(side === 1){ var tt = spec.total(); tt.removeChild(tt.lastChild); tb.appendChild(tt); }
-			t.appendChild(cg); t.appendChild(th); t.appendChild(tb);
-			wrapEl.appendChild(t);
-		});
-		sec.appendChild(wrapEl);
-		host.appendChild(sec);
-		return sec;
-	}
-	function topSpec(doc){
-		var rows = D.blockRows;
-		return { title: 'Top 3 ' + titleCase(unit) + ' to focus in each block', cls: 'bt t3', cols: [21, 26.3, 26.3, 26.4], n: rows.length,
-			head: function(){ var tr = E(doc, 'tr'); ['Block', '1st Highest', '2nd Highest', '3rd Highest'].forEach(function(h){ tr.appendChild(E(doc, 'th', null, h)); }); return tr; },
-			row: function(i){
-				var r = rows[i], tr = E(doc, 'tr');
-				tr.appendChild(E(doc, 'td', 'blk', r.b));
-				for(var j = 0; j < 3; j++){
-					var u = r.top[j], td = E(doc, 'td');
-					if(u){ td.appendChild(doc.createTextNode(u.u + ' ')); td.appendChild(E(doc, 'span', 'cnt', '(' + u.n + ')')); }
-					else td.appendChild(E(doc, 'span', 'zero', '—'));
-					tr.appendChild(td);
-				}
-				return tr;
-			},
-			total: null };
-	}
-	function tableSection(doc, host, spec){
-		var sec = E(doc, 'div', 'sec'), hd = E(doc, 'div', 'tth');
-		hd.appendChild(E(doc, 'span', 'ttt', spec.title));
-		sec.appendChild(hd);
-		var t = E(doc, 'table', spec.cls), cg = E(doc, 'colgroup'), th = E(doc, 'thead'), tb = E(doc, 'tbody');
-		spec.cols.forEach(function(w){ var c = E(doc, 'col'); c.style.width = w + '%'; cg.appendChild(c); });
-		th.appendChild(spec.head());
-		for(var i = 0; i < spec.n; i++) tb.appendChild(spec.row(i));
-		if(spec.total) tb.appendChild(spec.total());
-		t.appendChild(cg); t.appendChild(th); t.appendChild(tb);
-		sec.appendChild(t);
-		host.appendChild(sec);
-		return sec;
-	}
-
-	function stamp(){
-		var d = new Date(), m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-		function z(x){ return (x < 10 ? '0' : '') + x; }
-		return d.getDate() + ' ' + m[d.getMonth()] + ' ' + d.getFullYear() + ', ' + z(d.getHours()) + ':' + z(d.getMinutes());
-	}
-	function css(st){
-		var p = pt;
-		return '@page{size:A4 portrait;margin:0}' +
-		'*{box-sizing:border-box}html,body{margin:0;padding:0}' +
-		'body{background:#c9ced6;color:' + C.ink + ';font-family:' + FONT + ';-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
-		'.tb{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:9px 16px;background:' + C.brand + ';color:#fff;font:13px/1.4 system-ui,"Segoe UI",Arial,sans-serif}' +
-		'.tb b{font-size:14px}.tb button{font:inherit;font-weight:700;padding:6px 16px;border:0;border-radius:6px;background:' + C.amber + ';color:#111;cursor:pointer}' +
-		'#pages{padding:16px 0 2px}' +
-		'.page{position:relative;width:210mm;height:' + r2(PG_H) + 'pt;margin:0 auto 16px;padding:' + MT + 'pt ' + ML + 'pt 0;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.28);overflow:hidden}' +
-		'.page:before{content:"";position:absolute;left:0;right:0;top:0;height:5pt;background:' + C.brand + '}' +
-		'.page:after{content:"";position:absolute;left:0;top:0;width:110pt;height:5pt;background:' + C.amber + '}' +
-		'.pbody{height:' + r2(CH) + 'pt;overflow:hidden}' +
-		'.pfoot{position:absolute;left:' + ML + 'pt;right:' + ML + 'pt;bottom:11pt;display:flex;justify-content:space-between;gap:12pt;border-top:0.6pt solid ' + C.line + ';padding-top:3.5pt;font-size:7.3pt;color:' + C.muted + '}' +
-		'.pfoot span:last-child{font-weight:700;color:' + C.brand + ';white-space:nowrap}' +
-		'.measure{position:absolute;left:-30000px;top:0;visibility:hidden}' +
-		'.sec{display:flow-root;padding-bottom:' + p(st.gap) + '}' +
-		'.band{position:relative;overflow:hidden;background:' + C.brand + ';color:#fff;border-radius:7pt;padding:' + p(st.band * 0.85) + ' ' + p(st.band + 1) + ' ' + p(st.band) + '}' +
-		'.band:before{content:"";position:absolute;right:-34pt;top:-58pt;width:150pt;height:150pt;border-radius:50%;background:rgba(255,255,255,.07)}' +
-		'.band:after{content:"";position:absolute;right:58pt;bottom:-70pt;width:110pt;height:110pt;border-radius:50%;background:rgba(245,158,11,.13)}' +
-		'.eyebrow{position:relative;font-size:' + p(st.fsS) + ';letter-spacing:1.5pt;font-weight:700;color:' + C.amberLt + ';text-transform:uppercase}' +
-		'.title{position:relative;font-family:' + FONT_H + ';font-size:' + p(st.title) + ';font-weight:700;line-height:1.18;margin:' + p(st.band * 0.16) + ' 0 ' + p(st.band * 0.62) + '}' +
-		'.chips{position:relative;display:flex;gap:' + p(st.band * 0.45) + '}' +
-		'.chip{flex:1 1 0;min-width:0;background:rgba(255,255,255,.12);border:0.6pt solid rgba(255,255,255,.24);border-radius:5pt;padding:' + p(st.chipPad) + ' ' + p(st.chipPad * 1.9) + '}' +
-		'.chip.wide{flex:2.1 1 0}.chip.num{flex:0.8 1 0}' +
-		'.chip .k{display:block;font-size:' + p(st.fsS * 0.9) + ';letter-spacing:.7pt;text-transform:uppercase;color:#BFD9E5;white-space:nowrap}' +
-		'.chip .v{display:block;font-size:' + p(st.fs + 0.4) + ';font-weight:700;line-height:1.25;color:#fff;overflow-wrap:anywhere}' +
-		'.sel{margin:' + p(st.gap * 0.55) + ' 0 0;padding:' + p(st.chipPad) + ' ' + p(st.pad) + ';border-radius:5pt;background:' + C.panel + ';color:#334155;font-size:' + p(st.fsS + 0.6) + '}' +
-		'.chk{margin-top:' + p(st.gap * 0.55) + ';padding:3pt 7pt;border:0.8pt solid ' + C.redTx + ';border-radius:5pt;color:' + C.redTx + ';font-size:' + p(st.fs) + ';font-weight:700}' +
-		'.hero{display:flex;gap:' + p(st.pad * 0.8) + ';align-items:stretch}' +
-		'.ovr{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:' + p(st.pad * 0.6) + ' ' + p(st.pad * 1.3) + ';border:0.7pt solid ' + C.line + ';border-radius:7pt;background:' + C.panel2 + '}' +
-		'.ol{margin-top:' + p(st.pad * 0.35) + ';font-size:' + p(st.fsS + 0.2) + ';font-weight:700;letter-spacing:.8pt;text-transform:uppercase;color:' + C.brand + ';white-space:nowrap}' +
-		'.tiles{flex:1 1 auto;min-width:0;display:grid;gap:' + p(st.pad * 0.7) + '}' +
-		'.tile{min-width:0;border:0.7pt solid ' + C.line + ';border-top:3.2pt solid ' + C.brand + ';border-radius:6pt;padding:' + p(st.pad * 0.75) + ' ' + p(st.pad) + ';background:#fff;display:flex;flex-direction:column;justify-content:center}' +
-		'.tn{font-size:' + p(st.fsS) + ';font-weight:700;letter-spacing:.8pt;text-transform:uppercase;color:' + C.muted + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-		'.ts{font-family:' + FONT_H + ';font-size:' + p(st.tile) + ';font-weight:700;line-height:1.08;margin:' + p(st.pad * 0.2) + ' 0 ' + p(st.pad * 0.35) + '}' +
-		'.tile .tbar{height:' + p(L(4.2, 3, st.c)) + ';border-radius:3pt;background:' + C.track + ';overflow:hidden}' +
-		'.tile .tbar span{display:block;height:100%;border-radius:3pt}' +
-		'.tw{margin-top:' + p(st.pad * 0.4) + ';font-size:' + p(st.fsS) + ';color:' + C.muted + ';white-space:nowrap}' +
-		'.kf{position:relative;border-radius:7pt;background:' + C.panel + ';border-left:3.4pt solid ' + C.teal + ';padding:' + p(st.pad * 0.75) + ' ' + p(st.pad * 1.2) + ' ' + p(st.pad * 0.8) + '}' +
-		'.kh{font-family:' + FONT_H + ';font-size:' + p(st.h2) + ';font-weight:700;color:' + C.brand + ';margin-bottom:' + p(st.pad * 0.3) + '}' +
-		'.kf ul{list-style:none;margin:0;padding:0}' +
-		'.kf li{position:relative;padding-left:' + p(st.kf * 1.25) + ';margin:' + p(st.pad * 0.12) + ' 0;font-size:' + p(st.kf) + ';line-height:1.32}' +
-		'.kdot{position:absolute;left:0;top:' + p(st.kf * 0.36) + ';width:' + p(st.kf * 0.62) + ';height:' + p(st.kf * 0.62) + '}' +
-		'.card{border:0.7pt solid ' + C.line + ';border-radius:7pt;padding:' + p(st.pad * 0.8) + ' ' + p(st.pad) + ' ' + p(st.pad * 0.55) + ';background:#fff}' +
-		'.chd{display:flex;align-items:baseline;gap:8pt;flex-wrap:wrap;margin-bottom:' + p(st.pad * 0.25) + '}' +
-		'.ctt{font-family:' + FONT_H + ';font-size:' + p(st.h2) + ';font-weight:700;color:' + C.brand + '}' +
-		'.csub{font-size:' + p(st.fsS) + ';color:' + C.muted + '}' +
-		'.card.comp{border-left:4pt solid ' + C.brand + ';padding-left:' + p(st.pad * 0.9) + '}' +
-		'.compH{display:flex;align-items:baseline;justify-content:space-between;gap:8pt;margin-bottom:' + p(st.pad * 0.3) + '}' +
-		'.leg{font-size:' + p(st.fsS) + ';color:' + C.muted + ';white-space:nowrap}.lsq{display:inline-block;vertical-align:-0.6pt;margin-right:3pt;width:' + p(st.fsS + 0.6) + ';height:' + p(st.fsS + 0.6) + '}' +
-		'.cn{font-family:' + FONT_H + ';font-size:' + p(st.h2 + 0.4) + ';font-weight:700;color:' + C.ink + '}' +
-		'.charts{display:flex;gap:' + p(st.pad * 1.1) + ';align-items:flex-start}.cl{flex:0 0 48%;width:48%;min-width:0}.cr{flex:1 1 auto;min-width:0}' +
-		'.ct{text-align:center;font-size:' + p(st.ct) + ';line-height:1.25;color:#334155;font-weight:700}' +
-		'.wk{font-weight:400;color:' + C.ink + '}.wdot{display:inline-block;vertical-align:0;margin-right:3pt;width:' + p(st.ct * 0.62) + ';height:' + p(st.ct * 0.62) + '}' +
-		'.none{display:flex;align-items:center;justify-content:center;text-align:center;font-size:' + p(st.fs) + ';color:' + C.muted + '}' +
-		'svg{display:block;overflow:visible}' +
-		'.tth{margin:0 0 ' + p(st.pad * 0.45) + ';display:flex;align-items:center;gap:6pt}' +
-		'.tth:before{content:"";width:3.4pt;align-self:stretch;border-radius:2pt;background:' + C.amber + '}' +
-		'.ttt{font-family:' + FONT_H + ';font-size:' + p(st.h2) + ';font-weight:700;color:' + C.brand + '}' +
-		'table{border-collapse:separate;border-spacing:0;table-layout:fixed;width:100%}' +
-		'table.bt{font-size:' + p(st.tFs) + ';color:' + C.ink + ';border:0.7pt solid ' + C.line + ';border-radius:6pt;overflow:hidden}' +
-		'table.bt th,table.bt td{padding:' + p(st.tPad) + ' ' + p(L(5, 3.2, st.c)) + ';vertical-align:middle;overflow-wrap:anywhere;border-bottom:0.5pt solid ' + C.line + '}' +
-		'table.bt tbody tr:last-child td{border-bottom:0}' +
-		'table.bt thead th{background:' + C.brand + ';color:#fff;font-weight:700;text-align:left;border-bottom:0}' +
-		'table.bt tbody tr:nth-child(even) td{background:' + C.panel2 + '}' +
-		'table.bt .c{text-align:center}table.bt thead th.c{text-align:center}table.bt td.b{font-weight:700}' +
-		'table.bt td.blk{font-weight:700;color:' + C.brandDk + '}' +
-		'table.bt tr.tot td{background:' + C.tot + ';font-weight:700;color:' + C.brandDk + ';border-top:1pt solid ' + C.brand + '}' +
-		'.pill{display:inline-block;min-width:' + p(st.tFs * 2.1) + ';padding:0 ' + p(st.tFs * 0.45) + ';border-radius:' + p(st.tFs) + ';font-weight:700;line-height:1.45}' +
-		'.pill.r{background:' + C.redBg + ';color:' + C.redTx + '}.pill.a{background:' + C.ambBg + ';color:' + C.ambTx + '}.pill.g{background:' + C.grnBg + ';color:' + C.grnTx + '}' +
-		'.zero{color:#94A3B8}' +
-		'td.sh{padding-right:' + p(L(7, 4, st.c)) + '}.sbar{display:flex;height:' + p(L(6.5, 4.5, st.c)) + ';border-radius:3pt;overflow:hidden;background:' + C.track + '}.sbar span{display:block;height:100%}' +
-		'.split{display:flex;gap:' + p(st.pad) + ';align-items:flex-start}.split table{flex:1 1 0;min-width:0;width:auto}' +
-		'table.t3 td{padding-top:' + p(st.t3Pad) + ';padding-bottom:' + p(st.t3Pad) + '}' +
-		'table.t3 td.blk{background:' + C.panel + '}table.t3 tbody tr:nth-child(even) td.blk{background:#E4EFF4}' +
-		'.cnt{font-weight:700;color:' + C.teal + ';white-space:nowrap}' +
-		'svg.dot{display:inline-block;vertical-align:-0.4pt;margin-right:3pt;width:7pt;height:7pt}' +
-		'@media print{body{background:#fff}.tb{display:none}#pages{padding:0}.page{margin:0;box-shadow:none;break-after:page;page-break-after:always}.page:last-child{break-after:auto;page-break-after:auto}}';
-	}
-
-	/* ---------- the two pages ---------- */
-	function build(win, isFrame){
-		var doc = win.document;
-		var bar = isFrame ? '' : ('<div class="tb"><b>DQA 2-pager – ' + esc(D.tool) + '</b><button type="button" onclick="window.print()">Save as PDF / Print</button>' +
-			'<span id="tbInfo">A4 portrait</span><span>In the print window choose “Save as PDF” as the destination, then Save.</span></div>');
-		doc.open();
-		doc.write('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>' + esc(D.file) + '</title><style id="dqa2pCss"></style></head><body>' +
-			bar + '<div id="pages"></div></body></html>');
-		doc.close();
-		var M = measurer(doc), styleEl = doc.getElementById('dqa2pCss'), pagesEl = doc.getElementById('pages');
-		var cap = CH * PX - 1;
-		/* all sections built at level c in a hidden box of the given width (pt) */
-		function make(c, widthPt, ext, o){
-			var st = sty(c);
-			ext = ext || { iss: 0, comps: [] };
-			o = o || {};
-			styleEl.textContent = css(st);
-			var host = E(doc, 'div', 'measure'); host.style.width = pt(widthPt || CW); doc.body.appendChild(host);
-			var s = { c: c, st: st, host: host };
-			s.fixed = [headSection(doc, host, st), heroSection(doc, host, st), findingsSection(doc, host, st), issuesSection(doc, M, host, st, ext.iss)];
-			s.comps = D.comps.map(function(cc, j){ return compSection(doc, M, host, cc, st, ext.comps[j] || 0); });
-			s.tables = [o.split ? blockSplitSection(doc, host) : tableSection(doc, host, blockSpec(doc)), tableSection(doc, host, topSpec(doc))];
-			return s;
-		}
-		function drop(s){ if(s && s.host && s.host.parentNode) s.host.parentNode.removeChild(s.host); }
-		function hOf(el){ return el.getBoundingClientRect().height; }
-		/* which components go on page 1 (as many as fit), the rest + both tables on page 2 */
-		function plan(s){
-			var i, k, H1 = 0, hc = s.comps.map(hOf), HT = hOf(s.tables[0]) + hOf(s.tables[1]), K = hc.length;
-			for(i = 0; i < s.fixed.length; i++) H1 += hOf(s.fixed[i]);
-			function sums(k){ var a = H1, b = HT; for(i = 0; i < k; i++) a += hc[i]; for(i = k; i < K; i++) b += hc[i]; return [a, b]; }
-			for(k = K; k >= 0; k--){ var q = sums(k); if(q[0] <= cap && q[1] <= cap) return { ok: true, k: k, h: q }; }
-			for(k = K; k > 0; k--){ if(sums(k)[0] <= cap) break; }
-			return { ok: false, k: k, h: sums(k) };
-		}
-		/* the roomiest level at which everything fits on two pages */
-		function solve(o){
-			var s0 = make(0, CW, null, o), p0 = plan(s0);
-			if(p0.ok) return { s: s0, p: p0, o: o };
-			drop(s0);
-			var s1 = make(1, CW, null, o), p1 = plan(s1);
-			if(!p1.ok) return { s: s1, p: p1, o: o };
-			drop(s1);
-			var lo = 0, hi = 1;
-			for(var it = 0; it < 7; it++){
-				var mid = (lo + hi) / 2, sm = make(mid, CW, null, o), pm = plan(sm);
-				drop(sm);
-				if(pm.ok) hi = mid; else lo = mid;
-			}
-			var sh = make(hi, CW, null, o);
-			return { s: sh, p: plan(sh), o: o };
-		}
-		var R = solve({ split: false });
-		if(!R.p.ok && D.blockRows.length > 6){
-			var R2 = solve({ split: true });
-			if(R2.p.ok || R2.p.h[1] < R.p.h[1]){ drop(R.s); R = R2; } else drop(R2.s);
-		}
-		var s = R.s, p = R.p, opt = R.o;
-		/* spare room on a page goes to its charts (a little taller each), so no page ends half empty */
-		function share(amount, caps){
-			var out = caps.map(function(){ return 0; }), left = amount, open = caps.map(function(c, j){ return j; });
-			for(var g = 0; g < 8 && left > 0.5 && open.length; g++){
-				var each = left / open.length, next = [];
-				open.forEach(function(j){ var add = Math.min(each, caps[j] - out[j]); out[j] += add; left -= add; if(caps[j] - out[j] > 0.01) next.push(j); });
-				open = next;
-			}
-			return out;
-		}
-		if(p.ok){
-			var K = D.comps.length, room1 = (cap - p.h[0]) / PX - 2, room2 = (cap - p.h[1]) / PX - 2, j;
-			var caps1 = [36].concat(D.comps.slice(0, p.k).map(function(){ return 44; }));
-			var caps2 = D.comps.slice(p.k).map(function(){ return 30; });
-			var g1 = room1 > 2 ? share(room1, caps1) : caps1.map(function(){ return 0; });
-			var g2 = (room2 > 2 && caps2.length) ? share(room2, caps2) : caps2.map(function(){ return 0; });
-			var ext = { iss: g1[0], comps: [] };
-			for(j = 0; j < K; j++) ext.comps.push(j < p.k ? g1[j + 1] : g2[j - p.k]);
-			if(g1.concat(g2).some(function(v){ return v > 0.5; })){
-				var sx = make(s.c, CW, ext, opt), px2 = plan(sx);
-				if(px2.ok && px2.k === p.k){ drop(s); s = sx; p = px2; } else drop(sx);
-			}
-		}
-		var pages = [];
-		function newPage(){
-			var pg = E(doc, 'div', 'page'), body = E(doc, 'div', 'pbody'), pin = E(doc, 'div', 'pin');
-			body.appendChild(pin); pg.appendChild(body); pagesEl.appendChild(pg);
-			var o = { pg: pg, pin: pin }; pages.push(o); return o;
-		}
-		var P1 = newPage(), P2 = newPage(), i;
-		s.fixed.forEach(function(n){ P1.pin.appendChild(n); });
-		for(i = 0; i < s.comps.length; i++) (i < p.k ? P1 : P2).pin.appendChild(s.comps[i]);
-		s.tables.forEach(function(n){ P2.pin.appendChild(n); });
-		drop(s);
-		/* rare (very many blocks or KPIs): a page still too long is drawn wider and scaled down to fit */
-		function fitPage(P, which){
-			var h = hOf(P.pin);
-			if(h <= cap) return;
-			var w = CW, sc = cap / h, got = null;
-			for(var t = 0; t < 4; t++){
-				w = CW / sc;
-				if(got) drop(got);
-				got = make(s.c, w, null, opt);
-				var nodes = which === 1 ? got.fixed.concat(got.comps.slice(0, p.k)) : got.comps.slice(p.k).concat(got.tables), hh = 0;
-				for(var j = 0; j < nodes.length; j++) hh += hOf(nodes[j]);
-				var ns = Math.min(cap / hh, CW / w);
-				if(Math.abs(ns - sc) < 0.002){ sc = ns; break; }
-				sc = ns;
-			}
-			while(P.pin.firstChild) P.pin.removeChild(P.pin.firstChild);
-			var nodes2 = which === 1 ? got.fixed.concat(got.comps.slice(0, p.k)) : got.comps.slice(p.k).concat(got.tables);
-			var inner = E(doc, 'div', 'scaled');
-			inner.style.width = pt(w); inner.style.transformOrigin = '0 0'; inner.style.transform = 'scale(' + r2(sc * 1000) / 1000 + ')';
-			nodes2.forEach(function(n){ inner.appendChild(n); });
-			var box = E(doc, 'div', 'scbox');
-			box.appendChild(inner); P.pin.appendChild(box);
-			box.style.height = Math.ceil(inner.offsetHeight * sc) + 'px'; box.style.overflow = 'hidden';
-			drop(got);
-		}
-		styleEl.textContent = css(s.st);
-		fitPage(P1, 1); fitPage(P2, 2);
-		styleEl.textContent = css(s.st);
-		var st0 = stamp(), N = pages.length, dist = (D.district && D.district !== '—') ? ' · ' + D.district : '';
-		pages.forEach(function(pg, i){
-			var f = E(doc, 'div', 'pfoot');
-			f.appendChild(E(doc, 'span', null, 'DQA Desk Review – ' + D.tool + dist + ' · ' + D.periodShort + ' · Generated ' + st0));
-			f.appendChild(E(doc, 'span', null, 'Page ' + (i + 1) + ' of ' + N));
-			pg.pg.appendChild(f);
-		});
-		var info = doc.getElementById('tbInfo');
-		if(info) info.textContent = 'A4 portrait · ' + N + ' pages';
-		setTimeout(function(){ try{ win.focus(); win.print(); }catch(e){} }, 350);
-	}
-	function openReport(){
-		if(!(D.den > 0)){ alert('No ' + unitOne + ' is under the current filters, so there is nothing to report. Widen the filters and press Apply Filter.'); return; }
-		var w = null;
-		try{ w = window.open('', '_blank'); }catch(e){ w = null; }
-		if(w){
-			try{ build(w, false); return; }catch(e){ if(window.console) console.error(e); try{ w.close(); }catch(e2){} }
-		}
-		try{   /* pop-up blocked: print through a hidden frame */
-			var old = document.getElementById('dqa2pFrame');
-			if(old) old.parentNode.removeChild(old);
-			var fr = document.createElement('iframe');
-			fr.id = 'dqa2pFrame'; fr.setAttribute('aria-hidden', 'true'); fr.setAttribute('tabindex', '-1');
-			fr.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;height:1200px;border:0;visibility:hidden;';
-			document.body.appendChild(fr);
-			build(fr.contentWindow, true);
-		}catch(e3){ if(window.console) console.error(e3); alert('Unable to prepare the 2-pager. Please try again.'); }
-	}
-	/* the button: a very small unlabelled dot at the top left of the page (meant for the few users who
-	   need the report, so it is deliberately hard to notice; above the Overall Score page too) */
-	var b = document.createElement('button');
-	b.type = 'button'; b.id = 'dqa2pBtn';
-	b.setAttribute('tabindex', '-1'); b.setAttribute('aria-hidden', 'true');
-	b.style.cssText = 'position:absolute;left:3px;top:3px;z-index:100000;display:block;width:8px;height:8px;min-width:0;min-height:0;margin:0;padding:0;' +
-		'border:0;border-radius:50%;background:#64748b;opacity:.28;box-shadow:none;outline:none;transform:none;transition:none;font-size:0;line-height:0;cursor:pointer;';
-	b.addEventListener('mouseenter', function(){ b.style.opacity = '.7'; });
-	b.addEventListener('mouseleave', function(){ b.style.opacity = '.28'; });
-	b.addEventListener('click', function(ev){ ev.preventDefault(); ev.stopPropagation(); openReport(); });
-	document.body.appendChild(b);
-	var ps = document.createElement('style');
-	ps.textContent = '@media print{#dqa2pBtn{display:none !important}}';
-	(document.head || document.body).appendChild(ps);
-})();
 </script>
 <?php dqa_idle_script(); ?>
 </body>

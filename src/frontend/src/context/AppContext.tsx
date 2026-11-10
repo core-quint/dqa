@@ -16,6 +16,7 @@ export type AppState =
   | "results"
   | "trend"
   | "dashboard"
+  | "insights"
   | "coverage"
   | "admin"
   | "uwin-landing"

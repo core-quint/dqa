@@ -9,6 +9,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  Sparkles,
   TrendingUp,
   Upload,
 } from "lucide-react";
@@ -189,6 +190,15 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
       disabled: false,
       hasChildren: false,
       onClick: () => setAppState("dashboard"),
+    },
+    {
+      key: "insights",
+      label: "Insights (new)",
+      icon: Sparkles,
+      active: appState === "insights",
+      disabled: false,
+      hasChildren: false,
+      onClick: () => setAppState("insights"),
     },
     {
       key: "trend",
